@@ -532,10 +532,36 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ax1.yaxis.label.set_color('#2563EB'); ax2.yaxis.label.set_color('#06B6D4'); ax1.tick_params(axis='y', colors='#2563EB'); ax2.tick_params(axis='y', colors='#06B6D4')
     plots['kpi_time_series'] = convert_fig_to_bytes(fig)
     
-    fig_gantt, ax_gantt = plt.subplots(figsize=(20, max(10, len(_df_projects) * 0.4))); all_projects = _df_projects.sort_values('start_date')['project_id'].tolist(); gantt_data = _df_tasks_raw[_df_tasks_raw['project_id'].isin(all_projects)].sort_values(['project_id', 'start_date']); project_y_map = {proj_id: i for i, proj_id in enumerate(all_projects)}; color_map = {task_name: plt.get_cmap('tab10', gantt_data['task_name'].nunique())(i) for i, task_name in enumerate(gantt_data['task_name'].unique())};
-    for _, task in gantt_data.iterrows(): ax_gantt.barh(project_y_map[task['project_id']], (task['end_date'] - task['start_date']).days + 1, left=task['start_date'], height=0.6, color=color_map[task['task_name']], edgecolor='#E5E7EB')
-    ax_gantt.set_yticks(list(project_y_map.values())); ax_gantt.set_yticklabels([f"Projeto {pid}" for pid in project_y_map.keys()]); ax_gantt.invert_yaxis(); ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d')); plt.xticks(rotation=45)
-    handles = [plt.Rectangle((0,0),1,1, color=color_map[label]) for label in color_map]; ax_gantt.legend(handles, color_map.keys(), title='Tipo de Tarefa', bbox_to_anchor=(1.05, 1), loc='upper left'); ax_gantt.set_title('Linha do Tempo de Todos os Projetos (Gantt Chart)'); fig_gantt.tight_layout()
+# --- Otimização do Gantt Chart ---
+    # Se houver mais de 50 projetos, usa uma amostra para o gráfico não ficar sobrecarregado.
+    if len(_df_projects) > 50:
+        ids_amostra_gantt = _df_projects['project_id'].sample(n=50, random_state=42).tolist()
+        df_projects_gantt = _df_projects[_df_projects['project_id'].isin(ids_amostra_gantt)]
+        df_tasks_gantt = _df_tasks_raw[_df_tasks_raw['project_id'].isin(ids_amostra_gantt)]
+        gantt_title = 'Linha do Tempo de 50 Projetos (Amostra)'
+    else:
+        df_projects_gantt = _df_projects
+        df_tasks_gantt = _df_tasks_raw
+        gantt_title = 'Linha do Tempo de Todos os Projetos (Gantt Chart)'
+
+    fig_gantt, ax_gantt = plt.subplots(figsize=(20, max(10, len(df_projects_gantt) * 0.4)))
+    all_projects = df_projects_gantt.sort_values('start_date')['project_id'].tolist()
+    gantt_data = df_tasks_gantt[df_tasks_gantt['project_id'].isin(all_projects)].sort_values(['project_id', 'start_date'])
+    project_y_map = {proj_id: i for i, proj_id in enumerate(all_projects)}
+    color_map = {task_name: plt.get_cmap('tab10', gantt_data['task_name'].nunique())(i) for i, task_name in enumerate(gantt_data['task_name'].unique())}
+
+    for _, task in gantt_data.iterrows():
+        ax_gantt.barh(project_y_map[task['project_id']], (task['end_date'] - task['start_date']).days + 1, left=task['start_date'], height=0.6, color=color_map.get(task['task_name']), edgecolor='#E5E7EB')
+
+    ax_gantt.set_yticks(list(project_y_map.values()))
+    ax_gantt.set_yticklabels([f"Projeto {pid}" for pid in project_y_map.keys()])
+    ax_gantt.invert_yaxis()
+    ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.xticks(rotation=45)
+    handles = [plt.Rectangle((0,0),1,1, color=color_map[label]) for label in color_map]
+    ax_gantt.legend(handles, color_map.keys(), title='Tipo de Tarefa', bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax_gantt.set_title(gantt_title)
+    fig_gantt.tight_layout()
     plots['gantt_chart_all_projects'] = convert_fig_to_bytes(fig_gantt)
 
     dfg_perf, _, _ = pm4py.discover_performance_dfg(log_full_pm4py)
@@ -575,17 +601,29 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_duration_hours', y='variant_str', data=variant_durations.astype({'avg_duration_hours':'float'}), ax=ax, hue='variant_str', legend=False, palette='plasma'); ax.set_title('Duração Média das 10 Variantes Mais Comuns'); fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
 
-    aligned_traces = alignments_miner.apply(log_full_pm4py, net_im, im_im, fm_im)
+# --- Otimização da Análise de Alinhamentos ---
+    # Se houver mais de 50 casos, usa uma amostra para a análise de conformidade.
+    num_cases = len(log_full_pm4py.groupby('case:concept:name'))
+    if num_cases > 50:
+        log_amostra_align = pm4py.filter_log(pm4py.convert_to_dataframe(log_full_pm4py).groupby('case:concept:name').head(1).index, log_full_pm4py)
+        log_amostra_align = pm4py.filter_log(lambda t: t.attributes['concept:name'] in log_amostra_align.groupby('case:concept:name').head(50).drop_duplicates('case:concept:name')['case:concept:name'].tolist(), log_full_pm4py)
+        log_para_alinhar = log_amostra_align
+        align_title_suffix = ' (Amostra de 50 Casos)'
+    else:
+        log_para_alinhar = log_full_pm4py
+        align_title_suffix = ''
+
+    aligned_traces = alignments_miner.apply(log_para_alinhar, net_im, im_im, fm_im)
     deviations_list = [{'fitness': trace['fitness'], 'deviations': sum(1 for move in trace['alignment'] if '>>' in move[0] or '>>' in move[1])} for trace in aligned_traces if 'fitness' in trace]
     deviations_df = pd.DataFrame(deviations_list)
-    fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(x='fitness', y='deviations', data=deviations_df, alpha=0.6, ax=ax, color='#FBBF24'); ax.set_title('Diagrama de Dispersão (Fitness vs. Desvios)'); fig.tight_layout()
+    fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(x='fitness', y='deviations', data=deviations_df, alpha=0.6, ax=ax, color='#FBBF24'); ax.set_title(f'Fitness vs. Desvios{align_title_suffix}'); fig.tight_layout()
     plots['deviation_scatter_plot'] = convert_fig_to_bytes(fig)
 
-    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_full_pm4py, aligned_traces) if 'concept:name' in trace.attributes]
+    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_para_alinhar, aligned_traces) if 'concept:name' in trace.attributes]
     case_fitness_df = pd.DataFrame(case_fitness_data).merge(_df_projects[['project_id', 'end_date']], on='project_id')
     case_fitness_df['end_month'] = case_fitness_df['end_date'].dt.to_period('M').astype(str)
     monthly_fitness = case_fitness_df.groupby('end_month')['fitness'].mean().reset_index()
-    fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title('Score de Conformidade ao Longo do Tempo'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
+    fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title(f'Score de Conformidade ao Longo do Tempo{align_title_suffix}'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
     plots['conformance_over_time_plot'] = convert_fig_to_bytes(fig)
 
     kpi_daily = _df_projects.groupby(_df_projects['end_date'].dt.date).agg(avg_cost_per_day=('cost_per_day', 'mean')).reset_index()
