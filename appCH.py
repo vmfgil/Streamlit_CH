@@ -944,48 +944,48 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     return res_type in allowed_resources
 
         def step(self, action_set):
-        if self.current_date.weekday() >= 5:
-            self.current_date += timedelta(days=1)
-            daily_cost = 0
-            reward_from_tasks = 0
-        else:
-            daily_cost = 0
-            reward_from_tasks = 0
-            resources_used_today = set()
-            for res_type, task_type in action_set:
-                if task_type == "idle":
-                    reward_from_tasks -= self.rewards['idle_penalty']
-                    continue
-                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                if available_resources.empty:
-                    continue
-                res_info = available_resources.sample(1).iloc[0]
-                eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                if not eligible_tasks:
-                    continue
-                resources_used_today.add(res_info['resource_id'])
-                eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
-                task_id_to_work = eligible_tasks[0]
-                task_data = self.tasks_state[task_id_to_work]
-                remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                hours_to_work = min(res_info['daily_capacity'], remaining_effort)
-                cost_today = hours_to_work * res_info['cost_per_hour']
-                daily_cost += cost_today
-                self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-
-                if task_data['status'] == 'Pendente':
-                    task_data['status'] = 'Em Andamento'
-
-                task_data['progress'] += hours_to_work
-
-                if task_data['progress'] >= task_data['estimated_effort']:
-                    task_data['status'] = 'Concluída'
-                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-
-            self.current_cost += daily_cost
-            self.current_date += timedelta(days=1)
-            if self.current_date.weekday() < 5:
-                self.day_count += 1
+            if self.current_date.weekday() >= 5:
+                self.current_date += timedelta(days=1)
+                daily_cost = 0
+                reward_from_tasks = 0
+            else:
+                daily_cost = 0
+                reward_from_tasks = 0
+                resources_used_today = set()
+                for res_type, task_type in action_set:
+                    if task_type == "idle":
+                        reward_from_tasks -= self.rewards['idle_penalty']
+                        continue
+                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
+                    if available_resources.empty:
+                        continue
+                    res_info = available_resources.sample(1).iloc[0]
+                    eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
+                    if not eligible_tasks:
+                        continue
+                    resources_used_today.add(res_info['resource_id'])
+                    eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
+                    task_id_to_work = eligible_tasks[0]
+                    task_data = self.tasks_state[task_id_to_work]
+                    remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                    hours_to_work = min(res_info['daily_capacity'], remaining_effort)
+                    cost_today = hours_to_work * res_info['cost_per_hour']
+                    daily_cost += cost_today
+                    self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
+    
+                    if task_data['status'] == 'Pendente':
+                        task_data['status'] = 'Em Andamento'
+    
+                    task_data['progress'] += hours_to_work
+    
+                    if task_data['progress'] >= task_data['estimated_effort']:
+                        task_data['status'] = 'Concluída'
+                        reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+    
+                self.current_cost += daily_cost
+                self.current_date += timedelta(days=1)
+                if self.current_date.weekday() < 5:
+                    self.day_count += 1
 
         project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
         total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
