@@ -601,30 +601,41 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_duration_hours', y='variant_str', data=variant_durations.astype({'avg_duration_hours':'float'}), ax=ax, hue='variant_str', legend=False, palette='plasma'); ax.set_title('Duração Média das 10 Variantes Mais Comuns'); fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
 
-# --- Otimização da Análise de Alinhamentos ---
-    # Se houver mais de 50 casos, usa uma amostra para a análise de conformidade.
-    num_cases = pm4py.convert_to_dataframe(log_full_pm4py)['case:concept:name'].nunique()
-    if num_cases > 50:
-        log_amostra_align = pm4py.filter_log(pm4py.convert_to_dataframe(log_full_pm4py).groupby('case:concept:name').head(1).index, log_full_pm4py)
-        log_amostra_align = pm4py.filter_log(lambda t: t.attributes['concept:name'] in log_amostra_align.groupby('case:concept:name').head(50).drop_duplicates('case:concept:name')['case:concept:name'].tolist(), log_full_pm4py)
-        log_para_alinhar = log_amostra_align
-        align_title_suffix = ' (Amostra de 50 Casos)'
-    else:
-        log_para_alinhar = log_full_pm4py
-        align_title_suffix = ''
+# --- Otimização da Análise de Alinhamentos (VERSÃO CORRIGIDA) ---
+    # Converte o log para um DataFrame para contar os casos de forma segura
+    log_df_completo = pm4py.convert_to_dataframe(log_full_pm4py)
+    num_cases = log_df_completo['case:concept:name'].nunique()
 
+    log_para_alinhar = log_full_pm4py
+    align_title_suffix = ''
+
+    # Se houver mais de 50 casos, cria uma amostra de 50 para a análise de conformidade
+    if num_cases > 50:
+        # Obtém uma lista de 50 IDs de casos aleatórios
+        case_ids_todos = log_df_completo['case:concept:name'].unique().tolist()
+        case_ids_amostra = random.sample(case_ids_todos, 50)
+        
+        # Filtra o log original para manter apenas os casos da amostra (método oficial)
+        log_para_alinhar = pm4py.filter_log(lambda trace: trace.attributes['concept:name'] in case_ids_amostra, log_full_pm4py)
+        align_title_suffix = ' (Amostra de 50 Casos)'
+
+    # As análises seguintes correm agora com o log completo ou com a amostra
     aligned_traces = alignments_miner.apply(log_para_alinhar, net_im, im_im, fm_im)
     deviations_list = [{'fitness': trace['fitness'], 'deviations': sum(1 for move in trace['alignment'] if '>>' in move[0] or '>>' in move[1])} for trace in aligned_traces if 'fitness' in trace]
-    deviations_df = pd.DataFrame(deviations_list)
-    fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(x='fitness', y='deviations', data=deviations_df, alpha=0.6, ax=ax, color='#FBBF24'); ax.set_title(f'Fitness vs. Desvios{align_title_suffix}'); fig.tight_layout()
-    plots['deviation_scatter_plot'] = convert_fig_to_bytes(fig)
+    
+    if deviations_list:
+        deviations_df = pd.DataFrame(deviations_list)
+        fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(x='fitness', y='deviations', data=deviations_df, alpha=0.6, ax=ax, color='#FBBF24'); ax.set_title(f'Fitness vs. Desvios{align_title_suffix}'); fig.tight_layout()
+        plots['deviation_scatter_plot'] = convert_fig_to_bytes(fig)
 
-    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_para_alinhar, aligned_traces) if 'concept:name' in trace.attributes]
-    case_fitness_df = pd.DataFrame(case_fitness_data).merge(_df_projects[['project_id', 'end_date']], on='project_id')
-    case_fitness_df['end_month'] = case_fitness_df['end_date'].dt.to_period('M').astype(str)
-    monthly_fitness = case_fitness_df.groupby('end_month')['fitness'].mean().reset_index()
-    fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title(f'Score de Conformidade ao Longo do Tempo{align_title_suffix}'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
-    plots['conformance_over_time_plot'] = convert_fig_to_bytes(fig)
+    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_para_alinhar, aligned_traces) if 'concept:name' in trace.attributes and 'fitness' in alignment]
+    
+    if case_fitness_data:
+        case_fitness_df = pd.DataFrame(case_fitness_data).merge(_df_projects[['project_id', 'end_date']], on='project_id')
+        case_fitness_df['end_month'] = case_fitness_df['end_date'].dt.to_period('M').astype(str)
+        monthly_fitness = case_fitness_df.groupby('end_month')['fitness'].mean().reset_index()
+        fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title(f'Score de Conformidade ao Longo do Tempo{align_title_suffix}'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
+        plots['conformance_over_time_plot'] = convert_fig_to_bytes(fig)
 
     kpi_daily = _df_projects.groupby(_df_projects['end_date'].dt.date).agg(avg_cost_per_day=('cost_per_day', 'mean')).reset_index()
     kpi_daily.rename(columns={'end_date': 'completion_date'}, inplace=True)
