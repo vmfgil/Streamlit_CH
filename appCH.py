@@ -1159,16 +1159,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     axes[1].set_title('Custo do Projeto (Teste)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[1].legend()
     plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
-    all_results_df = evaluate_agent(agent, env, df_projects)
-    df_plot_all = all_results_df.sort_values(by='real_duration').reset_index(drop=True)
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-    index_all = np.arange(len(df_plot_all));
-    axes[0].bar(index_all - bar_width/2, df_plot_all['real_duration'], bar_width, label='Real', color='orangered'); axes[0].bar(index_all + bar_width/2, df_plot_all['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[0].set_title('Duração do Projeto (Todos)'); axes[0].set_xticks(index_all); axes[0].set_xticklabels(df_plot_all['project_id'], rotation=90); axes[0].legend()
-    axes[1].bar(index_all - bar_width/2, df_plot_all['real_cost'], bar_width, label='Real', color='orangered'); axes[1].bar(index_all + bar_width/2, df_plot_all['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Projeto (Todos)'); axes[1].set_xticks(index_all); axes[1].set_xticklabels(df_plot_all['project_id'], rotation=90); axes[1].legend()
-    plots['evaluation_comparison_all'] = convert_fig_to_bytes(fig)
-
     def get_global_performance_df(results_df):
         real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum()
         real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
@@ -1572,18 +1562,14 @@ def rl_page():
         tables_rl = st.session_state.tables_rl
         
         st.markdown("<h4>Desempenho Global</h4>", unsafe_allow_html=True)
-        res1, res2 = st.columns(2)
-        with res1:
-            create_card("Performance Global (Conjunto de Teste)", "📊", dataframe=tables_rl.get('global_performance_test'))
-        with res2:
-            create_card("Performance Global (Todos os Projetos)", "📈", dataframe=tables_rl.get('global_performance_all'))
+        # Como removemos a análise mais pesada, mostramos apenas o resultado do conjunto de teste
+        create_card("Performance Global (Conjunto de Teste)", "📊", dataframe=tables_rl.get('global_performance_test'))
 
         st.markdown("<h4>Métricas de Treinamento do Agente</h4>", unsafe_allow_html=True)
         create_card("Evolução do Treino", "🤖", chart_bytes=plots_rl.get('training_metrics'))
         
         st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
         create_card("Comparação do Desempenho (Conjunto de Teste)", "🎯", chart_bytes=plots_rl.get('evaluation_comparison_test'))
-        create_card("Comparação do Desempenho (Todos os Projetos)", "🌍", chart_bytes=plots_rl.get('evaluation_comparison_all'))
         
         st.markdown(f"<h4>Análise Detalhada da Simulação (Projeto {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
