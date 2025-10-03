@@ -856,13 +856,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Criamos uma amostra de 500 projetos para toda a componente de RL
     st.info("A componente de RL irá correr numa amostra de 500 projetos para garantir a performance.")
     
-    ids_amostra = dfs['projects']['project_id'].sample(n=500, random_state=42).tolist()
+    ids_amostra = st.session_state['rl_sample_ids']
     
     dfs_rl = {}
     for nome_df, df in dfs.items():
         if 'project_id' in df.columns:
             dfs_rl[nome_df] = df[df['project_id'].isin(ids_amostra)].copy()
-        else: # Para o ficheiro 'resources' que não tem project_id
+        else:
             dfs_rl[nome_df] = df.copy()
     # -------------------------------------------------------------------
 
@@ -1443,19 +1443,31 @@ def rl_page():
         st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Configurações' para carregar os dados.")
         return
 
-    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de projetos, com base nos dados históricos. Pode ajustar os parâmetros para testar diferentes cenários.")
+    # --- LÓGICA CORRIGIDA: CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
+    # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
+    if 'rl_sample_ids' not in st.session_state:
+        st.session_state['rl_sample_ids'] = st.session_state.dfs['projects']['project_id'].sample(n=500, random_state=42).tolist()
+    # -----------------------------------------------------------------
 
-    # --- Parâmetros de Entrada ---
+    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de projetos. O treino e a análise correm sobre uma amostra de 500 projetos para garantir a performance.")
+
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
-        project_ids = st.session_state.dfs['projects']['project_id'].unique()
+        
+        # As opções agora vêm da amostra que acabámos de criar.
+        project_ids_elegiveis = st.session_state.get('rl_sample_ids', [])
         
         c1, c2 = st.columns(2)
         with c1:
+            default_index = 0
+            # Garante que o projeto '25' só é pré-selecionado se existir na amostra
+            if "25" in project_ids_elegiveis:
+                default_index = project_ids_elegiveis.index("25")
+
             project_id_to_simulate = st.selectbox(
-                "Selecione o ID do Projeto para Simulação Detalhada",
-                options=project_ids,
-                index=list(project_ids).index("25") if "25" in project_ids else 0
+                "Selecione o Projeto para Simulação Detalhada (Amostra)",
+                options=project_ids_elegiveis,
+                index=default_index
             )
         with c2:
             num_episodes = st.number_input("Número de Episódios de Treino", min_value=100, max_value=10000, value=1000, step=100)
@@ -1507,6 +1519,7 @@ def rl_page():
 
     
     if st.session_state.rl_analysis_run:
+        # (O resto da sua função rl_page para mostrar os resultados continua aqui, sem alterações)
         st.markdown("---")
         st.subheader("Resultados da Simulação")
         
@@ -1514,14 +1527,13 @@ def rl_page():
         tables_rl = st.session_state.tables_rl
         
         st.markdown("<h4>Desempenho Global</h4>", unsafe_allow_html=True)
-        # Como removemos a análise mais pesada, mostramos apenas o resultado do conjunto de teste
         create_card("Performance Global (Conjunto de Teste)", "📊", dataframe=tables_rl.get('global_performance_test'))
 
         st.markdown("<h4>Métricas de Treinamento do Agente</h4>", unsafe_allow_html=True)
         create_card("Evolução do Treino", "🤖", chart_bytes=plots_rl.get('training_metrics'))
         
         st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
-        create_card("Comparação do Desempenho (Conjunto de Teste)", "🎯", chart_bytes=plots_rl.get('evaluation_comparison_test'))
+        create_card("Comparação do Desempenho (Conjunto de Teste da Amostra)", "🎯", chart_bytes=plots_rl.get('evaluation_comparison_test'))
         
         st.markdown(f"<h4>Análise Detalhada da Simulação (Projeto {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
