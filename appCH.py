@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 import seaborn as sns
 import networkx as nx
 from collections import Counter, defaultdict
@@ -397,7 +398,18 @@ def run_pre_mining_analysis(dfs):
     
     cost_by_resource_type = df_full_context.groupby('resource_type')['cost_of_work'].sum().sort_values(ascending=False).reset_index()
     
-    fig, ax = plt.subplots(figsize=(8, 4)); sns.barplot(data=cost_by_resource_type, x='cost_of_work', y='resource_type', ax=ax, hue='resource_type', legend=False, palette='magma'); ax.set_title("Custo por Tipo de Recurso")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    sns.barplot(data=cost_by_resource_type, x='cost_of_work', y='resource_type', ax=ax, hue='resource_type', legend=False, palette='magma')
+    ax.set_title("Custo por Tipo de Recurso")
+
+    # --- NOVO BLOCO DE CÓDIGO PARA FORMATAÇÃO ---
+    # Formata o eixo do x para mostrar os números por extenso (ex: €1.500.000)
+    formatter = FuncFormatter(lambda x, pos: f'€{x:,.0f}')
+    ax.xaxis.set_major_formatter(formatter)
+    plt.xticks(rotation=30, ha='right') # Roda os labels para evitar sobreposição
+    fig.tight_layout() # Ajusta o layout para garantir que os labels ficam visíveis
+    # --------------------------------------------
+
     plots['cost_by_resource_type'] = convert_fig_to_bytes(fig)
     
     variants_df = log_df_final.groupby('case:concept:name')['concept:name'].apply(list).reset_index(name='trace')
