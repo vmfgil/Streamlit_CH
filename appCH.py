@@ -603,7 +603,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
 # --- Otimização da Análise de Alinhamentos ---
     # Se houver mais de 50 casos, usa uma amostra para a análise de conformidade.
-    num_cases = len(pm4py.get_cases(log_full_pm4py))
+    num_cases = pm4py.convert_to_dataframe(log_full_pm4py)['case:concept:name'].nunique()
     if num_cases > 50:
         log_amostra_align = pm4py.filter_log(pm4py.convert_to_dataframe(log_full_pm4py).groupby('case:concept:name').head(1).index, log_full_pm4py)
         log_amostra_align = pm4py.filter_log(lambda t: t.attributes['concept:name'] in log_amostra_align.groupby('case:concept:name').head(50).drop_duplicates('case:concept:name')['case:concept:name'].tolist(), log_full_pm4py)
