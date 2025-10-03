@@ -852,12 +852,18 @@ def run_eda_analysis(dfs):
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
-    # --- ABORDAGEM NOVA E DEFINITIVA: FILTRAR OS DADOS PRIMEIRO ---
-    # Criamos uma amostra de 500 projetos para toda a componente de RL
+    # --- PASSO 1 (NOVO): CALCULAR O CUSTO REAL NO CONJUNTO DE DADOS COMPLETO ---
+    df_real_costs = (dfs['resource_allocations'].merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id')
+                     .assign(cost=lambda df: df.hours_worked * df.cost_per_hour)
+                     .groupby('project_id')['cost'].sum().rename('actual_historical_cost').reset_index())
+    dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left').fillna({'actual_historical_cost': 0})
+    # -----------------------------------------------------------------------------
+
+    # --- PASSO 2: CRIAR A AMOSTRA (AGORA O CUSTO JÁ EXISTE) ---
     st.info("A componente de RL irá correr numa amostra de 500 projetos para garantir a performance.")
-    
+
     ids_amostra = st.session_state['rl_sample_ids']
-    
+
     dfs_rl = {}
     for nome_df, df in dfs.items():
         if 'project_id' in df.columns:
