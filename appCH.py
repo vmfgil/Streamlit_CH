@@ -851,15 +851,21 @@ def run_eda_analysis(dfs):
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
-    # --- PASSO 1: CALCULAR O CUSTO REAL NO CONJUNTO DE DADOS COMPLETO ---
-    # Usa a nomenclatura correta: 'total_actual_cost'
+    # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
+    for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
+        df = dfs[df_name]
+        for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+    # -------------------------------------------------------------------------------------
+
+    # --- PASSO 2: CALCULAR O CUSTO REAL NO CONJUNTO DE DADOS COMPLETO ---
     df_real_costs = (dfs['resource_allocations'].merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id')
                      .assign(cost=lambda df: df.hours_worked * df.cost_per_hour)
                      .groupby('project_id')['cost'].sum().rename('total_actual_cost').reset_index())
     dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left').fillna({'total_actual_cost': 0})
-    # -----------------------------------------------------------------------------
-
-    # --- PASSO 2: CRIAR A AMOSTRA (AGORA O CUSTO JÁ EXISTE) ---
+    
+    # --- PASSO 3: CRIAR A AMOSTRA ---
     st.info("A componente de RL irá correr numa amostra de 500 projetos para garantir a performance.")
     ids_amostra = st.session_state['rl_sample_ids']
     dfs_rl = {}
@@ -868,7 +874,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             dfs_rl[nome_df] = df[df['project_id'].isin(ids_amostra)].copy()
         else:
             dfs_rl[nome_df] = df.copy()
-    # -------------------------------------------------------------------
 
     plots = {}
     tables = {}
@@ -880,10 +885,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_resource_allocations = dfs_rl['resource_allocations'].copy()
     df_dependencies = dfs_rl['dependencies'].copy()
 
-    for df in [df_projects, df_tasks, df_resource_allocations, df_dependencies]:
-        for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
+    # (O bloco de conversão de datas que estava aqui foi movido para o topo e removido daqui)
 
     def calculate_business_days(start, end):
         return np.busday_count(start.date(), end.date()) if pd.notna(start) and pd.notna(end) else 0
@@ -891,9 +893,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects['planned_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['planned_end_date']), axis=1)
     df_projects['total_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['end_date']), axis=1)
     
-    # (O cálculo do custo que estava aqui foi movido para o topo)
-
-    # --- AMBIENTE E AGENTE (CLASSES) ---
+    # --- AMBIENTE E AGENTE (CLASSES) --- (Sem alterações)
     class ProjectManagementEnv:
         def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, reward_config=None, min_progress_for_next_phase=0.7):
             self.rewards = reward_config; self.df_tasks = df_tasks; self.df_resources = df_resources; self.df_dependencies = df_dependencies; self.df_projects_info = df_projects_info
@@ -914,7 +914,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.current_risk_rating = project_info['risk_rating']; self.current_cost = 0.0; self.day_count = 0; self.current_date = project_info['start_date']; self.episode_logs = []
             project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
-            # CORREÇÃO: Usa a nomenclatura correta 'total_actual_cost'
             self.total_estimated_budget = project_info['total_actual_cost']
             self.total_estimated_effort = project_tasks['estimated_effort'].sum()
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
@@ -993,6 +992,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
+    # --- O resto da função continua igual, usando as variáveis já preparadas ---
     SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
@@ -1039,7 +1039,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         if chosen_action: action_set.add(chosen_action)
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
-            # CORREÇÃO: Usa a nomenclatura correta 'total_actual_cost'
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
         return pd.DataFrame(results)
 
@@ -1075,7 +1074,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
     
     project_info_full = dfs['projects'].loc[dfs['projects']['project_id'] == project_id_to_simulate].iloc[0]
-    # CORREÇÃO: Usa a nomenclatura correta 'total_actual_cost'
     real_duration, real_cost = project_info_full['total_duration_days'], project_info_full['total_actual_cost']
     tables['project_summary'] = pd.DataFrame({'Métrica': ['Duração (dias úteis)', 'Custo (€)'], 'Real (Histórico)': [real_duration, real_cost], 'Simulado (RL)': [sim_duration, sim_cost]})
     
