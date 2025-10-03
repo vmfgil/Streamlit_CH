@@ -287,6 +287,9 @@ def run_pre_mining_analysis(dfs):
         for df in [df_projects, df_tasks, df_resources, df_resource_allocations, df_dependencies]:
             if col in df.columns: df[col] = df[col].astype(str)
 
+    df_projects['start_date'] = pd.to_datetime(df_projects['start_date'])
+    df_projects['end_date'] = pd.to_datetime(df_projects['end_date'])
+    df_projects['planned_end_date'] = pd.to_datetime(df_projects['planned_end_date'])
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
