@@ -486,11 +486,12 @@ def run_pre_mining_analysis(dfs):
     return plots, tables, event_log_pm4py, df_projects, df_tasks, df_resources, df_full_context
 
 @st.cache_data
+@st.cache_data
 def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_resources, _df_full_context):
-    # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
     plots = {}
     metrics = {}
     
+    # 1. Preparação de um log com ciclo de vida completo (start/complete) para certas análises
     df_start_events = _df_tasks_raw[['project_id', 'task_id', 'task_name', 'start_date']].rename(columns={'start_date': 'time:timestamp', 'task_name': 'concept:name', 'project_id': 'case:concept:name'})
     df_start_events['lifecycle:transition'] = 'start'
     df_complete_events = _df_tasks_raw[['project_id', 'task_id', 'task_name', 'end_date']].rename(columns={'end_date': 'time:timestamp', 'task_name': 'concept:name', 'project_id': 'case:concept:name'})
@@ -498,6 +499,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     log_df_full_lifecycle = pd.concat([df_start_events, df_complete_events]).sort_values('time:timestamp')
     log_full_pm4py = pm4py.convert_to_event_log(log_df_full_lifecycle)
 
+    # 2. Descoberta de Modelos e Métricas (usando uma amostra das 3 variantes principais para performance)
     variants_dict = variants_filter.get_variants(_event_log_pm4py)
     top_variants_list = sorted(variants_dict.items(), key=lambda x: len(x[1]), reverse=True)[:3]
     top_variant_names = [v[0] for v in top_variants_list]
@@ -526,14 +528,22 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     plots['metrics_heuristic'] = convert_fig_to_bytes(plot_metrics_chart(metrics_hm, 'Métricas de Qualidade (Heuristics Miner)'))
     metrics['heuristics_miner'] = metrics_hm
     
+    # 3. Análises de Performance Rápidas (correm com todos os dados)
     kpi_temporal = _df_projects.groupby('completion_month').agg(avg_lead_time=('actual_duration_days', 'mean'), throughput=('project_id', 'count')).reset_index()
     fig, ax1 = plt.subplots(figsize=(12, 6)); ax1.plot(kpi_temporal['completion_month'], kpi_temporal['avg_lead_time'], marker='o', color='#2563EB', label='Lead Time'); ax2 = ax1.twinx(); ax2.bar(kpi_temporal['completion_month'], kpi_temporal['throughput'], color='#06B6D4', alpha=0.6, label='Throughput'); fig.suptitle('Séries Temporais de KPIs de Performance')
     fig.legend(loc='upper left', bbox_to_anchor=(0.15, 0.9)); ax1.tick_params(axis='x', rotation=45)
     ax1.yaxis.label.set_color('#2563EB'); ax2.yaxis.label.set_color('#06B6D4'); ax1.tick_params(axis='y', colors='#2563EB'); ax2.tick_params(axis='y', colors='#06B6D4')
     plots['kpi_time_series'] = convert_fig_to_bytes(fig)
     
-# --- Otimização do Gantt Chart ---
-    # Se houver mais de 50 projetos, usa uma amostra para o gráfico não ficar sobrecarregado.
+    dfg_perf, _, _ = pm4py.discover_performance_dfg(log_full_pm4py)
+    gviz_dfg = dfg_visualizer.apply(dfg_perf, log=log_full_pm4py, variant=dfg_visualizer.Variants.PERFORMANCE)
+    plots['performance_heatmap'] = convert_gviz_to_bytes(gviz_dfg)
+    
+    fig, ax = plt.subplots(figsize=(8, 4)); log_df_full_lifecycle['weekday'] = log_df_full_lifecycle['time:timestamp'].dt.day_name(); weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    heatmap_data = log_df_full_lifecycle.groupby('weekday')['case:concept:name'].count().reindex(weekday_order).fillna(0); sns.barplot(x=heatmap_data.index, y=heatmap_data.values, ax=ax, hue=heatmap_data.index, legend=False, palette='coolwarm'); ax.set_title('Ocorrências de Atividades por Dia da Semana'); plt.xticks(rotation=45)
+    plots['temporal_heatmap_fixed'] = convert_fig_to_bytes(fig)
+
+    # 4. Otimização do Gantt Chart (usa amostra de 50 se os dados forem grandes)
     if len(_df_projects) > 50:
         ids_amostra_gantt = _df_projects['project_id'].sample(n=50, random_state=42).tolist()
         df_projects_gantt = _df_projects[_df_projects['project_id'].isin(ids_amostra_gantt)]
@@ -548,37 +558,26 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     all_projects = df_projects_gantt.sort_values('start_date')['project_id'].tolist()
     gantt_data = df_tasks_gantt[df_tasks_gantt['project_id'].isin(all_projects)].sort_values(['project_id', 'start_date'])
     project_y_map = {proj_id: i for i, proj_id in enumerate(all_projects)}
-    color_map = {task_name: plt.get_cmap('tab10', gantt_data['task_name'].nunique())(i) for i, task_name in enumerate(gantt_data['task_name'].unique())}
+    if not gantt_data.empty:
+        color_map = {task_name: plt.get_cmap('tab10', gantt_data['task_name'].nunique())(i) for i, task_name in enumerate(gantt_data['task_name'].unique())}
+        for _, task in gantt_data.iterrows():
+            ax_gantt.barh(project_y_map[task['project_id']], (task['end_date'] - task['start_date']).days + 1, left=task['start_date'], height=0.6, color=color_map.get(task['task_name']), edgecolor='#E5E7EB')
+        handles = [plt.Rectangle((0,0),1,1, color=color_map[label]) for label in color_map]
+        ax_gantt.legend(handles, color_map.keys(), title='Tipo de Tarefa', bbox_to_anchor=(1.05, 1), loc='upper left')
 
-    for _, task in gantt_data.iterrows():
-        ax_gantt.barh(project_y_map[task['project_id']], (task['end_date'] - task['start_date']).days + 1, left=task['start_date'], height=0.6, color=color_map.get(task['task_name']), edgecolor='#E5E7EB')
-
-    ax_gantt.set_yticks(list(project_y_map.values()))
-    ax_gantt.set_yticklabels([f"Projeto {pid}" for pid in project_y_map.keys()])
-    ax_gantt.invert_yaxis()
-    ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    plt.xticks(rotation=45)
-    handles = [plt.Rectangle((0,0),1,1, color=color_map[label]) for label in color_map]
-    ax_gantt.legend(handles, color_map.keys(), title='Tipo de Tarefa', bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax_gantt.set_title(gantt_title)
-    fig_gantt.tight_layout()
+    ax_gantt.set_yticks(list(project_y_map.values())); ax_gantt.set_yticklabels([f"Projeto {pid}" for pid in project_y_map.keys()]); ax_gantt.invert_yaxis(); ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d')); plt.xticks(rotation=45)
+    ax_gantt.set_title(gantt_title); fig_gantt.tight_layout()
     plots['gantt_chart_all_projects'] = convert_fig_to_bytes(fig_gantt)
-
-    dfg_perf, _, _ = pm4py.discover_performance_dfg(log_full_pm4py)
-    gviz_dfg = dfg_visualizer.apply(dfg_perf, log=log_full_pm4py, variant=dfg_visualizer.Variants.PERFORMANCE)
-    plots['performance_heatmap'] = convert_gviz_to_bytes(gviz_dfg)
     
-    fig, ax = plt.subplots(figsize=(8, 4)); log_df_full_lifecycle['weekday'] = log_df_full_lifecycle['time:timestamp'].dt.day_name(); weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    heatmap_data = log_df_full_lifecycle.groupby('weekday')['case:concept:name'].count().reindex(weekday_order).fillna(0); sns.barplot(x=heatmap_data.index, y=heatmap_data.values, ax=ax, hue=heatmap_data.index, legend=False, palette='coolwarm'); ax.set_title('Ocorrências de Atividades por Dia da Semana'); plt.xticks(rotation=45)
-    plots['temporal_heatmap_fixed'] = convert_fig_to_bytes(fig)
-    
+    # 5. Análises de Recursos (correm com todos os dados)
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
     handovers = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
     fig_net, ax_net = plt.subplots(figsize=(10, 10)); G = nx.DiGraph();
     for (source, target), weight in handovers.items(): G.add_edge(str(source), str(target), weight=weight)
-    pos = nx.spring_layout(G, k=0.9, iterations=50, seed=42); weights = [G[u][v]['weight'] for u,v in G.edges()]; nx.draw(G, pos, with_labels=True, node_color='#2563EB', edge_color='#E5E7EB', width=[w*0.5 for w in weights], ax=ax_net, font_size=10, connectionstyle='arc3,rad=0.1', labels={node: node for node in G.nodes()})
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, 'weight'), ax=ax_net, font_color='#FBBF24'); ax_net.set_title('Rede Social de Recursos (Handover Network)')
-    plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
+    if G.nodes():
+        pos = nx.spring_layout(G, k=0.9, iterations=50, seed=42); weights = [G[u][v]['weight'] for u,v in G.edges()]; nx.draw(G, pos, with_labels=True, node_color='#2563EB', edge_color='#E5E7EB', width=[w*0.5 for w in weights], ax=ax_net, font_size=10, connectionstyle='arc3,rad=0.1', labels={node: node for node in G.nodes()})
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, 'weight'), ax=ax_net, font_color='#FBBF24'); ax_net.set_title('Rede Social de Recursos (Handover Network)')
+        plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
     if 'skill_level' in _df_resources.columns:
         perf_recursos = _df_full_context.groupby('resource_id').agg(total_hours=('hours_worked', 'sum'), total_tasks=('task_id', 'nunique')).reset_index()
@@ -601,26 +600,21 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_duration_hours', y='variant_str', data=variant_durations.astype({'avg_duration_hours':'float'}), ax=ax, hue='variant_str', legend=False, palette='plasma'); ax.set_title('Duração Média das 10 Variantes Mais Comuns'); fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
 
-# --- Otimização da Análise de Alinhamentos (VERSÃO CORRIGIDA) ---
-    # Converte o log para um DataFrame para contar os casos de forma segura
-    log_df_completo = pm4py.convert_to_dataframe(log_full_pm4py)
-    num_cases = log_df_completo['case:concept:name'].nunique()
-
-    log_para_alinhar = log_full_pm4py
+    # 6. ABORDAGEM DEFINITIVA PARA ANÁLISE DE ALINHAMENTOS (usa amostra de 50 se os dados forem grandes)
+    log_df_para_alinhar = pm4py.convert_to_dataframe(log_full_pm4py)
+    num_cases = log_df_para_alinhar['case:concept:name'].nunique()
+    
+    log_para_alinhar_obj = log_full_pm4py
     align_title_suffix = ''
 
-    # Se houver mais de 50 casos, cria uma amostra de 50 para a análise de conformidade
     if num_cases > 50:
-        # Obtém uma lista de 50 IDs de casos aleatórios
-        case_ids_todos = log_df_completo['case:concept:name'].unique().tolist()
+        case_ids_todos = log_df_para_alinhar['case:concept:name'].unique().tolist()
         case_ids_amostra = random.sample(case_ids_todos, 50)
-        
-        # Filtra o log original para manter apenas os casos da amostra (método oficial)
-        log_para_alinhar = pm4py.filter_log(lambda trace: trace.attributes['concept:name'] in case_ids_amostra, log_full_pm4py)
+        df_amostra = log_df_para_alinhar[log_df_para_alinhar['case:concept:name'].isin(case_ids_amostra)]
+        log_para_alinhar_obj = pm4py.convert_to_event_log(df_amostra)
         align_title_suffix = ' (Amostra de 50 Casos)'
 
-    # As análises seguintes correm agora com o log completo ou com a amostra
-    aligned_traces = alignments_miner.apply(log_para_alinhar, net_im, im_im, fm_im)
+    aligned_traces = alignments_miner.apply(log_para_alinhar_obj, net_im, im_im, fm_im)
     deviations_list = [{'fitness': trace['fitness'], 'deviations': sum(1 for move in trace['alignment'] if '>>' in move[0] or '>>' in move[1])} for trace in aligned_traces if 'fitness' in trace]
     
     if deviations_list:
@@ -628,7 +622,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(x='fitness', y='deviations', data=deviations_df, alpha=0.6, ax=ax, color='#FBBF24'); ax.set_title(f'Fitness vs. Desvios{align_title_suffix}'); fig.tight_layout()
         plots['deviation_scatter_plot'] = convert_fig_to_bytes(fig)
 
-    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_para_alinhar, aligned_traces) if 'concept:name' in trace.attributes and 'fitness' in alignment]
+    case_fitness_data = [{'project_id': str(trace.attributes['concept:name']), 'fitness': alignment['fitness']} for trace, alignment in zip(log_para_alinhar_obj, aligned_traces) if 'concept:name' in trace.attributes and 'fitness' in alignment]
     
     if case_fitness_data:
         case_fitness_df = pd.DataFrame(case_fitness_data).merge(_df_projects[['project_id', 'end_date']], on='project_id')
@@ -637,6 +631,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title(f'Score de Conformidade ao Longo do Tempo{align_title_suffix}'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
         plots['conformance_over_time_plot'] = convert_fig_to_bytes(fig)
 
+    # 7. Análises Finais (correm com todos os dados)
     kpi_daily = _df_projects.groupby(_df_projects['end_date'].dt.date).agg(avg_cost_per_day=('cost_per_day', 'mean')).reset_index()
     kpi_daily.rename(columns={'end_date': 'completion_date'}, inplace=True)
     kpi_daily['completion_date'] = pd.to_datetime(kpi_daily['completion_date'])
@@ -653,28 +648,28 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         variant_sequences = {f"V{i+1} ({len(v)} casos)": [str(a) for a in k] for i, (k, v) in enumerate(top_variants)}
         fig, ax = plt.subplots(figsize=(12, 6)) 
         all_activities = sorted(list(set([act for seq in variant_sequences.values() for act in seq])))
-        activity_to_y = {activity: i for i, activity in enumerate(all_activities)}
-        
-        colors = plt.cm.get_cmap('tab10', len(variant_sequences.keys()))
-        for i, (variant_name, sequence) in enumerate(variant_sequences.items()):
-            ax.plot(range(len(sequence)), [activity_to_y[activity] for activity in sequence], marker='o', linestyle='-', label=variant_name, color=colors(i))
-            
-        ax.set_yticks(list(activity_to_y.values()))
-        ax.set_yticklabels(list(activity_to_y.keys()))
-        ax.set_title('Sequência de Atividades das 10 Variantes Mais Comuns')
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        fig.tight_layout()
+        if all_activities:
+            activity_to_y = {activity: i for i, activity in enumerate(all_activities)}
+            colors = plt.cm.get_cmap('tab10', len(variant_sequences.keys()))
+            for i, (variant_name, sequence) in enumerate(variant_sequences.items()):
+                ax.plot(range(len(sequence)), [activity_to_y[activity] for activity in sequence], marker='o', linestyle='-', label=variant_name, color=colors(i))
+            ax.set_yticks(list(activity_to_y.values()))
+            ax.set_yticklabels(list(activity_to_y.keys()))
+            ax.set_title('Sequência de Atividades das 10 Variantes Mais Comuns')
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            fig.tight_layout()
         return fig
     plots['custom_variants_sequence_plot'] = convert_fig_to_bytes(generate_custom_variants_plot(log_full_pm4py))
     
     milestones = ['Onboarding/Recolha de Dados', 'Análise de Risco e Proposta', 'Decisão de Crédito e Condições', 'Fecho/Desembolso']
     df_milestones = _df_tasks_raw[_df_tasks_raw['task_name'].isin(milestones)].copy()
     milestone_pairs = []
-    for project_id, group in df_milestones.groupby('project_id'):
-        sorted_tasks = group.sort_values('start_date')
-        for i in range(len(sorted_tasks) - 1):
-            duration = (sorted_tasks.iloc[i+1]['start_date'] - sorted_tasks.iloc[i]['end_date']).total_seconds() / 3600
-            if duration >= 0: milestone_pairs.append({'transition': f"{sorted_tasks.iloc[i]['task_name']} -> {sorted_tasks.iloc[i+1]['task_name']}", 'duration_hours': duration})
+    if not df_milestones.empty:
+        for project_id, group in df_milestones.groupby('project_id'):
+            sorted_tasks = group.sort_values('start_date')
+            for i in range(len(sorted_tasks) - 1):
+                duration = (sorted_tasks.iloc[i+1]['start_date'] - sorted_tasks.iloc[i]['end_date']).total_seconds() / 3600
+                if duration >= 0: milestone_pairs.append({'transition': f"{sorted_tasks.iloc[i]['task_name']} -> {sorted_tasks.iloc[i+1]['task_name']}", 'duration_hours': duration})
     df_milestone_pairs = pd.DataFrame(milestone_pairs)
     if not df_milestone_pairs.empty:
         fig, ax = plt.subplots(figsize=(10, 6)); sns.boxplot(data=df_milestone_pairs, x='duration_hours', y='transition', ax=ax, orient='h', hue='transition', legend=False, palette='coolwarm'); ax.set_title('Análise de Tempo entre Marcos do Processo'); fig.tight_layout()
@@ -697,9 +692,8 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     waiting_time_by_task = df_tasks_sorted.groupby('task_name')['sojourn_time_hours'].mean().reset_index()
     fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=waiting_time_by_task.sort_values(by='sojourn_time_hours', ascending=False), x='sojourn_time_hours', y='task_name', ax=ax, hue='task_name', legend=False, palette='magma'); ax.set_title('Tempo Médio de Espera por Atividade'); fig.tight_layout()
     plots['avg_waiting_time_by_activity_plot'] = convert_fig_to_bytes(fig)
-    
-    return plots, metrics
 
+    return plots, metrics
 # --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
 @st.cache_data
 def run_eda_analysis(dfs):
