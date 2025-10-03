@@ -297,6 +297,7 @@ def run_pre_mining_analysis(dfs):
     
     project_aggregates = df_alloc_costs.groupby('project_id').agg(total_actual_cost=('cost_of_work', 'sum'), num_resources=('resource_id', 'nunique')).reset_index()
     df_projects = df_projects.merge(project_aggregates, on='project_id', how='left')
+    df_projects['total_actual_cost'] = df_projects['total_actual_cost'].fillna(0)
     df_projects['cost_diff'] = df_projects['total_actual_cost'] - df_projects['budget_impact']
     df_projects['cost_per_day'] = df_projects['total_actual_cost'] / df_projects['actual_duration_days'].replace(0, np.nan)
     
