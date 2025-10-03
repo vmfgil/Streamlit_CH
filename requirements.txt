@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+networkx
+pm4py
+altair
+streamlit-option-menu
+missingno
