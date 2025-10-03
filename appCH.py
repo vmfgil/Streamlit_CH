@@ -987,15 +987,15 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 if self.current_date.weekday() < 5:
                     self.day_count += 1
 
-        project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
-        total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
-        if project_is_done:
-            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-            time_diff = project_info['total_duration_days'] - self.day_count
-            total_reward += self.rewards['completion_base']
-            total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
-            total_reward -= self.current_cost * self.rewards['cost_impact_factor']
-        return total_reward, project_is_done
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+            if project_is_done:
+                project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
+                time_diff = project_info['total_duration_days'] - self.day_count
+                total_reward += self.rewards['completion_base']
+                total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
+                total_reward -= self.current_cost * self.rewards['cost_impact_factor']
+            return total_reward, project_is_done
 
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
