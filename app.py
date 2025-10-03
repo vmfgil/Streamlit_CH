@@ -288,7 +288,7 @@ def run_pre_mining_analysis(dfs):
 
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
-    df_projects['project_type'] = df_projects['project_name'].str.extract(r'Projeto \d+: (.*?) ')
+    df_projects['project_type'] = df_projects['path_name']
     df_projects['completion_month'] = df_projects['end_date'].dt.to_period('M').astype(str)
 
     df_alloc_costs = df_resource_allocations.merge(df_resources, on='resource_id')
@@ -466,9 +466,14 @@ def run_pre_mining_analysis(dfs):
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
     def get_phase(task_type):
-        if task_type in ['Desenvolvimento', 'Correção', 'Revisão', 'Design']: return 'Desenvolvimento & Design'
-        if task_type == 'Teste': return 'Teste (QA)'
-        if task_type in ['Deploy', 'DBA']: return 'Operações & Deploy'
+        if task_type in ['Onboarding', 'Validação KYC']:
+            return '1. Onboarding e Comercial'
+        elif task_type in ['Análise Documental', 'Análise de Risco', 'Avaliação da Imóvel']:
+            return '2. Análise e Risco'
+        elif task_type in ['Decisão de Crédito', 'Preparação Legal']:
+            return '3. Decisão e Contratual'
+        elif task_type == 'Fecho':
+            return '4. Fecho e Desembolso'
         return 'Outros'
     df_tasks['phase'] = df_tasks['task_type'].apply(get_phase)
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
@@ -613,7 +618,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         return fig
     plots['custom_variants_sequence_plot'] = convert_fig_to_bytes(generate_custom_variants_plot(log_full_pm4py))
     
-    milestones = ['Analise e Design', 'Implementacao da Funcionalidade', 'Execucao de Testes', 'Deploy da Aplicacao']
+    milestones = ['Onboarding/Recolha de Dados', 'Análise de Risco e Proposta', 'Decisão de Crédito e Condições', 'Fecho/Desembolso']
     df_milestones = _df_tasks_raw[_df_tasks_raw['task_name'].isin(milestones)].copy()
     milestone_pairs = []
     for project_id, group in df_milestones.groupby('project_id'):
@@ -665,7 +670,7 @@ def run_eda_analysis(dfs):
 
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
-    df_projects['project_type'] = df_projects['project_name'].str.extract(r'Projeto \d+: (.*?) ')
+    df_projects['project_type'] = df_projects['path_name']
     df_tasks['task_duration_days'] = (df_tasks['end_date'] - df_tasks['start_date']).dt.days
     df_projects['completion_quarter'] = df_projects['end_date'].dt.to_period('Q')
     df_projects['completion_month'] = df_projects['end_date'].dt.to_period('M')
@@ -833,17 +838,35 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     # --- AMBIENTE E AGENTE (CLASSES) ---
     class ProjectManagementEnv:
-        def __init__(self, df_tasks, df_resources, df_dependencies, min_progress_for_next_phase=0.7, reward_config=None):
+        def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, reward_config=None, min_progress_for_next_phase=0.7):
             self.rewards = reward_config
             self.df_tasks = df_tasks
             self.df_resources = df_resources
             self.df_dependencies = df_dependencies
+            self.df_projects_info = df_projects_info
+    
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist())
             self.task_types = sorted(self.df_tasks['task_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
             self.all_actions = self._generate_all_actions()
             self.min_progress_for_next_phase = min_progress_for_next_phase
-            self.reset(df_projects.iloc[0]['project_id'])
+    
+            self.TASK_TYPE_RESOURCE_MAP = {
+                'Onboarding': ['Analista Comercial'],
+                'Validação KYC': ['Analista Comercial'],
+                'Análise Documental': ['Analista Operações/Legal'],
+                'Análise de Risco': ['Analista de Risco'],
+                'Avaliação da Imóvel': ['Avaliador Externo'],
+                'Decisão de Crédito': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo'],
+                'Preparação Legal': ['Analista Operações/Legal'],
+                'Fecho': ['Analista Operações/Legal']
+            }
+            self.RISK_ESCALATION_MAP = {
+                'A': ['Analista de Risco'],
+                'B': ['Analista de Risco', 'Diretor de Risco'],
+                'C': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito'],
+                'D': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo'],
+            }
 
         def _generate_all_actions(self):
             actions = set()
@@ -854,29 +877,34 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return tuple(sorted(list(actions)))
 
         def reset(self, project_id):
-            self.current_project_id = project_id
-            project_info = df_projects.loc[df_projects['project_id'] == project_id].iloc[0]
-            self.current_cost = 0.0
-            self.day_count = 0
-            self.current_date = project_info['start_date']
-            self.episode_logs = []
-            project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
-            self.tasks_to_do_count = len(project_tasks)
-            self.total_estimated_budget = project_info['actual_historical_cost']
-            self.total_estimated_effort = project_tasks[['estimated_effort_dev', 'estimated_effort_qa', 'estimated_effort_ops', 'estimated_effort_dba']].sum().sum()
-            project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
-            self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
-            self.tasks_state = {
-                task['task_id']: {'status': 'Pendente', 'progress_dev': 0.0, 'progress_qa': 0.0, 'progress_ops': 0.0, 'progress_dba': 0.0,
-                                  'estimated_effort_dev': task['estimated_effort_dev'], 'estimated_effort_qa': task['estimated_effort_qa'],
-                                  'estimated_effort_ops': task['estimated_effort_ops'], 'estimated_effort_dba': task['estimated_effort_dba'],
-                                  'priority': task['priority'], 'task_type': task['task_type']}
-                for _, task in project_tasks.iterrows()
-            }
-            return self.get_state()
+                self.current_project_id = project_id
+                project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == project_id].iloc[0]
+                self.current_risk_rating = project_info['risk_rating']
+                self.current_cost = 0.0
+                self.day_count = 0
+                self.current_date = project_info['start_date']
+                self.episode_logs = []
+        
+                project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
+                self.tasks_to_do_count = len(project_tasks)
+                self.total_estimated_budget = project_info['actual_historical_cost']
+                self.total_estimated_effort = project_tasks['estimated_effort'].sum()
+        
+                project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
+                self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
+        
+                self.tasks_state = {
+                    task['task_id']: {'status': 'Pendente',
+                                      'progress': 0.0,
+                                      'estimated_effort': task['estimated_effort'] * 8,
+                                      'priority': task['priority'],
+                                      'task_type': task['task_type']}
+                    for _, task in project_tasks.iterrows()
+                }
+                return self.get_state()
 
         def get_state(self):
-            progress_total = sum(d.get('progress_dev',0) + d.get('progress_qa',0) + d.get('progress_ops',0) + d.get('progress_dba',0) for d in self.tasks_state.values())
+            progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values())
             progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
             budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
             project_info = df_projects.loc[df_projects['project_id'] == self.current_project_id].iloc[0]
@@ -897,64 +925,77 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return list(possible_actions)
 
         def _is_task_eligible(self, task_id, res_type):
-            task_data = self.tasks_state[task_id]
-            if task_data['status'] == 'Concluída': return False
-            pred_id = self.task_dependencies.get(task_id)
-            if pred_id and self.tasks_state.get(pred_id, {}).get('status') != 'Concluída': return False
-            effort_map = {'Desenvolvedor': 'dev', 'Testador': 'qa', 'Eng. DevOps': 'ops', 'DBA': 'dba'}
-            phase = effort_map.get(res_type)
-            if not phase or task_data[f'progress_{phase}'] >= task_data[f'estimated_effort_{phase}']: return False
-            dependencies = {'qa': 'dev', 'ops': 'qa', 'dba': 'dev'}
-            if phase in dependencies:
-                dep_phase = dependencies[phase]
-                if task_data[f'estimated_effort_{dep_phase}'] > 0:
-                    progress_ratio = task_data[f'progress_{dep_phase}'] / task_data[f'estimated_effort_{dep_phase}']
-                    if progress_ratio < self.min_progress_for_next_phase: return False
-            return True
+                task_data = self.tasks_state[task_id]
+        
+                if task_data['status'] == 'Concluída':
+                    return False
+        
+                pred_id = self.task_dependencies.get(task_id)
+                if pred_id and self.tasks_state.get(pred_id, {}).get('status') != 'Concluída':
+                    return False
+        
+                task_type = task_data['task_type']
+        
+                if task_type == 'Decisão de Crédito':
+                    required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, [])
+                    return res_type in required_resources
+                else:
+                    allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
+                    return res_type in allowed_resources
 
         def step(self, action_set):
-            if self.current_date.weekday() >= 5:
-                self.current_date += timedelta(days=1)
-                daily_cost = 0; reward_from_tasks = 0
-            else:
-                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
-                for res_type, task_type in action_set:
-                    if task_type == "idle":
-                        reward_from_tasks -= self.rewards['idle_penalty']; continue
-                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                    if available_resources.empty: continue
-                    res_info = available_resources.sample(1).iloc[0]
-                    eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                    if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id'])
-                    eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
-                    task_id_to_work = eligible_tasks[0]
-                    task_data = self.tasks_state[task_id_to_work]
-                    effort_type = {'Desenvolvedor': 'dev', 'Testador': 'qa', 'Eng. DevOps': 'ops', 'DBA': 'dba'}[res_type]
-                    remaining_effort = task_data[f'estimated_effort_{effort_type}'] - task_data[f'progress_{effort_type}']
-                    hours_to_work = min(res_info['daily_capacity'], remaining_effort)
-                    cost_today = hours_to_work * res_info['cost_per_hour']
-                    daily_cost += cost_today
-                    self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-                    task_data[f'progress_{effort_type}'] += hours_to_work
-                    if (task_data['progress_dev'] >= task_data['estimated_effort_dev'] and task_data['progress_qa'] >= task_data['estimated_effort_qa'] and
-                        task_data['progress_ops'] >= task_data['estimated_effort_ops'] and task_data['progress_dba'] >= task_data['estimated_effort_dba']):
-                        task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+        if self.current_date.weekday() >= 5:
+            self.current_date += timedelta(days=1)
+            daily_cost = 0
+            reward_from_tasks = 0
+        else:
+            daily_cost = 0
+            reward_from_tasks = 0
+            resources_used_today = set()
+            for res_type, task_type in action_set:
+                if task_type == "idle":
+                    reward_from_tasks -= self.rewards['idle_penalty']
+                    continue
+                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
+                if available_resources.empty:
+                    continue
+                res_info = available_resources.sample(1).iloc[0]
+                eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
+                if not eligible_tasks:
+                    continue
+                resources_used_today.add(res_info['resource_id'])
+                eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
+                task_id_to_work = eligible_tasks[0]
+                task_data = self.tasks_state[task_id_to_work]
+                remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                hours_to_work = min(res_info['daily_capacity'], remaining_effort)
+                cost_today = hours_to_work * res_info['cost_per_hour']
+                daily_cost += cost_today
+                self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
 
-                self.current_cost += daily_cost
-                self.current_date += timedelta(days=1)
-                if self.current_date.weekday() < 5: self.day_count += 1
+                if task_data['status'] == 'Pendente':
+                    task_data['status'] = 'Em Andamento'
 
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
-            if project_is_done:
-                project_info = df_projects.loc[df_projects['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count
-                total_reward += self.rewards['completion_base']
-                total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
-                total_reward -= self.current_cost * self.rewards['cost_impact_factor']
-            return total_reward, project_is_done
+                task_data['progress'] += hours_to_work
+
+                if task_data['progress'] >= task_data['estimated_effort']:
+                    task_data['status'] = 'Concluída'
+                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+
+            self.current_cost += daily_cost
+            self.current_date += timedelta(days=1)
+            if self.current_date.weekday() < 5:
+                self.day_count += 1
+
+        project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
+        total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+        if project_is_done:
+            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
+            time_diff = project_info['total_duration_days'] - self.day_count
+            total_reward += self.rewards['completion_base']
+            total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
+            total_reward -= self.current_cost * self.rewards['cost_impact_factor']
+        return total_reward, project_is_done
 
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
@@ -994,7 +1035,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8, random_state=SEED)
     df_projects_test = df_projects.drop(df_projects_train.index)
 
-    env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, reward_config=reward_config)
+    env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
     agent = QLearningAgent(actions=env.all_actions)
     
     time_per_episode = 0.06 
