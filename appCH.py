@@ -311,7 +311,7 @@ def run_pre_mining_analysis(dfs):
     event_log_pm4py = pm4py.convert_to_event_log(log_df_final)
     
     tables['kpi_data'] = {
-        'Total de Projetos': len(df_projects),
+        'Total de Processos': len(df_projects),
         'Total de Tarefas': len(df_tasks),
         'Total de Recursos': len(df_resources),
         'Duração Média (dias)': f"{df_projects['actual_duration_days'].mean():.1f}"
@@ -322,7 +322,7 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 5)); sns.scatterplot(data=df_projects, x='days_diff', y='cost_diff', hue='project_type', s=80, alpha=0.7, ax=ax, palette='viridis'); ax.axhline(0, color='#FBBF24', ls='--'); ax.axvline(0, color='#FBBF24', ls='--'); ax.set_title("Matriz de Performance (PM)")
     plots['performance_matrix'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(8, 4)); sns.boxplot(x=df_projects['actual_duration_days'], ax=ax, color="#2563EB"); sns.stripplot(x=df_projects['actual_duration_days'], color="#FBBF24", size=4, jitter=True, alpha=0.7, ax=ax); ax.set_title("Distribuição da Duração dos Projetos (PM)")
+    fig, ax = plt.subplots(figsize=(8, 4)); sns.boxplot(x=df_projects['actual_duration_days'], ax=ax, color="#2563EB"); sns.stripplot(x=df_projects['actual_duration_days'], color="#FBBF24", size=4, jitter=True, alpha=0.7, ax=ax); ax.set_title("Distribuição da Duração dos Processos (PM)")
     plots['case_durations_boxplot'] = convert_fig_to_bytes(fig)
     
     lead_times = log_df_final.groupby("case:concept:name")["time:timestamp"].agg(["min", "max"]).reset_index()
@@ -381,7 +381,7 @@ def run_pre_mining_analysis(dfs):
     resource_metrics = df_full_context.groupby("resource_name").agg(unique_cases=('project_id', 'nunique'), event_count=('task_id', 'count')).reset_index()
     resource_metrics["avg_events_per_case"] = resource_metrics["event_count"] / resource_metrics["unique_cases"]
     
-    fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_events_per_case', y='resource_name', data=resource_metrics.sort_values('avg_events_per_case', ascending=False).head(10), ax=ax, hue='resource_name', legend=False, palette='coolwarm'); ax.set_title("Recursos por Média de Tarefas por Projeto")
+    fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_events_per_case', y='resource_name', data=resource_metrics.sort_values('avg_events_per_case', ascending=False).head(10), ax=ax, hue='resource_name', legend=False, palette='coolwarm'); ax.set_title("Recursos por Média de Tarefas por Processo")
     plots['resource_avg_events'] = convert_fig_to_bytes(fig)
     
     resource_activity_matrix_pivot = df_full_context.pivot_table(index='resource_name', columns='task_name', values='hours_worked', aggfunc='sum').fillna(0)
@@ -426,7 +426,7 @@ def run_pre_mining_analysis(dfs):
     
     delayed_projects = df_projects[df_projects['days_diff'] > 0]
     tables['cost_of_delay_kpis'] = {
-        'Custo Total Projetos Atrasados': f"€{delayed_projects['total_actual_cost'].sum():,.2f}",
+        'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].sum():,.2f}",
         'Atraso Médio (dias)': f"{delayed_projects['days_diff'].mean():.1f}",
         'Custo Médio/Dia Atraso': f"€{(delayed_projects.get('total_actual_cost', 0) / delayed_projects['days_diff']).mean():,.2f}"
     }
@@ -560,11 +560,11 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         ids_amostra_gantt = _df_projects['project_id'].sample(n=50, random_state=42).tolist()
         df_projects_gantt = _df_projects[_df_projects['project_id'].isin(ids_amostra_gantt)]
         df_tasks_gantt = _df_tasks_raw[_df_tasks_raw['project_id'].isin(ids_amostra_gantt)]
-        gantt_title = 'Linha do Tempo de 50 Projetos (Amostra)'
+        gantt_title = 'Linha do Tempo de 50 processos (Amostra)'
     else:
         df_projects_gantt = _df_projects
         df_tasks_gantt = _df_tasks_raw
-        gantt_title = 'Linha do Tempo de Todos os Projetos (Gantt Chart)'
+        gantt_title = 'Linha do Tempo de Todos os processos (Gantt Chart)'
 
     fig_gantt, ax_gantt = plt.subplots(figsize=(20, max(10, len(df_projects_gantt) * 0.4)))
     all_projects = df_projects_gantt.sort_values('start_date')['project_id'].tolist()
@@ -577,7 +577,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         handles = [plt.Rectangle((0,0),1,1, color=color_map[label]) for label in color_map]
         ax_gantt.legend(handles, color_map.keys(), title='Tipo de Tarefa', bbox_to_anchor=(1.05, 1), loc='upper left')
 
-    ax_gantt.set_yticks(list(project_y_map.values())); ax_gantt.set_yticklabels([f"Projeto {pid}" for pid in project_y_map.keys()]); ax_gantt.invert_yaxis(); ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d')); plt.xticks(rotation=45)
+    ax_gantt.set_yticks(list(project_y_map.values())); ax_gantt.set_yticklabels([f"Processo {pid}" for pid in project_y_map.keys()]); ax_gantt.invert_yaxis(); ax_gantt.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d')); plt.xticks(rotation=45)
     ax_gantt.set_title(gantt_title); fig_gantt.tight_layout()
     plots['gantt_chart_all_projects'] = convert_fig_to_bytes(fig_gantt)
     
@@ -758,13 +758,13 @@ def run_eda_analysis(dfs):
 
     # --- Geração dos Gráficos (da célula 6 do notebook) ---
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_projects, x='project_status', ax=ax, palette='viridis'); ax.set_title('Distribuição do Status dos Projetos')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_projects, x='project_status', ax=ax, palette='viridis'); ax.set_title('Distribuição do Status dos Processos')
     plots['plot_01'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='days_diff', kde=True, color='salmon', ax=ax); ax.set_title('Diferença entre Data Real e Planeada')
     plots['plot_03'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(15, 8)); df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False); sns.barplot(data=df_projects_sorted, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax); sns.barplot(data=df_projects_sorted, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax); ax.tick_params(axis='x', rotation=90); ax.legend(); ax.set_title('Custo Real vs. Orçamento por Projeto')
+    fig, ax = plt.subplots(figsize=(15, 8)); df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False); sns.barplot(data=df_projects_sorted, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax); sns.barplot(data=df_projects_sorted, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax); ax.tick_params(axis='x', rotation=90); ax.legend(); ax.set_title('Custo Real vs. Orçamento por Processo')
     plots['plot_04'] = convert_fig_to_bytes(fig)
     
     df_projects_q = df_projects.dropna(subset=['completion_quarter']).copy()
@@ -772,10 +772,10 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.boxplot(data=df_projects_q, x='completion_quarter', y='days_diff', ax=ax, palette='coolwarm'); ax.set_title('Performance de Prazos por Trimestre')
     plots['plot_05'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_projects_q.groupby('completion_quarter')['total_actual_cost'].mean().reset_index(), x='completion_quarter', y='total_actual_cost', ax=ax, palette='viridis'); ax.set_title('Custo Médio dos Projetos por Trimestre')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_projects_q.groupby('completion_quarter')['total_actual_cost'].mean().reset_index(), x='completion_quarter', y='total_actual_cost', ax=ax, palette='viridis'); ax.set_title('Custo Médio dos Processos por Trimestre')
     plots['plot_06'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_projects_q.groupby('completion_quarter')['num_resources'].mean().reset_index(), x='completion_quarter', y='num_resources', ax=ax, palette='crest'); ax.set_title('Nº Médio de Recursos por Projeto a Cada Trimestre')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_projects_q.groupby('completion_quarter')['num_resources'].mean().reset_index(), x='completion_quarter', y='num_resources', ax=ax, palette='crest'); ax.set_title('Nº Médio de Recursos por Processo a Cada Trimestre')
     plots['plot_07'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_tasks, y='task_type', order=df_tasks['task_type'].value_counts().index, ax=ax, palette='crest'); ax.set_title('Distribuição de Tarefas por Tipo')
@@ -821,7 +821,7 @@ def run_eda_analysis(dfs):
         fig, ax = plt.subplots(figsize=(10, 6)); sns.violinplot(data=df_skill_delay, x='skill_level', y='days_diff', ax=ax, palette='muted'); ax.set_title('Atraso por Nível de Competência')
         plots['plot_23'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_ratio', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Projetos')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_ratio', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Processos')
     plots['plot_24'] = convert_fig_to_bytes(fig)
     
     predecessor_counts = df_dependencies.merge(df_tasks, left_on='task_id_predecessor', right_on='task_id')['task_type'].value_counts()
@@ -833,7 +833,7 @@ def run_eda_analysis(dfs):
     project_deps = df_dependencies[df_dependencies['project_id'] == PROJECT_ID_EXAMPLE]
     if not project_deps.empty:
         G = nx.from_pandas_edgelist(project_deps, 'task_id_predecessor', 'task_id_successor', create_using=nx.DiGraph()); pos = nx.spring_layout(G, seed=42)
-        fig, ax = plt.subplots(figsize=(14, 9)); nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, ax=ax); ax.set_title(f'Grafo de Dependências: Projeto {PROJECT_ID_EXAMPLE}')
+        fig, ax = plt.subplots(figsize=(14, 9)); nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, ax=ax); ax.set_title(f'Grafo de Dependências: Processo {PROJECT_ID_EXAMPLE}')
         plots['plot_26'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='complexity_ratio', y='days_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Complexidade e Atraso')
@@ -854,8 +854,8 @@ def run_eda_analysis(dfs):
     plots['plot_30'] = convert_fig_to_bytes(fig)
     
     fig, (ax1, ax2) = plt.subplots(2,1, figsize=(14,10));
-    ax1.bar(monthly_kpis['completion_month'], monthly_kpis['completed_projects'], color='seagreen'); ax1.set_title('Nº de Projetos Concluídos por Mês'); ax1.grid(True)
-    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='purple'); ax2.set_title('Duração Média dos Projetos Concluídos'); ax2.grid(True)
+    ax1.bar(monthly_kpis['completion_month'], monthly_kpis['completed_projects'], color='seagreen'); ax1.set_title('Nº de Processos Concluídos por Mês'); ax1.grid(True)
+    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='purple'); ax2.set_title('Duração Média dos Processos Concluídos'); ax2.grid(True)
     plots['plot_31'] = convert_fig_to_bytes(fig)
 
     return plots, tables
@@ -878,7 +878,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left').fillna({'total_actual_cost': 0})
     
     # --- PASSO 3: CRIAR A AMOSTRA ---
-    st.info("A componente de RL irá correr numa amostra de 500 projetos para garantir a performance.")
+    st.info("A componente de RL irá correr numa amostra de 500 processos para garantir a performance.")
     ids_amostra = st.session_state['rl_sample_ids']
     dfs_rl = {}
     for nome_df, df in dfs.items():
@@ -1058,9 +1058,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
     fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
     axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered'); axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[0].set_title('Duração do Projeto (Conjunto de Teste da Amostra)'); axes[0].set_xticks(index_test); axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[0].legend()
+    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)'); axes[0].set_xticks(index_test); axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[0].legend()
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered'); axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Projeto (Conjunto de Teste da Amostra)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[1].legend()
+    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[1].legend()
     plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
     def get_global_performance_df(results_df):
@@ -1217,14 +1217,14 @@ def dashboard_page():
         st.subheader("1. Visão Geral e Custos")
         kpi_data = tables_pre.get('kpi_data', {})
         kpi_cols = st.columns(4)
-        kpi_cols[0].metric(label="Total de Projetos", value=kpi_data.get('Total de Projetos'))
+        kpi_cols[0].metric(label="Total de Processos", value=kpi_data.get('Total de Processos'))
         kpi_cols[1].metric(label="Total de Tarefas", value=kpi_data.get('Total de Tarefas'))
         kpi_cols[2].metric(label="Total de Recursos", value=kpi_data.get('Total de Recursos'))
         kpi_cols[3].metric(label="Duração Média", value=f"{kpi_data.get('Duração Média (dias)')} dias")
         
         kpi_delay_data = tables_pre.get('cost_of_delay_kpis', {})
         kpi_cols_2 = st.columns(3)
-        kpi_cols_2[0].metric(label="Custo Total em Atraso", value=kpi_delay_data.get('Custo Total Projetos Atrasados', 'N/A'))
+        kpi_cols_2[0].metric(label="Custo Total em Atraso", value=kpi_delay_data.get('Custo Total Processos Atrasados', 'N/A'))
         kpi_cols_2[1].metric(label="Atraso Médio (dias)", value=kpi_delay_data.get('Atraso Médio (dias)', 'N/A'))
         kpi_cols_2[2].metric(label="Custo Médio/Dia de Atraso", value=kpi_delay_data.get('Custo Médio/Dia Atraso', 'N/A'))
         
@@ -1232,18 +1232,18 @@ def dashboard_page():
         c1, c2 = st.columns(2)
         with c1:
             create_card("Matriz de Performance (Custo vs Prazo) (PM)", "🎯", chart_bytes=plots_pre.get('performance_matrix'))
-            create_card("Top 5 Projetos Mais Caros", "💰", dataframe=tables_pre.get('outlier_cost'))
+            create_card("Top 5 Processos Mais Caros", "💰", dataframe=tables_pre.get('outlier_cost'))
             create_card("Séries Temporais de KPIs de Performance", "📈", chart_bytes=plots_post.get('kpi_time_series'))
-            create_card("Distribuição do Status dos Projetos", "📊", chart_bytes=plots_eda.get('plot_01'))
-            create_card("Custo Médio dos Projetos por Trimestre", "💶", chart_bytes=plots_eda.get('plot_06'))
+            create_card("Distribuição do Status dos Processos", "📊", chart_bytes=plots_eda.get('plot_01'))
+            create_card("Custo Médio dos Processos por Trimestre", "💶", chart_bytes=plots_eda.get('plot_06'))
             create_card("Alocação de Custos por Orçamento e Recurso", "💰", chart_bytes=plots_eda.get('plot_17'))
         with c2:
             create_card("Custo por Tipo de Recurso", "💶", chart_bytes=plots_pre.get('cost_by_resource_type'))
-            create_card("Top 5 Projetos Mais Longos", "⏳", dataframe=tables_pre.get('outlier_duration'))
+            create_card("Top 5 Processos Mais Longos", "⏳", dataframe=tables_pre.get('outlier_duration'))
             create_card("Custo Médio por Dia ao Longo do Tempo", "💸", chart_bytes=plots_post.get('cost_per_day_time_series'))
-            create_card("Custo Real vs. Orçamento por Projeto", "💳", chart_bytes=plots_eda.get('plot_04'))
+            create_card("Custo Real vs. Orçamento por Processo", "💳", chart_bytes=plots_eda.get('plot_04'))
             create_card("Distribuição do Custo por Dia (Eficiência)", "💡", chart_bytes=plots_eda.get('plot_16'))
-            create_card("Evolução do Volume e Tamanho dos Projetos", "📈", chart_bytes=plots_eda.get('plot_31'))
+            create_card("Evolução do Volume e Tamanho dos Processos", "📈", chart_bytes=plots_eda.get('plot_31'))
 
     elif st.session_state.current_section == "performance":
         st.subheader("2. Performance e Prazos")
@@ -1251,7 +1251,7 @@ def dashboard_page():
         with c1:
             create_card("Relação Lead Time vs Throughput", "🔗", chart_bytes=plots_pre.get('lead_time_vs_throughput'))
             create_card("Distribuição do Lead Time", "⏱️", chart_bytes=plots_pre.get('lead_time_hist'))
-            create_card("Distribuição da Duração dos Projetos (PM)", "📊", chart_bytes=plots_pre.get('case_durations_boxplot'))
+            create_card("Distribuição da Duração dos Processos (PM)", "📊", chart_bytes=plots_pre.get('case_durations_boxplot'))
             create_card("Gráfico Acumulado de Throughput", "📈", chart_bytes=plots_post.get('cumulative_throughput_plot'))
             create_card("Performance de Prazos por Trimestre", "📉", chart_bytes=plots_eda.get('plot_05'))
         with c2:
@@ -1267,14 +1267,14 @@ def dashboard_page():
         with c4:
             create_card("Estatísticas de Performance", "📈", dataframe=tables_pre.get('perf_stats'))
             
-        create_card("Linha do Tempo de Todos os Projetos (Gantt Chart)", "📊", chart_bytes=plots_post.get('gantt_chart_all_projects'))
+        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", "📊", chart_bytes=plots_post.get('gantt_chart_all_projects'))
 
     elif st.session_state.current_section == "recursos":
         st.subheader("3. Recursos e Equipa")
         c1, c2 = st.columns(2)
         with c1:
             create_card("Distribuição de Recursos por Tipo", "🔧", chart_bytes=plots_eda.get('plot_12'))
-            create_card("Recursos por Média de Tarefas/Projeto", "🧑‍💻", chart_bytes=plots_pre.get('resource_avg_events'))
+            create_card("Recursos por Média de Tarefas/Processo", "🧑‍💻", chart_bytes=plots_pre.get('resource_avg_events'))
             create_card("Eficiência Semanal (Horas Trabalhadas)", "🗓️", chart_bytes=plots_pre.get('weekly_efficiency'))
             create_card("Impacto do Tamanho da Equipa no Atraso (PM)", "👨‍👩‍👧‍👦", chart_bytes=plots_pre.get('delay_by_teamsize'))
             create_card("Benchmark de Throughput por Equipa", "🏆", chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'))
@@ -1284,7 +1284,7 @@ def dashboard_page():
             create_card("Top 10 Handoffs entre Recursos", "🔄", chart_bytes=plots_pre.get('resource_handoffs'))
             create_card("Métricas de Eficiência Individual por Recurso", "🎯", chart_bytes=plots_post.get('resource_efficiency_plot'))
             create_card("Duração Mediana por Tamanho da Equipa", "⏱️", chart_bytes=plots_pre.get('median_duration_by_teamsize'))
-            create_card("Nº Médio de Recursos por Projeto a Cada Trimestre", "👥", chart_bytes=plots_eda.get('plot_07'))
+            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", "👥", chart_bytes=plots_eda.get('plot_07'))
             create_card("Atraso Médio por Recurso", "⏳", chart_bytes=plots_eda.get('plot_14'))
         
         col_skill, col_bipartite = st.columns(2)
@@ -1356,14 +1356,14 @@ def dashboard_page():
             create_card("Principais Loops de Rework", "🔁", dataframe=tables_pre.get('rework_loops_table'))
             create_card("Distribuição de Tarefas por Prioridade", "🥇", chart_bytes=plots_eda.get('plot_09'))
             create_card("Top 10 Tarefas Específicas Mais Demoradas", "🕒", chart_bytes=plots_eda.get('plot_11'))
-            create_card("Distribuição da Complexidade dos Projetos", "🕸️", chart_bytes=plots_eda.get('plot_24'))
+            create_card("Distribuição da Complexidade dos Processos", "🕸️", chart_bytes=plots_eda.get('plot_24'))
             create_card("Relação entre Complexidade e Atraso", "🔗", chart_bytes=plots_eda.get('plot_27'))
 
         c5, c6 = st.columns(2)
         with c5:
              create_card("Top 10 Variantes de Processo por Frequência", "📊", chart_bytes=plots_pre.get('variants_frequency'))
         with c6:
-            create_card("Grafo de Dependências: Projeto 25", "📈", chart_bytes=plots_eda.get('plot_26'))
+            create_card("Grafo de Dependências: Processo 25", "📈", chart_bytes=plots_eda.get('plot_26'))
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
@@ -1379,7 +1379,7 @@ def rl_page():
         st.session_state['rl_sample_ids'] = st.session_state.dfs['projects']['project_id'].sample(n=500, random_state=42).tolist()
     # -----------------------------------------------------------------
 
-    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de projetos. O treino e a análise correm sobre uma amostra de 500 projetos para garantir a performance.")
+    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de processos. O treino e a análise correm sobre uma amostra de 500 processos para garantir a performance.")
 
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
@@ -1390,12 +1390,12 @@ def rl_page():
         c1, c2 = st.columns(2)
         with c1:
             default_index = 0
-            # Garante que o projeto '25' só é pré-selecionado se existir na amostra
+            # Garante que o processo '25' só é pré-selecionado se existir na amostra
             if "25" in project_ids_elegiveis:
                 default_index = project_ids_elegiveis.index("25")
 
             project_id_to_simulate = st.selectbox(
-                "Selecione o Projeto para Simulação Detalhada (Amostra)",
+                "Selecione o Processo para Simulação Detalhada (Amostra)",
                 options=project_ids_elegiveis,
                 index=default_index
             )
@@ -1465,7 +1465,7 @@ def rl_page():
         st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
         create_card("Comparação do Desempenho (Conjunto de Teste da Amostra)", "🎯", chart_bytes=plots_rl.get('evaluation_comparison_test'))
         
-        st.markdown(f"<h4>Análise Detalhada da Simulação (Projeto {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
+        st.markdown(f"<h4>Análise Detalhada da Simulação (Processo {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
         if summary_df is not None:
             metric_cols = st.columns(2)
@@ -1478,7 +1478,7 @@ def rl_page():
                 sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
                 st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real")
 
-        create_card(f"Comparação Detalhada (Projeto {st.session_state.project_id_simulated})", "🔍", chart_bytes=plots_rl.get('project_detailed_comparison'))
+        create_card(f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", "🔍", chart_bytes=plots_rl.get('project_detailed_comparison'))
 
 # --- CONTROLO PRINCIPAL DA APLICAÇÃO ---
 def main():
