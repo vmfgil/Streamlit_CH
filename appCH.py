@@ -426,7 +426,7 @@ def run_pre_mining_analysis(dfs):
     
     delayed_projects = df_projects[df_projects['days_diff'] > 0]
     tables['cost_of_delay_kpis'] = {
-        'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].sum():,.2f}",
+        'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].fillna(0).sum():,.2f}",
         'Atraso Médio (dias)': f"{delayed_projects['days_diff'].mean():.1f}",
         'Custo Médio/Dia Atraso': f"€{(delayed_projects.get('total_actual_cost', 0) / delayed_projects['days_diff']).mean():,.2f}"
     }
