@@ -610,35 +610,40 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig_net, ax_net = plt.subplots(figsize=(18, 12)); G = nx.DiGraph();
     for (source, target), weight in handovers.items(): G.add_edge(str(source), str(target), weight=weight)
     if G.nodes():
-        # 2. LAYOUT: Alterado de 'spring_layout' para 'spectral_layout' (melhor distribuição de nós)
-        # Aumentado 'scale' para usar todo o espaço.
-        pos = nx.spectral_layout(G, scale=1.5); 
+        # 2. Layout: Usamos spring_layout com 'k' baixo (0.5) para afastar os nós
+        pos = nx.spring_layout(G, k=0.5, iterations=50); 
         
         weights = [G[u][v]['weight'] for u,v in G.edges()]; 
         
-        # 3. DESENHO: Aumentado 'node_size' e reduzido 'font_size' para evitar sobreposição de etiquetas
+        # 3. Desenho: Aumentado node_size (1500) e adicionado borda (edgecolors) para dar relevo
         nx.draw(G, 
                 pos, 
                 with_labels=True, 
                 node_color='#2563EB', 
-                node_size=800, # Aumenta o tamanho dos nós (defeito é 300)
+                node_size=1500, # Aumenta o tamanho do nó para maior relevo
+                edgecolors='white', # Adiciona borda branca
+                linewidths=2, # Define a espessura da borda
                 edge_color='#E5E7EB', 
                 width=[w*0.5 for w in weights], 
                 ax=ax_net, 
-                font_size=6, # Reduz ligeiramente o tamanho da letra
+                font_size=8, # Tamanho da fonte para o nome do recurso
+                font_color='#E5E7EB',
+                alpha=1.0, # Opacidade máxima para o nó se destacar
                 connectionstyle='arc3,rad=0.1', 
                 labels={node: node for node in G.nodes()})
         
-        # 4. EDGE LABELS: Reduzido o 'font_size' para as etiquetas nas arestas
+        # 4. Etiquetas: Ajuste fino do font_size e adicionado Bounding Box (fundo)
         nx.draw_networkx_edge_labels(G, 
                                      pos, 
                                      edge_labels=nx.get_edge_attributes(G, 'weight'), 
                                      ax=ax_net, 
                                      font_color='#FBBF24', 
-                                     font_size=7); # Reduz o tamanho da letra das etiquetas das arestas
-        
-        ax_net.set_title('Rede Social de Recursos (Handover Network)')
-        plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
+                                     font_size=7, # Tamanho da fonte para o peso nas arestas
+                                     # Bbox adiciona um fundo ao número, separando-o das linhas
+                                     bbox={'facecolor':'#1E293B', 'alpha':0.6, 'edgecolor':'#1E293B'}); 
+    
+    ax_net.set_title('Rede Social de Recursos (Handover Network)')
+    plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
     if 'skill_level' in _df_resources.columns:
         perf_recursos = _df_full_context.groupby('resource_id').agg(total_hours=('hours_worked', 'sum'), total_tasks=('task_id', 'nunique')).reset_index()
