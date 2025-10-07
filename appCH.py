@@ -426,26 +426,31 @@ def run_pre_mining_analysis(dfs):
     
     rework_loops = Counter(f"{trace[i]} -> {trace[i+1]} -> {trace[i]}" for trace in variants_df['trace'] for i in range(len(trace) - 2) if trace[i] == trace[i+2] and trace[i] != trace[i+1])
     tables['rework_loops_table'] = pd.DataFrame(rework_loops.most_common(10), columns=['rework_loop', 'frequency'])
-    
-    st.write("🔎 Verificação de atrasos:",
-         df_projects[['project_id', 'project_name', 'planned_end_date', 'end_date', 'days_diff', 'total_actual_cost']].head(20))
-    st.write("Projetos atrasados detectados:", df_projects[df_projects['days_diff'] > 0][['project_id', 'days_diff', 'total_actual_cost']])
 
     delayed_projects = df_projects[df_projects['days_diff'] > 0].copy()
 
     if delayed_projects.empty:
-        tables['cost_of_delay_kpis'] = {
-            'Custo Total Processos atrasados': "€0.00",
-            'Atraso Médio (dias)': "0.0",
-            'Custo Médio/Dia Atraso': "€0.00"
-        }
+        total_cost_delay = 0.0
+        mean_delay_days = 0.0
+        mean_cost_per_day = 0.0
     else:
         delayed_projects['total_actual_cost'] = delayed_projects['total_actual_cost'].fillna(0)
-        tables['cost_of_delay_kpis'] = {
-            'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].sum():,.2f}",
-            'Atraso Médio (dias)': f"{delayed_projects['days_diff'].mean():.1f}",
-            'Custo Médio/Dia Atraso': f"€{(delayed_projects['total_actual_cost'] / delayed_projects['days_diff']).mean():,.2f}"
-        }
+        total_cost_delay = delayed_projects['total_actual_cost'].sum()
+        mean_delay_days = delayed_projects['days_diff'].mean()
+        # evita divisão por zero / infinito
+        delayed_projects['safe_days_diff'] = delayed_projects['days_diff'].replace(0, np.nan)
+        mean_cost_per_day = (
+            (delayed_projects['total_actual_cost'] / delayed_projects['safe_days_diff'])
+            .replace([np.inf, -np.inf], np.nan)
+            .mean()
+        )
+    
+    # GUARDA NÚMEROS (nota: chave EXACTA com A maiúscula para casar com o dashboard)
+    tables['cost_of_delay_kpis'] = {
+        'Custo Total Processos Atrasados': total_cost_delay,
+        'Atraso Médio (dias)': mean_delay_days,
+        'Custo Médio/Dia Atraso': mean_cost_per_day
+    }
 
     min_res, max_res = df_projects['num_resources'].min(), df_projects['num_resources'].max()
     bins = np.linspace(min_res, max_res, 5, dtype=int) if max_res > min_res else [min_res, max_res]
@@ -1243,11 +1248,16 @@ def dashboard_page():
         kpi_cols[3].metric(label="Duração Média", value=f"{kpi_data.get('Duração Média (dias)')} dias")
         
         kpi_delay_data = tables_pre.get('cost_of_delay_kpis', {})
-        kpi_cols_2 = st.columns(3)
-        kpi_cols_2[0].metric(label="Custo Total em Atraso", value=kpi_delay_data.get('Custo Total Processos Atrasados', 'N/A'))
-        kpi_cols_2[1].metric(label="Atraso Médio (dias)", value=kpi_delay_data.get('Atraso Médio (dias)', 'N/A'))
-        kpi_cols_2[2].metric(label="Custo Médio/Dia de Atraso", value=kpi_delay_data.get('Custo Médio/Dia Atraso', 'N/A'))
+
+        total_cost = float(kpi_delay_data.get('Custo Total Processos Atrasados', 0.0) or 0.0)
+        mean_delay = float(kpi_delay_data.get('Atraso Médio (dias)', 0.0) or 0.0)
+        mean_cost_day = float(kpi_delay_data.get('Custo Médio/Dia Atraso', 0.0) or 0.0)
         
+        kpi_cols_2 = st.columns(3)
+        kpi_cols_2[0].metric(label="Custo Total em Atraso", value=f"€{total_cost:,.2f}")
+        kpi_cols_2[1].metric(label="Atraso Médio (dias)", value=f"{mean_delay:.1f}")
+        kpi_cols_2[2].metric(label="Custo Médio/Dia de Atraso", value=f"€{mean_cost_day:,.2f}")
+
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
