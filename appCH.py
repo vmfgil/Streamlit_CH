@@ -784,9 +784,6 @@ def run_eda_analysis(dfs):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    st.write("DEBUG planned_end_date nulls:", df_projects['planned_end_date'].isna().sum())
-    st.write(df_projects.loc[df_projects['planned_end_date'].isna(), ['project_id','planned_end_date']].head(10))
-
     # --- Normalizar project_id e remover duplicados por project_id para evitar contagens infladas ---
     if 'project_id' in df_projects.columns:
         # força project_id para string em todos os dataframes relevantes
