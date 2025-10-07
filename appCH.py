@@ -514,7 +514,7 @@ def run_pre_mining_analysis(dfs):
     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
     avg_cycle_time_by_phase = phase_times.groupby('phase')['cycle_time_days'].mean()
     
-    fig, ax = plt.subplots(figsize=(8, 4)); avg_cycle_time_by_phase.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); ax.set_title("Duração Média por Fase do Processo"); plt.xticks(rotation=0)
+    fig, ax = plt.subplots(figsize=(8, 4)); avg_cycle_time_by_phase.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); ax.set_title("Duração Média por Fase do Processo"); plt.xticks(rotation=45,ha='right')
     plots['cycle_time_breakdown'] = convert_fig_to_bytes(fig)
     
     return plots, tables, event_log_pm4py, df_projects, df_tasks, df_resources, df_full_context
@@ -606,11 +606,38 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     # 5. Análises de Recursos (correm com todos os dados)
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
     handovers = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
-    fig_net, ax_net = plt.subplots(figsize=(10, 10)); G = nx.DiGraph();
+    # 1. FIGURA: Aumentada para dar mais espaço (de 10x10 para 18x12)
+    fig_net, ax_net = plt.subplots(figsize=(18, 12)); G = nx.DiGraph();
     for (source, target), weight in handovers.items(): G.add_edge(str(source), str(target), weight=weight)
     if G.nodes():
-        pos = nx.spring_layout(G, k=0.9, iterations=50, seed=42); weights = [G[u][v]['weight'] for u,v in G.edges()]; nx.draw(G, pos, with_labels=True, node_color='#2563EB', edge_color='#E5E7EB', width=[w*0.5 for w in weights], ax=ax_net, font_size=10, connectionstyle='arc3,rad=0.1', labels={node: node for node in G.nodes()})
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=nx.get_edge_attributes(G, 'weight'), ax=ax_net, font_color='#FBBF24'); ax_net.set_title('Rede Social de Recursos (Handover Network)')
+        # 2. LAYOUT: Alterado de 'spring_layout' para 'spectral_layout' (melhor distribuição de nós)
+        # Aumentado 'scale' para usar todo o espaço.
+        pos = nx.spectral_layout(G, scale=1.5, seed=42); 
+        
+        weights = [G[u][v]['weight'] for u,v in G.edges()]; 
+        
+        # 3. DESENHO: Aumentado 'node_size' e reduzido 'font_size' para evitar sobreposição de etiquetas
+        nx.draw(G, 
+                pos, 
+                with_labels=True, 
+                node_color='#2563EB', 
+                node_size=800, # Aumenta o tamanho dos nós (defeito é 300)
+                edge_color='#E5E7EB', 
+                width=[w*0.5 for w in weights], 
+                ax=ax_net, 
+                font_size=6, # Reduz ligeiramente o tamanho da letra
+                connectionstyle='arc3,rad=0.1', 
+                labels={node: node for node in G.nodes()})
+        
+        # 4. EDGE LABELS: Reduzido o 'font_size' para as etiquetas nas arestas
+        nx.draw_networkx_edge_labels(G, 
+                                     pos, 
+                                     edge_labels=nx.get_edge_attributes(G, 'weight'), 
+                                     ax=ax_net, 
+                                     font_color='#FBBF24', 
+                                     font_size=7); # Reduz o tamanho da letra das etiquetas das arestas
+        
+        ax_net.set_title('Rede Social de Recursos (Handover Network)')
         plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
     if 'skill_level' in _df_resources.columns:
@@ -816,6 +843,7 @@ def run_eda_analysis(dfs):
     plots['plot_11'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_resources, x='resource_type', ax=ax, palette='cubehelix'); ax.set_title('Distribuição de Recursos por Tipo')
+    plt.xticks(rotation=45, ha='right')
     plots['plot_12'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_full_context.groupby('resource_name')['days_diff'].mean().sort_values(ascending=False).reset_index().head(20), y='resource_name', x='days_diff', ax=ax, palette='cividis'); ax.set_title('Atraso Médio por Recurso')
@@ -874,13 +902,13 @@ def run_eda_analysis(dfs):
     monthly_kpis = df_projects.groupby('completion_month').agg(mean_days_diff=('days_diff', 'mean'), mean_cost_diff=('cost_diff', 'mean'), completed_projects=('project_id', 'count'), mean_duration=('actual_duration_days', 'mean')).reset_index()
     monthly_kpis['completion_month'] = monthly_kpis['completion_month'].astype(str)
     fig, (ax1, ax2) = plt.subplots(2,1, figsize=(14,10));
-    ax1.plot(monthly_kpis['completion_month'], monthly_kpis['mean_days_diff'], marker='o', color='royalblue'); ax1.set_title('Atraso Médio Mensal'); ax1.grid(True)
-    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_cost_diff'], marker='o', color='firebrick'); ax2.set_title('Desvio de Custo Médio Mensal'); ax2.grid(True)
+    ax1.plot(monthly_kpis['completion_month'], monthly_kpis['mean_days_diff'], marker='o', color='royalblue',linewidth=3); ax1.set_title('Atraso Médio Mensal'); ax1.grid(True)
+    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_cost_diff'], marker='o', color='firebrick',linewidth=3); ax2.set_title('Desvio de Custo Médio Mensal'); ax2.grid(True)
     plots['plot_30'] = convert_fig_to_bytes(fig)
     
     fig, (ax1, ax2) = plt.subplots(2,1, figsize=(14,10));
     ax1.bar(monthly_kpis['completion_month'], monthly_kpis['completed_projects'], color='seagreen'); ax1.set_title('Nº de Processos Concluídos por Mês'); ax1.grid(True)
-    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='purple'); ax2.set_title('Duração Média dos Processos Concluídos'); ax2.grid(True)
+    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='white',linewidth=3); ax2.set_title('Duração Média dos Processos Concluídos'); ax2.grid(True)
     plots['plot_31'] = convert_fig_to_bytes(fig)
 
     return plots, tables
