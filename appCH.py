@@ -1126,9 +1126,24 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
-            self.actions = actions; self.action_to_index = {action: i for i, action in enumerate(actions)}; self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
-            self.lr, self.gamma, self.epsilon = lr, gamma, epsilon; self.epsilon_decay, self.min_epsilon = epsilon_decay, min_epsilon
-            self.epsilon_history, self.episode_rewards, self.episode_durations, self.episode_costs = [], [], [], []
+        # Atribuições explícitas, uma por linha
+        self.actions = actions
+        self.action_to_index = {action: i for i, action in enumerate(actions)}
+        self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
+        
+        # Hiperparâmetros do Agente
+        self.lr = lr
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.min_epsilon = min_epsilon
+        
+        # Listas para guardar o histórico de treino
+        self.epsilon_history = []
+        self.episode_rewards = []
+        self.episode_durations = []
+        self.episode_costs = []
+        
         def choose_action(self, state, possible_actions):
             if not possible_actions: return None
             if random.uniform(0, 1) < self.epsilon: return random.choice(possible_actions)
@@ -1143,7 +1158,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
-    # --- O resto da função continua igual, usando as variáveis já preparadas ---
     SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
