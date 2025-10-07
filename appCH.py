@@ -608,44 +608,46 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     handovers = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
     
     # fig_net, ax_net = plt.subplots(figsize=(18, 12)); G = nx.DiGraph();
-# for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
+    # for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
+    
+    if G.nodes():
+        # 1. Layout: Mantemos o spring_layout com 'k' baixo para afastar os nós
+        pos = nx.spring_layout(G, k=0.5, iterations=50); 
+        
+        weights = [G[u][v]['weight'] for u,v in G.edges()]; 
+        
+        # 2. Desenho: Aumentado node_size, Borda, e Reduzida a Grossura da Linha
+        # REDUZIR PESO DA ARESTA: Multiplicador alterado de 0.5 para 0.1
+        nx.draw(G, 
+                pos, 
+                with_labels=True, 
+                node_color='#2563EB', 
+                node_size=2000, # AUMENTADO para 2000 para garantir que domina
+                edgecolors='white', 
+                linewidths=2, 
+                edge_color='#E5E7EB', 
+                width=[w*0.1 for w in weights], # ALTERADO: Multiplicador de peso de 0.5 para 0.1 (Linhas 5x mais finas)
+                ax=ax_net, 
+                font_size=8, 
+                font_color='#E5E7EB',
+                alpha=1.0,
+                connectionstyle='arc3,rad=0.1', 
+                labels={node: node for node in G.nodes()})
+        
+        # 3. Etiquetas: Aumentado o contraste das caixas amarelas
+        nx.draw_networkx_edge_labels(G, 
+                                     pos, 
+                                     edge_labels=nx.get_edge_attributes(G, 'weight'), 
+                                     ax=ax_net, 
+                                     font_color='#FBBF24', 
+                                     font_size=7,
+                                     # Bbox com alpha (opacidade) reduzido para destacar mais a cor sólida
+                                     bbox={'facecolor':'#1E293B', 'alpha':0.9, 'edgecolor':'#FBBF24'}); # ALTERADO: Adicionado 'edgecolor' amarelo
+        
+        ax_net.set_title('Rede Social de Recursos (Handover Network)')
+        plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
+    
 
-if G.nodes():
-    # 1. Layout: Mantemos o spring_layout com 'k' baixo para afastar os nós
-    pos = nx.spring_layout(G, k=0.5, iterations=50); 
-    
-    weights = [G[u][v]['weight'] for u,v in G.edges()]; 
-    
-    # 2. Desenho: Aumentado node_size, Borda, e Reduzida a Grossura da Linha
-    # REDUZIR PESO DA ARESTA: Multiplicador alterado de 0.5 para 0.1
-    nx.draw(G, 
-            pos, 
-            with_labels=True, 
-            node_color='#2563EB', 
-            node_size=2000, # AUMENTADO para 2000 para garantir que domina
-            edgecolors='white', 
-            linewidths=2, 
-            edge_color='#E5E7EB', 
-            width=[w*0.1 for w in weights], # ALTERADO: Multiplicador de peso de 0.5 para 0.1 (Linhas 5x mais finas)
-            ax=ax_net, 
-            font_size=8, 
-            font_color='#E5E7EB',
-            alpha=1.0,
-            connectionstyle='arc3,rad=0.1', 
-            labels={node: node for node in G.nodes()})
-    
-    # 3. Etiquetas: Aumentado o contraste das caixas amarelas
-    nx.draw_networkx_edge_labels(G, 
-                                 pos, 
-                                 edge_labels=nx.get_edge_attributes(G, 'weight'), 
-                                 ax=ax_net, 
-                                 font_color='#FBBF24', 
-                                 font_size=7,
-                                 # Bbox com alpha (opacidade) reduzido para destacar mais a cor sólida
-                                 bbox={'facecolor':'#1E293B', 'alpha':0.9, 'edgecolor':'#FBBF24'}); # ALTERADO: Adicionado 'edgecolor' amarelo
-    
-    ax_net.set_title('Rede Social de Recursos (Handover Network)')
-    plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
     if 'skill_level' in _df_resources.columns:
         perf_recursos = _df_full_context.groupby('resource_id').agg(total_hours=('hours_worked', 'sum'), total_tasks=('task_id', 'nunique')).reset_index()
