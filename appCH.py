@@ -268,7 +268,6 @@ if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
 
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
-# ... (As funções run_pre_mining_analysis, run_post_mining_analysis, e run_eda_analysis permanecem as mesmas da versão anterior)
 @st.cache_data
 def run_pre_mining_analysis(dfs):
     plots = {}
@@ -738,8 +737,9 @@ def run_eda_analysis(dfs):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
 
+    df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['days_diff'] = df_projects['days_diff'].fillna(0)
-    df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0  # segurança
+    df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
     df_tasks['task_duration_days'] = (df_tasks['end_date'] - df_tasks['start_date']).dt.days
