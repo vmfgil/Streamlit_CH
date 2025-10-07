@@ -996,6 +996,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # --- AMBIENTE E AGENTE (CLASSES) --- (Sem alterações)
     class ProjectManagementEnv:
         def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, reward_config=None, min_progress_for_next_phase=0.7):
+            st.warning(f"DEBUG - Recompensas recebidas pelo ambiente: {reward_config}") # <--- ADICIONE ESTA LINHA
             self.rewards = reward_config; self.df_tasks = df_tasks; self.df_resources = df_resources; self.df_dependencies = df_dependencies; self.df_projects_info = df_projects_info
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist()); self.task_types = sorted(self.df_tasks['task_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
