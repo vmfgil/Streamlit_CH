@@ -1527,59 +1527,72 @@ def rl_page():
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
         
-        # As opções agora vêm da amostra que acabámos de criar.
         project_ids_elegiveis = st.session_state.get('rl_sample_ids', [])
         
         c1, c2 = st.columns(2)
         with c1:
             default_index = 0
-            # Garante que o processo '25' só é pré-selecionado se existir na amostra
             if "25" in project_ids_elegiveis:
                 default_index = project_ids_elegiveis.index("25")
 
-            project_id_to_simulate = st.selectbox(
+            ### ALTERAÇÃO 1: Adicionar uma 'key' a cada widget ###
+            st.selectbox(
                 "Selecione o Processo para Simulação Detalhada (Amostra)",
                 options=project_ids_elegiveis,
-                index=default_index
+                index=default_index,
+                key="rl_project_id" # <--- Key adicionada
             )
         with c2:
-            num_episodes = st.number_input("Número de Episódios de Treino", min_value=100, max_value=10000, value=1000, step=100)
+            st.number_input(
+                "Número de Episódios de Treino", 
+                min_value=100, max_value=10000, value=1000, step=100,
+                key="rl_num_episodes" # <--- Key adicionada
+            )
 
         st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
-            cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=1.0)
-            daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=20.0)
-            idle_penalty = st.number_input("Penalização por Inatividade", value=10.0)
+            st.number_input("Fator de Impacto do Custo", value=0.1, key="rl_cost_factor")
+            st.number_input("Penalização Diária por Tempo", value=400.0, key="rl_time_penalty")
+            st.number_input("Penalização por Inatividade", value=200.0, key="rl_idle_penalty")
         with rc2:
-            per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=500.0)
-            completion_base = st.number_input("Recompensa Base por Conclusão", value=5000.0)
-            per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=1500.0)
+            st.number_input("Bónus por Dia de Adiantamento", value=500.0, key="rl_early_bonus")
+            st.number_input("Recompensa Base por Conclusão", value=5000.0, key="rl_completion_base")
+            st.number_input("Penalização por Dia de Atraso", value=1500.0, key="rl_late_penalty")
         with rc3:
-            priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
-            pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
+            st.number_input("Bónus por Tarefa Prioritária", value=500, key="rl_priority_bonus")
+            st.number_input("Penalização por Tarefa Pendente", value=20, key="rl_pending_penalty")
         
-        reward_config = {
-            'cost_impact_factor': cost_impact_factor, 'daily_time_penalty': daily_time_penalty, 'idle_penalty': idle_penalty,
-            'per_day_early_bonus': per_day_early_bonus, 'completion_base': completion_base, 'per_day_late_penalty': per_day_late_penalty,
-            'priority_task_bonus_factor': priority_task_bonus_factor, 'pending_task_penalty_factor': pending_task_penalty_factor
-        }
-
     status_container = st.empty()
 
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
         st.session_state.rl_params_expanded = False
-        st.session_state.project_id_simulated = project_id_to_simulate
         
+        ### ALTERAÇÃO 2: Ler os valores a partir do st.session_state ###
+        st.session_state.project_id_simulated = st.session_state.rl_project_id
+        
+        # Construir o dicionário de recompensas a partir do session_state
+        reward_config = {
+            'cost_impact_factor': st.session_state.rl_cost_factor,
+            'daily_time_penalty': st.session_state.rl_time_penalty,
+            'idle_penalty': st.session_state.rl_idle_penalty,
+            'per_day_early_bonus': st.session_state.rl_early_bonus,
+            'completion_base': st.session_state.rl_completion_base,
+            'per_day_late_penalty': st.session_state.rl_late_penalty,
+            'priority_task_bonus_factor': st.session_state.rl_priority_bonus,
+            'pending_task_penalty_factor': st.session_state.rl_pending_penalty
+        }
+
         with status_container.container():
             progress_bar = st.progress(0)
             status_text = st.empty()
             status_text.info("A iniciar o treino do agente de RL...")
 
+        # Chamar a função de análise com os valores guardados no session_state
         plots_rl, tables_rl, logs_rl = run_rl_analysis(
             st.session_state.dfs, 
-            project_id_to_simulate, 
-            num_episodes, 
+            st.session_state.rl_project_id, 
+            st.session_state.rl_num_episodes, 
             reward_config,
             progress_bar,
             status_text
@@ -1589,6 +1602,7 @@ def rl_page():
         st.session_state.logs_rl = logs_rl
         st.session_state.rl_analysis_run = True
         st.rerun()
+
 
     
     if st.session_state.rl_analysis_run:
