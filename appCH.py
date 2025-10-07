@@ -1043,19 +1043,20 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
                 # CÓDIGO CORRIGIDO
+        # CÓDIGO COM RECOMPENSA CORRIGIDA
         def step(self, action_set):
             # Se for fim de semana, apenas avança o tempo sem fazer nada
             if self.current_date.weekday() >= 5: # Sábado (5) ou Domingo (6)
                 self.current_date += timedelta(days=1)
-                return 0, False # Retorna 0 de recompensa e que o projeto não terminou
+                return 0, False 
         
             # Se chegou aqui, é um dia de semana
-            self.day_count += 1 # 1. Um dia útil passou, portanto incrementa o contador
+            self.day_count += 1 
             daily_cost = 0
             reward_from_tasks = 0
             resources_used_today = set()
         
-            # Lógica para alocar recursos e trabalhar nas tarefas (o seu código aqui está bom)
+            # Lógica para alocar recursos e trabalhar nas tarefas
             for res_type, task_type in action_set:
                 if task_type == "idle":
                     reward_from_tasks -= self.rewards['idle_penalty']
@@ -1080,26 +1081,26 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 cost_today = hours_to_work * res_info['cost_per_hour']
                 daily_cost += cost_today
         
+                # (A lógica interna de logs e progresso continua igual)
                 self.episode_logs.append({
                     'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type,
                     'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today,
                     'action': f'Work on {task_type}'
                 })
-        
-                if task_data['status'] == 'Pendente':
-                    task_data['status'] = 'Em Andamento'
-                
+                if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
                 task_data['progress'] += hours_to_work
                 if task_data['progress'] >= task_data['estimated_effort']:
                     task_data['status'] = 'Concluída'
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
         
-            # Atualiza o custo e avança o calendário
+            # Atualiza o custo total (para logging) e avança o calendário
             self.current_cost += daily_cost
             self.current_date += timedelta(days=1)
             
-            # 2. A penalização diária é aplicada AQUI, apenas após um dia de trabalho
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+            ### ALTERAÇÃO 1: A penalização do custo é agora IMEDIATA E DIÁRIA ###
+            # A recompensa diária agora inclui o custo das ações desse dia
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - (daily_cost * self.rewards['cost_impact_factor'])
+            
             project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
         
             # Se o projeto terminou, aplica as recompensas/penalizações finais
@@ -1113,10 +1114,12 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 else:
                     total_reward += time_diff * self.rewards['per_day_late_penalty']
                 
-                total_reward -= self.current_cost * self.rewards['cost_impact_factor']
+                ### ALTERAÇÃO 2: REMOVEMOS a penalização de custo final, pois já foi aplicada diariamente ###
+                # total_reward -= self.current_cost * self.rewards['cost_impact_factor'] # <--- LINHA REMOVIDA/COMENTADA
         
             return total_reward, project_is_done
 
+    
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
             self.actions = actions; self.action_to_index = {action: i for i, action in enumerate(actions)}; self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
