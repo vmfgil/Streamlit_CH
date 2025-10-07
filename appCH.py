@@ -427,6 +427,10 @@ def run_pre_mining_analysis(dfs):
     rework_loops = Counter(f"{trace[i]} -> {trace[i+1]} -> {trace[i]}" for trace in variants_df['trace'] for i in range(len(trace) - 2) if trace[i] == trace[i+2] and trace[i] != trace[i+1])
     tables['rework_loops_table'] = pd.DataFrame(rework_loops.most_common(10), columns=['rework_loop', 'frequency'])
     
+    st.write("🔎 Verificação de atrasos:",
+         df_projects[['project_id', 'project_name', 'planned_end_date', 'end_date', 'days_diff', 'total_actual_cost']].head(20))
+    st.write("Projetos atrasados detectados:", df_projects[df_projects['days_diff'] > 0][['project_id', 'days_diff', 'total_actual_cost']])
+
     delayed_projects = df_projects[df_projects['days_diff'] > 0].copy()
 
     if delayed_projects.empty:
