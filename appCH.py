@@ -428,12 +428,22 @@ def run_pre_mining_analysis(dfs):
     rework_loops = Counter(f"{trace[i]} -> {trace[i+1]} -> {trace[i]}" for trace in variants_df['trace'] for i in range(len(trace) - 2) if trace[i] == trace[i+2] and trace[i] != trace[i+1])
     tables['rework_loops_table'] = pd.DataFrame(rework_loops.most_common(10), columns=['rework_loop', 'frequency'])
     
-    delayed_projects = df_projects[df_projects['days_diff'] > 0]
-    tables['cost_of_delay_kpis'] = {
-        'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].fillna(0).sum():,.2f}",
-        'Atraso Médio (dias)': f"{delayed_projects['days_diff'].mean():.1f}",
-        'Custo Médio/Dia Atraso': f"€{(delayed_projects.get('total_actual_cost', 0) / delayed_projects['days_diff']).mean():,.2f}"
-    }
+    delayed_projects = df_projects[df_projects['days_diff'] > 0].copy()
+
+    if delayed_projects.empty:
+        tables['cost_of_delay_kpis'] = {
+            'Custo Total Processos atrasados': "€0.00",
+            'Atraso Médio (dias)': "0.0",
+            'Custo Médio/Dia Atraso': "€0.00"
+        }
+    else:
+        delayed_projects['total_actual_cost'] = delayed_projects['total_actual_cost'].fillna(0)
+        tables['cost_of_delay_kpis'] = {
+            'Custo Total Processos atrasados': f"€{delayed_projects['total_actual_cost'].sum():,.2f}",
+            'Atraso Médio (dias)': f"{delayed_projects['days_diff'].mean():.1f}",
+            'Custo Médio/Dia Atraso': f"€{(delayed_projects['total_actual_cost'] / delayed_projects['days_diff']).mean():,.2f}"
+        }
+
     min_res, max_res = df_projects['num_resources'].min(), df_projects['num_resources'].max()
     bins = np.linspace(min_res, max_res, 5, dtype=int) if max_res > min_res else [min_res, max_res]
     df_projects['team_size_bin_dynamic'] = pd.cut(df_projects['num_resources'], bins=bins, include_lowest=True, duplicates='drop').astype(str)
@@ -725,9 +735,11 @@ def run_eda_analysis(dfs):
 
     for df in [df_projects, df_tasks, df_resource_allocations]:
         for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-            if col in df.columns: df[col] = pd.to_datetime(df[col], errors='coerce')
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
 
-    df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
+    df_projects['days_diff'] = df_projects['days_diff'].fillna(0)
+    df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0  # segurança
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
     df_tasks['task_duration_days'] = (df_tasks['end_date'] - df_tasks['start_date']).dt.days
