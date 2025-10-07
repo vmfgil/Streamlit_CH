@@ -767,7 +767,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
     return plots, metrics
 # --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
-#@st.cache_data
+@st.cache_data
 def run_eda_analysis(dfs):
     plots = {}
     tables = {}
@@ -840,29 +840,9 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_projects, x='project_status', ax=ax, palette='viridis'); ax.set_title('Distribuição do Status dos Processos')
     plots['plot_01'] = convert_fig_to_bytes(fig)
     
-        # --- Histograma discreto por valor inteiro (contagens exatas por days_diff) ---
-    # Garante que days_diff é inteiro e sem NaNs indesejados
-    df_projects['days_diff'] = df_projects['days_diff'].fillna(0).astype(int)
-
-    # Ordena x por valores únicos para preservar sequência
-    order = sorted(df_projects['days_diff'].unique())
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.countplot(data=df_projects, x='days_diff', order=order, color='salmon', ax=ax)
-    ax.set_title('Diferença entre Data Real e Planeada')
-    ax.set_xlabel('days_diff (dias)')
-    ax.set_ylabel('Count')
-
-    # Anotar alturas (opcional, útil para confirmar 64)
-    for p in ax.patches:
-        height = int(p.get_height())
-        if height > 0:
-            ax.annotate(height, (p.get_x() + p.get_width() / 2., height), ha='center', va='bottom', color='#E5E7EB', fontsize=9)
-
-    fig.tight_layout()
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='days_diff', kde=True, color='salmon', ax=ax); ax.set_title('Diferença entre Data Real e Planeada')
     plots['plot_03'] = convert_fig_to_bytes(fig)
 
-    
     fig, ax = plt.subplots(figsize=(15, 8)); df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False); sns.barplot(data=df_projects_sorted, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax); sns.barplot(data=df_projects_sorted, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax); ax.tick_params(axis='x', rotation=90); ax.legend(); ax.set_title('Custo Real vs. Orçamento por Processo')
     plots['plot_04'] = convert_fig_to_bytes(fig)
     
