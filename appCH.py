@@ -1042,32 +1042,79 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
+                # CÓDIGO CORRIGIDO
         def step(self, action_set):
-            if self.current_date.weekday() >= 5: self.current_date += timedelta(days=1); daily_cost = 0; reward_from_tasks = 0
-            else:
-                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
-                for res_type, task_type in action_set:
-                    if task_type == "idle": reward_from_tasks -= self.rewards['idle_penalty']; continue
-                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                    if available_resources.empty: continue
-                    res_info = available_resources.sample(1).iloc[0]
-                    eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                    if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id']); eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True); task_id_to_work = eligible_tasks[0]
-                    task_data = self.tasks_state[task_id_to_work]; remaining_effort = task_data['estimated_effort'] - task_data['progress']; hours_to_work = min(res_info['daily_capacity'], remaining_effort)
-                    cost_today = hours_to_work * res_info['cost_per_hour']; daily_cost += cost_today
-                    self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-                    task_data['progress'] += hours_to_work
-                    if task_data['progress'] >= task_data['estimated_effort']: task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-                self.current_cost += daily_cost; self.current_date += timedelta(days=1)
-                if self.current_date.weekday() < 5: self.day_count += 1
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+            # Se for fim de semana, apenas avança o tempo sem fazer nada
+            if self.current_date.weekday() >= 5: # Sábado (5) ou Domingo (6)
+                self.current_date += timedelta(days=1)
+                return 0, False # Retorna 0 de recompensa e que o projeto não terminou
+        
+            # Se chegou aqui, é um dia de semana
+            self.day_count += 1 # 1. Um dia útil passou, portanto incrementa o contador
+            daily_cost = 0
+            reward_from_tasks = 0
+            resources_used_today = set()
+        
+            # Lógica para alocar recursos e trabalhar nas tarefas (o seu código aqui está bom)
+            for res_type, task_type in action_set:
+                if task_type == "idle":
+                    reward_from_tasks -= self.rewards['idle_penalty']
+                    continue
+                
+                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
+                if available_resources.empty:
+                    continue
+                
+                res_info = available_resources.sample(1).iloc[0]
+                eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
+                if not eligible_tasks:
+                    continue
+        
+                resources_used_today.add(res_info['resource_id'])
+                eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
+                task_id_to_work = eligible_tasks[0]
+                task_data = self.tasks_state[task_id_to_work]
+                
+                remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                hours_to_work = min(res_info['daily_capacity'], remaining_effort)
+                cost_today = hours_to_work * res_info['cost_per_hour']
+                daily_cost += cost_today
+        
+                self.episode_logs.append({
+                    'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type,
+                    'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today,
+                    'action': f'Work on {task_type}'
+                })
+        
+                if task_data['status'] == 'Pendente':
+                    task_data['status'] = 'Em Andamento'
+                
+                task_data['progress'] += hours_to_work
+                if task_data['progress'] >= task_data['estimated_effort']:
+                    task_data['status'] = 'Concluída'
+                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+        
+            # Atualiza o custo e avança o calendário
+            self.current_cost += daily_cost
+            self.current_date += timedelta(days=1)
+            
+            # 2. A penalização diária é aplicada AQUI, apenas após um dia de trabalho
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
+        
+            # Se o projeto terminou, aplica as recompensas/penalizações finais
             if project_is_done:
                 project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count; total_reward += self.rewards['completion_base']
-                total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
+                time_diff = project_info['total_duration_days'] - self.day_count
+                total_reward += self.rewards['completion_base']
+                
+                if time_diff >= 0:
+                    total_reward += time_diff * self.rewards['per_day_early_bonus']
+                else:
+                    total_reward += time_diff * self.rewards['per_day_late_penalty']
+                
                 total_reward -= self.current_cost * self.rewards['cost_impact_factor']
+        
             return total_reward, project_is_done
 
     class QLearningAgent:
