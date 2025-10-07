@@ -12,6 +12,7 @@ import base64
 import time
 import random
 from datetime import timedelta
+import copy
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -948,6 +949,8 @@ def run_eda_analysis(dfs):
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
+    # --- PASSO 0: CRIAR UMA CÓPIA PROFUNDA PARA ISOLAR A EXECUÇÃO ---
+    dfs = copy.deepcopy(dfs) # <-- ADICIONE ESTA LINHA NO INÍCIO DA FUNÇÃO
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
     for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
         df = dfs[df_name]
