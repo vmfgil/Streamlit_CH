@@ -605,11 +605,13 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     
     # 5. Análises de Recursos (correm com todos os dados)
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
-    handovers = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
+    handover_edges = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
     
-    # fig_net, ax_net = plt.subplots(figsize=(18, 12)); G = nx.DiGraph();
-    # for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
-    
+    # 1. CRIAÇÃO DO GRAFO (G) e FIGURA: Estas linhas têm de estar sempre aqui
+    fig_net, ax_net = plt.subplots(figsize=(18, 12)); 
+    G = nx.DiGraph();
+    for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
+
     if G.nodes():
         # 1. Layout: Mantemos o spring_layout com 'k' baixo para afastar os nós
         pos = nx.spring_layout(G, k=0.5, iterations=50); 
