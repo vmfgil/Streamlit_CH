@@ -780,9 +780,9 @@ def run_eda_analysis(dfs):
     df_dependencies = dfs['dependencies'].copy()
 
     for df in [df_projects, df_tasks, df_resource_allocations]:
-    for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+        for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
 
     st.write("DEBUG planned_end_date nulls:", df_projects['planned_end_date'].isna().sum())
     st.write(df_projects.loc[df_projects['planned_end_date'].isna(), ['project_id','planned_end_date']].head(10))
