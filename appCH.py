@@ -795,13 +795,17 @@ def run_eda_analysis(dfs):
     # Remove duplicados por project_id em df_projects mantendo a primeira ocorrência
     df_projects = df_projects.drop_duplicates(subset=['project_id']).reset_index(drop=True)
 
-    # Debug opcional (descomentar durante testes)
-    # st.write("DEBUG: df_projects shape após deduplicar:", df_projects.shape)
-    # st.write("DEBUG: top days_diff value_counts:", df_projects['days_diff'].value_counts().sort_values(ascending=False).head(20))
-
-    
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['days_diff'] = df_projects['days_diff'].fillna(0)
+    
+    # --- DEBUG TEMPORÁRIO: inspeções para entender distribuição e duplicados ---
+    st.write("DEBUG: df_projects.shape (após conversão de datas e cálculo days_diff):", df_projects.shape)
+    st.write("DEBUG: project_id dtype and sample head:", df_projects['project_id'].dtype, df_projects[['project_id','start_date','planned_end_date','end_date']].head(5))
+    st.write("DEBUG: days_diff value_counts top 10:", df_projects['days_diff'].value_counts().sort_values(ascending=False).head(20))
+    st.write("DEBUG: days_diff min,max,unique_count:", df_projects['days_diff'].min(), df_projects['days_diff'].max(), df_projects['days_diff'].nunique())
+    st.write("DEBUG: duplicated project_id count:", df_projects.duplicated(subset=['project_id']).sum())
+
+    
     df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
