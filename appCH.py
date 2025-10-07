@@ -780,33 +780,37 @@ def run_eda_analysis(dfs):
     df_dependencies = dfs['dependencies'].copy()
 
     for df in [df_projects, df_tasks, df_resource_allocations]:
-        for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
+    for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
 
-        # --- Normalizar project_id e remover duplicados por project_id para evitar contagens infladas ---
+    st.write("DEBUG planned_end_date nulls:", df_projects['planned_end_date'].isna().sum())
+    st.write(df_projects.loc[df_projects['planned_end_date'].isna(), ['project_id','planned_end_date']].head(10))
+
+    # --- Normalizar project_id e remover duplicados por project_id para evitar contagens infladas ---
     if 'project_id' in df_projects.columns:
         # força project_id para string em todos os dataframes relevantes
         df_projects['project_id'] = df_projects['project_id'].astype(str)
     for tmp_df in [df_tasks, df_resource_allocations, df_dependencies]:
         if 'project_id' in tmp_df.columns:
             tmp_df['project_id'] = tmp_df['project_id'].astype(str)
-
+    
     # Remove duplicados por project_id em df_projects mantendo a primeira ocorrência
     df_projects = df_projects.drop_duplicates(subset=['project_id']).reset_index(drop=True)
-
+    
+    # --- Calcular days_diff de forma robusta (mantém NaN para inspeção) ---
+    # garante parsing consistente (usa o parsing que aplicaste acima na função; se trocaste dayfirst, fica consistente)
+    df_projects['end_date'] = pd.to_datetime(df_projects['end_date'], errors='coerce')
+    df_projects['planned_end_date'] = pd.to_datetime(df_projects['planned_end_date'], errors='coerce')
+    
+    # calcula diferença em dias; preserva NaN quando faltar data
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
-    df_projects['days_diff'] = df_projects['days_diff'].fillna(0)
     
-    # --- DEBUG TEMPORÁRIO: inspeções para entender distribuição e duplicados ---
-    st.write("DEBUG: df_projects.shape (após conversão de datas e cálculo days_diff):", df_projects.shape)
-    st.write("DEBUG: project_id dtype and sample head:", df_projects['project_id'].dtype, df_projects[['project_id','start_date','planned_end_date','end_date']].head(5))
-    st.write("DEBUG: days_diff value_counts top 10:", df_projects['days_diff'].value_counts().sort_values(ascending=False).head(20))
-    st.write("DEBUG: days_diff min,max,unique_count:", df_projects['days_diff'].min(), df_projects['days_diff'].max(), df_projects['days_diff'].nunique())
-    st.write("DEBUG: duplicated project_id count:", df_projects.duplicated(subset=['project_id']).sum())
-
+    # coluna indicadora de validade (para usar nas visualizações e evitar mascarar NaNs)
+    df_projects['days_diff_valid'] = df_projects['days_diff'].notna()
     
-    df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0
+    # opcional: coluna auxiliar com módulo do desvio (para detectar outliers sem os mascarar)
+    df_projects['days_diff_abs'] = df_projects['days_diff'].abs()
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
     df_tasks['task_duration_days'] = (df_tasks['end_date'] - df_tasks['start_date']).dt.days
