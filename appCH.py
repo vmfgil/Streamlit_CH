@@ -612,7 +612,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     if G.nodes():
         # 2. LAYOUT: Alterado de 'spring_layout' para 'spectral_layout' (melhor distribuição de nós)
         # Aumentado 'scale' para usar todo o espaço.
-        pos = nx.spectral_layout(G, scale=1.5, seed=42); 
+        pos = nx.spectral_layout(G, scale=1.5); 
         
         weights = [G[u][v]['weight'] for u,v in G.edges()]; 
         
