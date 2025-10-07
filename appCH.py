@@ -508,7 +508,7 @@ def run_pre_mining_analysis(dfs):
             return '3. Decisão e Contratual'
         elif task_type == 'Fecho':
             return '4. Fecho e Desembolso'
-        return 'Outros'
+        return task_type
     df_tasks['phase'] = df_tasks['task_type'].apply(get_phase)
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
