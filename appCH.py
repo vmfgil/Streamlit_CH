@@ -1640,7 +1640,6 @@ def rl_page():
 
 # --- CONTROLO PRINCIPAL DA APLICAÇÃO ---
 def main():
-    st.title("VERSÃO ATUALIZADA - TESTE") # <--- ADICIONE ESTA LINHA
     if not st.session_state.authenticated:
         st.markdown("""
         <style>
