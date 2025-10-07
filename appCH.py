@@ -767,7 +767,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
     return plots, metrics
 # --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
-@st.cache_data
+#@st.cache_data
 def run_eda_analysis(dfs):
     plots = {}
     tables = {}
@@ -784,6 +784,22 @@ def run_eda_analysis(dfs):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
 
+        # --- Normalizar project_id e remover duplicados por project_id para evitar contagens infladas ---
+    if 'project_id' in df_projects.columns:
+        # força project_id para string em todos os dataframes relevantes
+        df_projects['project_id'] = df_projects['project_id'].astype(str)
+    for tmp_df in [df_tasks, df_resource_allocations, df_dependencies]:
+        if 'project_id' in tmp_df.columns:
+            tmp_df['project_id'] = tmp_df['project_id'].astype(str)
+
+    # Remove duplicados por project_id em df_projects mantendo a primeira ocorrência
+    df_projects = df_projects.drop_duplicates(subset=['project_id']).reset_index(drop=True)
+
+    # Debug opcional (descomentar durante testes)
+    # st.write("DEBUG: df_projects shape após deduplicar:", df_projects.shape)
+    # st.write("DEBUG: top days_diff value_counts:", df_projects['days_diff'].value_counts().sort_values(ascending=False).head(20))
+
+    
     df_projects['days_diff'] = (df_projects['end_date'] - df_projects['planned_end_date']).dt.days
     df_projects['days_diff'] = df_projects['days_diff'].fillna(0)
     df_projects.loc[df_projects['days_diff'] < -9999, 'days_diff'] = 0
@@ -824,8 +840,28 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_projects, x='project_status', ax=ax, palette='viridis'); ax.set_title('Distribuição do Status dos Processos')
     plots['plot_01'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='days_diff', kde=True, color='salmon', ax=ax); ax.set_title('Diferença entre Data Real e Planeada')
+        # --- Histograma discreto por valor inteiro (contagens exatas por days_diff) ---
+    # Garante que days_diff é inteiro e sem NaNs indesejados
+    df_projects['days_diff'] = df_projects['days_diff'].fillna(0).astype(int)
+
+    # Ordena x por valores únicos para preservar sequência
+    order = sorted(df_projects['days_diff'].unique())
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.countplot(data=df_projects, x='days_diff', order=order, color='salmon', ax=ax)
+    ax.set_title('Diferença entre Data Real e Planeada')
+    ax.set_xlabel('days_diff (dias)')
+    ax.set_ylabel('Count')
+
+    # Anotar alturas (opcional, útil para confirmar 64)
+    for p in ax.patches:
+        height = int(p.get_height())
+        if height > 0:
+            ax.annotate(height, (p.get_x() + p.get_width() / 2., height), ha='center', va='bottom', color='#E5E7EB', fontsize=9)
+
+    fig.tight_layout()
     plots['plot_03'] = convert_fig_to_bytes(fig)
+
     
     fig, ax = plt.subplots(figsize=(15, 8)); df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False); sns.barplot(data=df_projects_sorted, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax); sns.barplot(data=df_projects_sorted, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax); ax.tick_params(axis='x', rotation=90); ax.legend(); ax.set_title('Custo Real vs. Orçamento por Processo')
     plots['plot_04'] = convert_fig_to_bytes(fig)
