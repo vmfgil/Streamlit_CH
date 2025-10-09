@@ -1149,8 +1149,15 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
+        st.write("--- INÍCIO DA AVALIAÇÃO DEBUG ---")
+        st.write("IDs dos projetos no conjunto de teste desta execução:")
+        st.write(df_projects_to_evaluate['project_id'].tolist())
         for _, prj_info in df_projects_to_evaluate.iterrows():
-            state = env.reset(prj_info['project_id']); done = False; calendar_day = 0
+            st.write(f"--- A avaliar o projeto ID: {prj_info['project_id']} ---")
+            state = env.reset(prj_info['project_id']); 
+            st.write(f"Custo no início da simulação: {env.current_cost}")
+            done = False; 
+            calendar_day = 0
             while not done and calendar_day < 1000:
                 possible_actions = env.get_possible_actions_for_state(); action_set = set()
                 for res_type in env.resource_types:
@@ -1160,6 +1167,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         if chosen_action: action_set.add(chosen_action)
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
+            st.write(f"Resultado final para o projeto {prj_info['project_id']}: Duração={env.day_count}, Custo={env.current_cost}")
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
         return pd.DataFrame(results)
 
