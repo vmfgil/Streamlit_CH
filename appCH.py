@@ -910,8 +910,23 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_ratio', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Processos')
     plots['plot_24'] = convert_fig_to_bytes(fig)
     
-    predecessor_counts = df_dependencies.merge(df_tasks, left_on='task_id_predecessor', right_on='task_id')['task_type'].value_counts()
-    successor_counts = df_dependencies.merge(df_tasks, left_on='task_id_successor', right_on='task_id')['task_type'].value_counts()
+    # ======= Normalizar tipos antes do merge (corrige ValueError int64 vs object) =======
+    # Garante que task_id em df_tasks e task_id_predecessor / task_id_successor em df_dependencies têm o mesmo dtype (string)
+    if 'task_id' in df_tasks.columns:
+        df_tasks['task_id'] = df_tasks['task_id'].astype(str)
+    if 'task_id_predecessor' in df_dependencies.columns:
+        df_dependencies['task_id_predecessor'] = df_dependencies['task_id_predecessor'].astype(str)
+    if 'task_id_successor' in df_dependencies.columns:
+        df_dependencies['task_id_successor'] = df_dependencies['task_id_successor'].astype(str)
+    
+    # Remove linhas inválidas/NaN nas colunas de ligação para evitar merges indesejados
+    df_dependencies = df_dependencies.dropna(subset=[c for c in ['task_id_predecessor', 'task_id_successor'] if c in df_dependencies.columns])
+    
+    # Agora os merges funcionam sem erro de dtype
+    predecessor_counts = df_dependencies.merge(df_tasks, left_on='task_id_predecessor', right_on='task_id', how='left')['task_type'].value_counts()
+    successor_counts = df_dependencies.merge(df_tasks, left_on='task_id_successor', right_on='task_id', how='left')['task_type'].value_counts()
+    # ====================================================================================
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7)); predecessor_counts.plot(kind='bar', color=sns.color_palette("Paired")[1], title='Mais Comuns como Predecessoras', ax=ax1); successor_counts.plot(kind='bar', color=sns.color_palette("Paired")[3], title='Mais Comuns como Sucessoras', ax=ax2);
     plots['plot_25'] = convert_fig_to_bytes(fig)
 
