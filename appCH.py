@@ -1471,10 +1471,27 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     total_estimated_effort = env.total_estimated_effort
     fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
     max_day_plot = int(max(max_day_sim, real_duration)); day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
-    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum(); sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    # Safety: ensure simulated_log has 'day' and 'daily_cost' columns before grouping
+    sim_daily_cost = pd.Series(dtype=float)
+    if not simulated_log.empty:
+        # normalize column names and types defensively
+        if 'day' not in simulated_log.columns:
+            simulated_log['day'] = simulated_log.get('day', 0)
+        if 'daily_cost' not in simulated_log.columns:
+            simulated_log['daily_cost'] = simulated_log.get('daily_cost', 0.0)
+        simulated_log['day'] = pd.to_numeric(simulated_log['day'], errors='coerce').fillna(0).astype(int)
+        simulated_log['daily_cost'] = pd.to_numeric(simulated_log['daily_cost'], errors='coerce').fillna(0.0)
+        sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum()
+    else:
+        sim_daily_cost = pd.Series(dtype=float)
+    
+    # Real allocations: ensure 'day' exists and numeric before grouping
     real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
-    real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum(); real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    if 'day' not in real_log_merged.columns:
+        real_log_merged['day'] = 0
+    real_log_merged['daily_cost'] = pd.to_numeric(real_log_merged.get('hours_worked', 0), errors='coerce').fillna(0.0) * pd.to_numeric(real_log_merged.get('cost_per_hour', 0), errors='coerce').fillna(0.0)
+    real_log_merged['day'] = pd.to_numeric(real_log_merged['day'], errors='coerce').fillna(0).astype(int)
+    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum() if not real_log_merged.empty else pd.Series(dtype=float)
     axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
     axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
     axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
