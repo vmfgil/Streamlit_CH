@@ -500,10 +500,12 @@ def run_pre_mining_analysis(dfs):
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
     def get_phase(task_type):
-        if task_type in ['Onboarding', 'Validação KYC']:
-            return '1. Onboarding e Comercial'
-        elif task_type in ['Análise Documental', 'Análise de Risco', 'Avaliação da Imóvel']:
-            return '2. Análise e Risco'
+        if task_type in ['Onboarding', 'Validação KYC', 'Análise Documental']:
+            return '1. Onboarding, KYC e Documentação'
+        elif task_type in ['Análise de Risco']:
+            return '2. Análise de Risco'
+        elif task_type in ['Avaliação da Imóvel']:
+            return '2. Avaliação de imóvel'
         elif task_type in ['Decisão de Crédito', 'Preparação Legal']:
             return '3. Decisão e Contratual'
         elif task_type == 'Fecho':
