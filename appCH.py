@@ -947,8 +947,9 @@ def run_eda_analysis(dfs):
 
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
-def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
-    # --- CORREÇÃO: FAZER CÓPIA PROFUNDA DOS DATAFRAMES PARA NÃO MODIFICAR OS ORIGINAIS ---
+def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
+    if agent_params is None:
+        agent_params = {}   
     dfs = {key: df.copy() for key, df in dfs.items()}
     
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
@@ -1015,10 +1016,12 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
             self.total_estimated_budget = project_info['total_actual_cost']
-            self.total_estimated_effort = project_tasks['estimated_effort'].sum()
+            HOURS_PER_DAY = 8  # constante local — mantem coerência com o resto do código
+            # converter total estimado (dias -> horas)
+            self.total_estimated_effort = int(project_tasks['estimated_effort'].sum() * HOURS_PER_DAY)
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
             self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
-            self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': task['estimated_effort'] * 8, 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
+            self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': int(task['estimated_effort'] * HOURS_PER_DAY), 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
             return self.get_state()
         def get_state(self):
             progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values()); progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
@@ -1096,7 +1099,26 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
-    agent = QLearningAgent(actions=env.all_actions); time_per_episode = 0.01
+
+    # --- Extrair parâmetros do agente (com defaults) ---
+    lr = float(agent_params.get('lr', 0.1))
+    gamma = float(agent_params.get('gamma', 0.9))
+    epsilon = float(agent_params.get('epsilon', 1.0))
+    epsilon_decay = float(agent_params.get('epsilon_decay', 0.9995))
+    min_epsilon = float(agent_params.get('min_epsilon', 0.01))
+
+    agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
+    time_per_episode = 0.01
+
+    # --- DEBUG / SANITY CHECK (será mostrado na UI) ---
+    try:
+        status_text.info(f"Debug: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
+        example_task = next(iter(env.tasks_state.items())) if env.tasks_state else None
+        status_text.info(f"Example task (id, data): {example_task}")
+    except Exception as e:
+        # Em caso de erro no debug, mostra no status_text sem interromper o treino
+        status_text.info(f"Debug: erro ao mostrar info do ambiente: {e}")
+
     
     for episode in range(num_episodes):
         project_id = df_projects_train.sample(1, random_state=episode).iloc[0]['project_id']; state = env.reset(project_id)
@@ -1195,7 +1217,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
     axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
     axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
-    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado'); axes[1].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[1].set_title('Progresso Acumulado'); axes[1].legend(); axes[1].grid(True)
+    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
+    axes[1].set_ylabel('Horas acumuladas')
     fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
     return plots, tables, logs
@@ -1508,7 +1531,18 @@ def rl_page():
         with rc3:
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
             pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
-        
+        -
+        st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
+        c_ag1, c_ag2, c_ag3 = st.columns(3)
+        with c_ag1:
+            agent_lr = st.number_input("Learning rate (lr)", min_value=0.0001, max_value=1.0, value=0.1, step=0.0001, format="%.4f")
+            agent_gamma = st.number_input("Gamma (discount)", min_value=0.0, max_value=1.0, value=0.9, step=0.01, format="%.2f")
+        with c_ag2:
+            agent_epsilon = st.number_input("Epsilon (start)", min_value=0.0, max_value=1.0, value=1.0, step=0.01, format="%.2f")
+            agent_epsilon_decay = st.number_input("Epsilon decay", min_value=0.0, max_value=1.0, value=0.9995, step=0.0001, format="%.4f")
+        with c_ag3:
+            agent_min_epsilon = st.number_input("Epsilon min", min_value=0.0, max_value=1.0, value=0.01, step=0.001, format="%.3f")
+
     status_container = st.empty()
 
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
@@ -1528,12 +1562,19 @@ def rl_page():
             status_text.info("A iniciar o treino do agente de RL...")
 
         plots_rl, tables_rl, logs_rl = run_rl_analysis(
-            st.session_state.dfs, 
-            project_id_to_simulate, 
-            num_episodes, 
+            st.session_state.dfs,
+            project_id_to_simulate,
+            num_episodes,
             reward_config,
             progress_bar,
-            status_text
+            status_text,
+            agent_params={
+                'lr': float(agent_lr),
+                'gamma': float(agent_gamma),
+                'epsilon': float(agent_epsilon),
+                'epsilon_decay': float(agent_epsilon_decay),
+                'min_epsilon': float(agent_min_epsilon)
+            }
         )
         st.session_state.plots_rl = plots_rl
         st.session_state.tables_rl = tables_rl
