@@ -1030,7 +1030,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_resource_allocations = dfs_rl['resource_allocations'].copy()
     df_dependencies = dfs_rl['dependencies'].copy()
 
-    # (O bloco de conversão de datas que estava aqui foi movido para o topo e removido daqui)
+    # Immediate sanity checks printed to the Streamlit UI
+    status_text.info("DEBUG: amostra carregada — shapes")
+    status_text.info(f"projects: {df_projects.shape}, tasks: {df_tasks.shape}, resources: {df_resources.shape}, allocs: {df_resource_allocations.shape}, deps: {df_dependencies.shape}")
+    status_text.info(f"projects.dtypes: {df_projects.dtypes.to_dict()}")
+    status_text.info(f"tasks.estimated_effort median,sum: median={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').median()}, sum={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').sum()}")
+    status_text.info(f"resources.daily_capacity describe: {pd.to_numeric(df_resources['daily_capacity'],errors='coerce').describe().to_dict()}")
+
 
     def calculate_business_days(start, end):
         return np.busday_count(start.date(), end.date()) if pd.notna(start) and pd.notna(end) else 0
@@ -1227,9 +1233,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     #SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
-    env.reset(project_id_to_simulate)
-    status_text.info(f"Estimated-effort inference: {env._estimated_effort_inference}")
-    status_text.info(f"Sample task state (primeiro): {next(iter(env.tasks_state.items())) if env.tasks_state else 'nenhuma tarefa'}")
+    env.reset(str(project_id_to_simulate))
+    st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
+    st.write("DEBUG: Sample task state (primeiro) =>", next(iter(env.tasks_state.items())) if env.tasks_state else "nenhuma tarefa")
 
     # --- Extrair parâmetros do agente (com defaults) ---
     lr = float(agent_params.get('lr', 0.1))
