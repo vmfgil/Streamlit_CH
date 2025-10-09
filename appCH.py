@@ -1260,33 +1260,31 @@ def login_page():
 
 
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
-# SUBSTITUA TODA A SUA FUNÇÃO 'settings_page' POR ESTA
+# SUBSTITUA A SUA FUNÇÃO 'settings_page' ATUAL POR ESTA VERSÃO COMPLETA E CORRIGIDA
 
 def settings_page():
     st.title("⚙️ Configurações e Carregamento de Dados")
 
     st.info("Carregue os 5 ficheiros CSV necessários para a análise.")
 
-    # File uploaders
-    # Substitua a secção de uploads pelo seguinte código para ter as 5 caixas lado a lado:
+    # A estrutura de colunas original para os uploads
+    col1, col2, col3 = st.columns(3)
+    
+    # Dicionário para guardar os ficheiros carregados
     uploaded_files = {}
-    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        uploaded_files['projects'] = st.file_uploader("projects.csv", type="csv", label_visibility="collapsed")
+        uploaded_files['projects'] = st.file_uploader("Carregar projects.csv", type="csv")
+        uploaded_files['tasks'] = st.file_uploader("Carregar tasks.csv", type="csv")
     
     with col2:
-        uploaded_files['tasks'] = st.file_uploader("tasks.csv", type="csv", label_visibility="collapsed")
+        uploaded_files['resources'] = st.file_uploader("Carregar resources.csv", type="csv")
+        uploaded_files['resource_allocations'] = st.file_uploader("Carregar resource_allocations.csv", type="csv")
 
     with col3:
-        uploaded_files['resources'] = st.file_uploader("resources.csv", type="csv", label_visibility="collapsed")
+        uploaded_files['dependencies'] = st.file_uploader("Carregar dependencies.csv", type="csv")
 
-    with col4:
-        uploaded_files['resource_allocations'] = st.file_uploader("resource_allocations.csv", type="csv", label_visibility="collapsed")
-
-    with col5:
-        uploaded_files['dependencies'] = st.file_uploader("dependencies.csv", type="csv", label_visibility="collapsed")
-
+    # A lógica para processar os ficheiros e mostrar o botão de análise
     if all(uploaded_files.values()):
         try:
             dfs = {name: pd.read_csv(file) for name, file in uploaded_files.items()}
@@ -1296,13 +1294,14 @@ def settings_page():
             st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
             if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
                 
-                ### ESTA É A CORREÇÃO CRÍTICA E DEFINITIVA ###
-                # Apaga a amostra de RL antiga antes de correr a nova análise.
+                ### ESTA É A ÚNICA ALTERAÇÃO FUNCIONAL FEITA AO SEU CÓDIGO ORIGINAL ###
+                # Apaga a amostra de RL antiga ("congelada") antes de correr a nova análise.
                 if 'rl_sample_ids' in st.session_state:
                     del st.session_state['rl_sample_ids']
-                ##################################################
-
+                #########################################################################
+                
                 with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
+                    # O resto da lógica de análise, tal como estava no seu ficheiro de referência
                     plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_d = run_pre_mining_analysis(st.session_state.dfs)
                     st.session_state.plots_pre_mining = plots_pre
                     st.session_state.tables_pre_mining = tables_pre
@@ -1320,6 +1319,7 @@ def settings_page():
 
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar os ficheiros: {e}")
+
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
