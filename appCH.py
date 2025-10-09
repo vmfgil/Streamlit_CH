@@ -1142,7 +1142,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 if not has_eligible_task_for_type: possible_actions.add((res_type, 'idle'))
             return list(possible_actions)
         def _is_task_eligible(self, task_id, res_type):
-            task_data = self.tasks_state[task_id];
+            task_key = str(task_id)
+            task_data = self.tasks_state.get(task_key)
+            if task_data is None:
+                return False
             if task_data['status'] == 'Concluída': return False
             pred_id = self.task_dependencies.get(task_id)
             if pred_id and self.tasks_state.get(pred_id, {}).get('status') != 'Concluída': return False
@@ -1224,6 +1227,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     #SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
+    status_text.info(f"Estimated-effort inference: {env._estimated_effort_inference}")
+    status_text.info(f"Sample task state (primeiro): {next(iter(env.tasks_state.items())) if env.tasks_state else 'nenhuma tarefa'}")
 
     # --- Extrair parâmetros do agente (com defaults) ---
     lr = float(agent_params.get('lr', 0.1))
