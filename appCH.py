@@ -1241,6 +1241,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
+    st.write("DEBUG_resource_types_count:", len(env.resource_types))
+    st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
     st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
     st.write("DEBUG: Sample task state (primeiro) =>", next(iter(env.tasks_state.items())) if env.tasks_state else "nenhuma tarefa")
 
