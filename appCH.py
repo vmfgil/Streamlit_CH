@@ -1027,7 +1027,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
             project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
             time_ratio = self.day_count / project_info['total_duration_days'] if project_info['total_duration_days'] > 0 else 0.0
-            pending_tasks = sum(1 for t in self.tasks_state.values() if t['status'] != 'Concluída'); return (int(progress_ratio * 10), int(budget_ratio * 10), int(time_ratio * 10), pending_tasks)
+            pending_tasks = sum(1 for t in self.tasks_state.values() if t['status'] != 'Concluída'); return (int(progress_ratio * 100), int(budget_ratio * 100), int(time_ratio * 100), pending_tasks)
         def get_possible_actions_for_state(self):
             possible_actions = set()
             for res_type in self.resource_types:
@@ -1058,7 +1058,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     res_info = available_resources.sample(1).iloc[0]
                     eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
                     if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id']); eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True); task_id_to_work = eligible_tasks[0]
+                    resources_used_today.add(res_info['resource_id']); task_id_to_work = random.choice(eligible_tasks)
                     task_data = self.tasks_state[task_id_to_work]; remaining_effort = task_data['estimated_effort'] - task_data['progress']; hours_to_work = min(res_info['daily_capacity'], remaining_effort)
                     cost_today = hours_to_work * res_info['cost_per_hour']; daily_cost += cost_today
                     self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
