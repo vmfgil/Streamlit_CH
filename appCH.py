@@ -1268,13 +1268,24 @@ def settings_page():
     st.info("Carregue os 5 ficheiros CSV necessários para a análise.")
 
     # File uploaders
-    uploaded_files = {
-        'projects': st.file_uploader("Carregar projects.csv", type="csv"),
-        'tasks': st.file_uploader("Carregar tasks.csv", type="csv"),
-        'resources': st.file_uploader("Carregar resources.csv", type="csv"),
-        'resource_allocations': st.file_uploader("Carregar resource_allocations.csv", type="csv"),
-        'dependencies': st.file_uploader("Carregar dependencies.csv", type="csv")
-    }
+    # Substitua a secção de uploads pelo seguinte código para ter as 5 caixas lado a lado:
+    uploaded_files = {}
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    with col1:
+        uploaded_files['projects'] = st.file_uploader("projects.csv", type="csv", label_visibility="collapsed")
+    
+    with col2:
+        uploaded_files['tasks'] = st.file_uploader("tasks.csv", type="csv", label_visibility="collapsed")
+
+    with col3:
+        uploaded_files['resources'] = st.file_uploader("resources.csv", type="csv", label_visibility="collapsed")
+
+    with col4:
+        uploaded_files['resource_allocations'] = st.file_uploader("resource_allocations.csv", type="csv", label_visibility="collapsed")
+
+    with col5:
+        uploaded_files['dependencies'] = st.file_uploader("dependencies.csv", type="csv", label_visibility="collapsed")
 
     if all(uploaded_files.values()):
         try:
