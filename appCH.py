@@ -948,6 +948,9 @@ def run_eda_analysis(dfs):
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
+    # --- CORREÇÃO: FAZER CÓPIA PROFUNDA DOS DATAFRAMES PARA NÃO MODIFICAR OS ORIGINAIS ---
+    dfs = {key: df.copy() for key, df in dfs.items()}
+    
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
     for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
         df = dfs[df_name]
@@ -1510,13 +1513,14 @@ def rl_page():
 
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
         st.session_state.rl_params_expanded = False
-        st.session_state.project_id_simulated = project_id_to_simulate
-
+        
+        # CORREÇÃO: Criar reward_config DENTRO do botão para usar valores atuais
         reward_config = {
             'cost_impact_factor': cost_impact_factor, 'daily_time_penalty': daily_time_penalty, 'idle_penalty': idle_penalty,
             'per_day_early_bonus': per_day_early_bonus, 'completion_base': completion_base, 'per_day_late_penalty': per_day_late_penalty,
             'priority_task_bonus_factor': priority_task_bonus_factor, 'pending_task_penalty_factor': pending_task_penalty_factor
         }
+        st.session_state.project_id_simulated = project_id_to_simulate
         
         with status_container.container():
             progress_bar = st.progress(0)
