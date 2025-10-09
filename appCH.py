@@ -1018,6 +1018,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             HOURS_PER_DAY = 8  # constante local — mantem coerência com o resto do código
             # converter total estimado (dias -> horas)
             self.total_estimated_effort = int(project_tasks['estimated_effort'].sum() * HOURS_PER_DAY)
+            st.write(f"DEBUG PROJETO {project_id}: Esforço Total Calculado = {self.total_estimated_effort} horas")
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
             self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
             self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': int(task['estimated_effort'] * HOURS_PER_DAY), 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
