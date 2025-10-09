@@ -1018,7 +1018,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             HOURS_PER_DAY = 8  # constante local — mantem coerência com o resto do código
             # converter total estimado (dias -> horas)
             self.total_estimated_effort = int(project_tasks['estimated_effort'].sum() * HOURS_PER_DAY)
-            st.write(f"DEBUG PROJETO {project_id}: Esforço Total Calculado = {self.total_estimated_effort} horas")
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
             self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
             self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': int(task['estimated_effort'] * HOURS_PER_DAY), 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
@@ -1150,13 +1149,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
-        st.write("--- INÍCIO DA AVALIAÇÃO DEBUG ---")
-        st.write("IDs dos projetos no conjunto de teste desta execução:")
-        st.write(df_projects_to_evaluate['project_id'].tolist())
         for _, prj_info in df_projects_to_evaluate.iterrows():
-            st.write(f"--- A avaliar o projeto ID: {prj_info['project_id']} ---")
             state = env.reset(prj_info['project_id']); 
-            st.write(f"Custo no início da simulação: {env.current_cost}")
             done = False; 
             calendar_day = 0
             while not done and calendar_day < 1000:
@@ -1168,7 +1162,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         if chosen_action: action_set.add(chosen_action)
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
-            st.write(f"Resultado final para o projeto {prj_info['project_id']}: Duração={env.day_count}, Custo={env.current_cost}")
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
         return pd.DataFrame(results)
 
