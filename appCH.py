@@ -1260,61 +1260,71 @@ def login_page():
 
 
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
-# SUBSTITUA A SUA FUNÇÃO 'settings_page' ATUAL POR ESTA VERSÃO COMPLETA E CORRIGIDA
-
-# SUBSTITUA TODA A SUA FUNÇÃO 'settings_page' PELA VERSÃO ABAIXO
-
 def settings_page():
-    st.title("⚙️ Configurações e Carregamento de Dados")
+    st.title("⚙️ Configurações e Upload de Dados")
+    
+    # Botão para limpar o cache, como estava no seu "Código 0"
+    st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
+    if st.button("🔴 Limpar Cache e Recomeçar Análise"):
+        st.cache_data.clear()
+        # A correção para o problema do RL está aqui também, para garantir
+        if 'rl_sample_ids' in st.session_state:
+            del st.session_state['rl_sample_ids']
+        st.success("Cache limpa com sucesso! A página será recarregada. Por favor, carregue os seus ficheiros novamente.")
+        st.rerun()
 
-    # A sua estrutura original com sub-cabeçalho e 5 colunas
-    st.subheader('Ficheiros de Input')
-    cols = st.columns(5)
-    dfs_local = {}
+    st.markdown("---")
+    st.subheader("Upload dos Ficheiros de Dados (.csv)")
+    st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
+    
+    # A sua estrutura original de 5 colunas para os uploads, do "Código 0"
+    file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
+    upload_cols = st.columns(5)
+    for i, name in enumerate(file_names):
+        with upload_cols[i]:
+            uploaded_file = st.file_uploader(f"Carregar `{name}.csv`", type="csv", key=f"upload_{name}")
+            if uploaded_file:
+                st.session_state.dfs[name] = pd.read_csv(uploaded_file)
+                st.markdown(f'<p style="font-size: small; color: #06B6D4;">`{name}.csv` carregado.</p>', unsafe_allow_html=True)
 
-    # O seu layout original com 5 colunas e labels escondidos
-    dfs_local['projects'] = cols[0].file_uploader('projects.csv', type='csv', label_visibility="collapsed")
-    dfs_local['tasks'] = cols[1].file_uploader('tasks.csv', type='csv', label_visibility="collapsed")
-    dfs_local['resources'] = cols[2].file_uploader('resources.csv', type='csv', label_visibility="collapsed")
-    dfs_local['resource_allocations'] = cols[3].file_uploader('resource_allocations.csv', type='csv', label_visibility="collapsed")
-    dfs_local['dependencies'] = cols[4].file_uploader('dependencies.csv', type='csv', label_visibility="collapsed")
+    st.markdown("<br>", unsafe_allow_html=True)
+    all_files_uploaded = all(st.session_state.dfs.get(name) is not None for name in file_names)
+    
+    # A sua lógica original para mostrar o botão e o toggle, do "Código 0"
+    if all_files_uploaded:
+        if st.toggle("Visualizar as primeiras 5 linhas dos ficheiros", value=False):
+            for name, df in st.session_state.dfs.items():
+                st.markdown(f"**Ficheiro: `{name}.csv`**")
+                st.dataframe(df.head())
+        
+        st.subheader("Execução da Análise")
+        st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
+        if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
+            
+            ### A ÚNICA CORREÇÃO FUNCIONAL ESTÁ AQUI ###
+            # Apaga a amostra de RL antiga ("congelada") antes de correr a nova análise.
+            if 'rl_sample_ids' in st.session_state:
+                del st.session_state['rl_sample_ids']
+            #############################################
+            
+            with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
+                plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(st.session_state.dfs)
+                st.session_state.plots_pre_mining = plots_pre
+                st.session_state.tables_pre_mining = tables_pre
+                log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
+                plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
+                st.session_state.plots_post_mining = plots_post
+                st.session_state.metrics = metrics
+                plots_eda, tables_eda = run_eda_analysis(st.session_state.dfs)
+                st.session_state.plots_eda = plots_eda
+                st.session_state.tables_eda = tables_eda
 
-    # A sua lógica original para verificar se todos os ficheiros foram carregados
-    if all(dfs_local.values()):
-        try:
-            # Processamento dos ficheiros
-            st.session_state.dfs = {name: pd.read_csv(file) for name, file in dfs_local.items()}
-            st.success("Todos os 5 ficheiros foram carregados com sucesso!")
-
-            # Os seus botões de análise, agora visíveis e funcionais
-            st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
-            if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
-                
-                ### A ÚNICA CORREÇÃO FUNCIONAL ESTÁ AQUI ###
-                # Apaga a amostra de RL antiga ("congelada") antes de correr a nova análise.
-                if 'rl_sample_ids' in st.session_state:
-                    del st.session_state['rl_sample_ids']
-                #############################################
-                
-                with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
-                    # O resto da sua lógica original
-                    plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_d = run_pre_mining_analysis(st.session_state.dfs)
-                    st.session_state.plots_pre_mining = plots_pre
-                    st.session_state.tables_pre_mining = tables_pre
-                    
-                    log_from_df = pm4py.convert_to_event_log(pm4py.format_dataframe(df_t, case_id='project_id', activity_key='task_name', timestamp_key='end_date'))
-                    st.session_state.event_log = log_from_df
-                    st.session_state.analysis_run = True
-                    st.session_state.current_page = "Dashboard"
-                    st.success("Análise inicial concluída!")
-                    st.balloons()
-                    time.sleep(2)
-                    st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao processar os ficheiros: {e}")
+            st.session_state.analysis_run = True
+            st.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
+            st.balloons()
+        st.markdown('</div>', unsafe_allow_html=True)
+    else:
+        st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
