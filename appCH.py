@@ -268,7 +268,7 @@ if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
 
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
-@st.cache_data
+#@st.cache_data
 def run_pre_mining_analysis(dfs):
     plots = {}
     tables = {}
@@ -500,14 +500,16 @@ def run_pre_mining_analysis(dfs):
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
     def get_phase(task_type):
-        if task_type in ['Onboarding', 'Validação KYC']:
-            return '1. Onboarding e Comercial'
-        elif task_type in ['Análise Documental', 'Análise de Risco', 'Avaliação da Imóvel']:
-            return '2. Análise e Risco'
-        elif task_type in ['Decisão de Crédito', 'Preparação Legal']:
-            return '3. Decisão e Contratual'
-        elif task_type == 'Fecho':
-            return '4. Fecho e Desembolso'
+        if task_type in ['Onboarding', 'Validação KYC', 'Análise Documental']:
+            return '1. Onboarding, KYC e Documentação'
+        elif task_type in ['Análise de Risco']:
+            return '2. Análise de Risco'
+        elif task_type in ['Avaliação da Imóvel']:
+            return '3. Avaliação de imóvel'
+        elif task_type in ['Decisão de Crédito']:
+            return '4. Decisão de crédito'
+        elif task_type in ['Fecho', 'Preparação Legal']:
+            return '5. Contratação e Desembolso'
         return task_type
     df_tasks['phase'] = df_tasks['task_type'].apply(get_phase)
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
@@ -519,8 +521,7 @@ def run_pre_mining_analysis(dfs):
     
     return plots, tables, event_log_pm4py, df_projects, df_tasks, df_resources, df_full_context
 
-@st.cache_data
-@st.cache_data
+#@st.cache_data
 def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_resources, _df_full_context):
     plots = {}
     metrics = {}
@@ -767,7 +768,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
     return plots, metrics
 # --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
-@st.cache_data
+#@st.cache_data
 def run_eda_analysis(dfs):
     plots = {}
     tables = {}
@@ -947,8 +948,9 @@ def run_eda_analysis(dfs):
 
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
-def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
-    # --- CORREÇÃO: FAZER CÓPIA PROFUNDA DOS DATAFRAMES PARA NÃO MODIFICAR OS ORIGINAIS ---
+def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
+    if agent_params is None:
+        agent_params = {}   
     dfs = {key: df.copy() for key, df in dfs.items()}
     
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
@@ -960,20 +962,48 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # -------------------------------------------------------------------------------------
 
     # --- PASSO 2: CALCULAR O CUSTO REAL NO CONJUNTO DE DADOS COMPLETO ---
-    df_real_costs = (dfs['resource_allocations'].merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id')
-                     .assign(cost=lambda df: df.hours_worked * df.cost_per_hour)
-                     .groupby('project_id')['cost'].sum().rename('total_actual_cost').reset_index())
-    dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left').fillna({'total_actual_cost': 0})
+    # garantir tipos consistentes antes de agregações
+    for id_col in ['project_id', 'task_id', 'resource_id']:
+        for dname in ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']:
+            if dname in dfs and id_col in dfs[dname].columns:
+                dfs[dname][id_col] = dfs[dname][id_col].astype(str)
+    
+    # garantir colunas numericas nos recursos e alocações
+    if 'resources' in dfs:
+        for col in ['cost_per_hour', 'daily_capacity']:
+            if col in dfs['resources'].columns:
+                dfs['resources'][col] = pd.to_numeric(dfs['resources'][col], errors='coerce').fillna(0)
+    if 'resource_allocations' in dfs:
+        for col in ['hours_worked']:
+            if col in dfs['resource_allocations'].columns:
+                dfs['resource_allocations'][col] = pd.to_numeric(dfs['resource_allocations'][col], errors='coerce').fillna(0)
+    
+    # recalcula custos reais de forma segura e numérica
+    df_real_costs = (
+        dfs['resource_allocations']
+        .merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
+    )
+    df_real_costs['cost_per_hour'] = pd.to_numeric(df_real_costs['cost_per_hour'], errors='coerce').fillna(0)
+    df_real_costs['hours_worked'] = pd.to_numeric(df_real_costs['hours_worked'], errors='coerce').fillna(0)
+    df_real_costs['cost'] = df_real_costs['hours_worked'] * df_real_costs['cost_per_hour']
+    df_real_costs = df_real_costs.groupby('project_id', dropna=False)['cost'].sum().reset_index().rename(columns={'cost': 'total_actual_cost'})
+    
+    dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left')
+    dfs['projects']['total_actual_cost'] = pd.to_numeric(dfs['projects'].get('total_actual_cost', pd.Series(dtype=float)), errors='coerce').fillna(0)
+
     
     # --- PASSO 3: CRIAR A AMOSTRA ---
     st.info("A componente de RL irá correr numa amostra de 500 processos para garantir a performance.")
     ids_amostra = st.session_state['rl_sample_ids']
     dfs_rl = {}
+    ids_amostra = [str(i) for i in ids_amostra]  # garante tipo string
+    dfs_rl = {}
     for nome_df, df in dfs.items():
         if 'project_id' in df.columns:
-            dfs_rl[nome_df] = df[df['project_id'].isin(ids_amostra)].copy()
+            dfs_rl[nome_df] = df[df['project_id'].astype(str).isin(ids_amostra)].copy()
         else:
             dfs_rl[nome_df] = df.copy()
+
 
     plots = {}
     tables = {}
@@ -1015,17 +1045,19 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
             self.total_estimated_budget = project_info['total_actual_cost']
-            self.total_estimated_effort = project_tasks['estimated_effort'].sum()
+            HOURS_PER_DAY = 8  # constante local — mantem coerência com o resto do código
+            # converter total estimado (dias -> horas)
+            self.total_estimated_effort = int(project_tasks['estimated_effort'].sum() * HOURS_PER_DAY)
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
             self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
-            self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': task['estimated_effort'] * 8, 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
+            self.tasks_state = {task['task_id']: {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': int(task['estimated_effort'] * HOURS_PER_DAY), 'priority': task['priority'], 'task_type': task['task_type']} for _, task in project_tasks.iterrows()}
             return self.get_state()
         def get_state(self):
             progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values()); progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
             budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
             project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
             time_ratio = self.day_count / project_info['total_duration_days'] if project_info['total_duration_days'] > 0 else 0.0
-            pending_tasks = sum(1 for t in self.tasks_state.values() if t['status'] != 'Concluída'); return (int(progress_ratio * 10), int(budget_ratio * 10), int(time_ratio * 10), pending_tasks)
+            pending_tasks = sum(1 for t in self.tasks_state.values() if t['status'] != 'Concluída'); return (int(progress_ratio * 100), int(budget_ratio * 100), int(time_ratio * 100), pending_tasks)
         def get_possible_actions_for_state(self):
             possible_actions = set()
             for res_type in self.resource_types:
@@ -1056,9 +1088,31 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     res_info = available_resources.sample(1).iloc[0]
                     eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
                     if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id']); eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True); task_id_to_work = eligible_tasks[0]
-                    task_data = self.tasks_state[task_id_to_work]; remaining_effort = task_data['estimated_effort'] - task_data['progress']; hours_to_work = min(res_info['daily_capacity'], remaining_effort)
-                    cost_today = hours_to_work * res_info['cost_per_hour']; daily_cost += cost_today
+                    resources_used_today.add(res_info['resource_id']); task_id_to_work = random.choice(eligible_tasks)
+                    task_data = self.tasks_state[task_id_to_work]
+                    remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                    
+                    # casts seguros para evitar multiplicações com strings/NaN
+                    daily_capacity_raw = res_info.get('daily_capacity', 0)
+                    cost_per_hour_raw = res_info.get('cost_per_hour', 0)
+                    
+                    try:
+                        daily_capacity = int(pd.to_numeric(daily_capacity_raw, errors='coerce') or 0)
+                    except Exception:
+                        daily_capacity = 0
+                    try:
+                        cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
+                    except Exception:
+                        cost_per_hour = 0.0
+                    
+                    hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
+                    if hours_to_work <= 0:
+                        # nada a fazer neste recurso hoje
+                        continue
+                    
+                    cost_today = hours_to_work * cost_per_hour
+                    daily_cost += cost_today
+
                     self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
                     if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
                     task_data['progress'] += hours_to_work
@@ -1093,13 +1147,32 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
     # --- O resto da função continua igual, usando as variáveis já preparadas ---
-    SEED = 123; random.seed(SEED); np.random.seed(SEED)
-    df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
+    #SEED = 123; random.seed(SEED); np.random.seed(SEED)
+    df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
-    agent = QLearningAgent(actions=env.all_actions); time_per_episode = 0.01
+
+    # --- Extrair parâmetros do agente (com defaults) ---
+    lr = float(agent_params.get('lr', 0.1))
+    gamma = float(agent_params.get('gamma', 0.9))
+    epsilon = float(agent_params.get('epsilon', 1.0))
+    epsilon_decay = float(agent_params.get('epsilon_decay', 0.9995))
+    min_epsilon = float(agent_params.get('min_epsilon', 0.01))
+
+    agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
+    time_per_episode = 0.01
+
+    # --- DEBUG / SANITY CHECK (será mostrado na UI) ---
+    try:
+        status_text.info(f"Debug: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
+        example_task = next(iter(env.tasks_state.items())) if env.tasks_state else None
+        status_text.info(f"Example task (id, data): {example_task}")
+    except Exception as e:
+        # Em caso de erro no debug, mostra no status_text sem interromper o treino
+        status_text.info(f"Debug: erro ao mostrar info do ambiente: {e}")
+
     
     for episode in range(num_episodes):
-        project_id = df_projects_train.sample(1, random_state=episode).iloc[0]['project_id']; state = env.reset(project_id)
+        project_id = df_projects_train.sample(1).iloc[0]['project_id']; state = env.reset(project_id)
         episode_reward, done = 0, False; calendar_day = 0
         while not done and calendar_day < 1000:
             possible_actions = env.get_possible_actions_for_state(); action_set = set()
@@ -1129,7 +1202,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
         for _, prj_info in df_projects_to_evaluate.iterrows():
-            state = env.reset(prj_info['project_id']); done = False; calendar_day = 0
+            state = env.reset(prj_info['project_id']); 
+            done = False; 
+            calendar_day = 0
             while not done and calendar_day < 1000:
                 possible_actions = env.get_possible_actions_for_state(); action_set = set()
                 for res_type in env.resource_types:
@@ -1173,13 +1248,32 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         if env.day_count > 730: break
     simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
     
-    project_info_full = dfs['projects'].loc[dfs['projects']['project_id'] == project_id_to_simulate].iloc[0]
-    real_duration, real_cost = project_info_full['total_duration_days'], project_info_full['total_actual_cost']
-    tables['project_summary'] = pd.DataFrame({'Métrica': ['Duração (dias úteis)', 'Custo (€)'], 'Real (Histórico)': [real_duration, real_cost], 'Simulado (RL)': [sim_duration, sim_cost]})
+    # Usar os dataframes AMOSTRADOS (df_projects, df_resource_allocations, df_resources)
+
+    project_info_full = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
+    real_duration, real_cost = project_info_full.get('total_duration_days'), project_info_full.get('total_actual_cost')
     
-    project_start_date = dfs['projects'].loc[dfs['projects']['project_id'] == project_id_to_simulate, 'start_date'].iloc[0]
-    real_allocations = dfs['resource_allocations'][dfs['resource_allocations']['project_id'] == project_id_to_simulate].copy()
-    real_allocations['day'] = real_allocations.apply(lambda row: np.busday_count(project_start_date.date(), row['allocation_date'].date()) if pd.notna(row['allocation_date']) else 0, axis=1)
+    # Guardar o resumo do projeto usando valores reais da amostra
+    tables['project_summary'] = pd.DataFrame({
+        'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
+        'Real (Histórico)': [real_duration, real_cost],
+        'Simulado (RL)': [sim_duration, sim_cost]
+    })
+    
+    # Usar start_date e alocações da amostra
+    project_start_date = df_projects.loc[df_projects['project_id'] == project_id_to_simulate, 'start_date'].iloc[0]
+    real_allocations = df_resource_allocations[df_resource_allocations['project_id'] == project_id_to_simulate].copy()
+    
+    # garantir que allocation_date é datetime antes de calcular dias úteis
+    if 'allocation_date' in real_allocations.columns:
+        real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'], errors='coerce')
+    
+    real_allocations['day'] = real_allocations.apply(
+        lambda row: np.busday_count(project_start_date.date(), row['allocation_date'].date())
+        if pd.notna(row.get('allocation_date')) else 0,
+        axis=1
+    )
+
     
     total_estimated_effort = env.total_estimated_effort
     fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
@@ -1195,7 +1289,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
     axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
     axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
-    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado'); axes[1].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[1].set_title('Progresso Acumulado'); axes[1].legend(); axes[1].grid(True)
+    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
+    axes[1].set_ylabel('Horas acumuladas')
     fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
     return plots, tables, logs
@@ -1218,6 +1313,14 @@ def login_page():
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
 def settings_page():
     st.title("⚙️ Configurações e Upload de Dados")
+    st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
+    if st.button("🔴 Limpar Cache e Recomeçar Análise"):
+        st.cache_data.clear()
+        st.success("Cache limpa com sucesso! A página será recarregada. Por favor, carregue os seus ficheiros novamente.")
+        st.rerun()
+    ############################################
+
+    st.markdown("---") # Para separar visualmente
     st.markdown("---")
     st.subheader("Upload dos Ficheiros de Dados (.csv)")
     st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
@@ -1228,8 +1331,27 @@ def settings_page():
         with upload_cols[i]:
             uploaded_file = st.file_uploader(f"Carregar `{name}.csv`", type="csv", key=f"upload_{name}")
             if uploaded_file:
-                st.session_state.dfs[name] = pd.read_csv(uploaded_file)
-                st.markdown(f'<p style="font-size: small; color: #06B6D4;">`{name}.csv` carregado.</p>', unsafe_allow_html=True)
+                # normalização mínima após upload
+                df = pd.read_csv(uploaded_file)
+                
+                # ids como string onde existam
+                for id_col in ['project_id', 'task_id', 'resource_id']:
+                    if id_col in df.columns:
+                        df[id_col] = df[id_col].astype(str)
+                
+                # colunas numéricas importantes: forçar numeric e preencher NaN com 0
+                for num_col in ['hours_worked', 'cost_per_hour', 'daily_capacity', 'estimated_effort', 'priority', 'budget_impact']:
+                    if num_col in df.columns:
+                        df[num_col] = pd.to_numeric(df[num_col], errors='coerce').fillna(0)
+                
+                # datas: parse imediato
+                for date_col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
+                    if date_col in df.columns:
+                        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                
+                st.session_state.dfs[name] = df
+                st.markdown(f'<p style="font-size: small; color: #06B6D4;">`{name}.csv` carregado e normalizado.</p>', unsafe_allow_html=True)
+
 
     st.markdown("<br>", unsafe_allow_html=True)
     all_files_uploaded = all(st.session_state.dfs.get(name) is not None for name in file_names)
@@ -1469,7 +1591,10 @@ def rl_page():
     # --- LÓGICA CORRIGIDA: CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
     # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
     if 'rl_sample_ids' not in st.session_state:
-        st.session_state['rl_sample_ids'] = st.session_state.dfs['projects']['project_id'].sample(n=500, random_state=42).tolist()
+        proj_ids = st.session_state.dfs['projects']['project_id'].astype(str)
+        n = min(500, len(proj_ids))
+        st.session_state['rl_sample_ids'] = proj_ids.sample(n=n, random_state=42).tolist()
+
     # -----------------------------------------------------------------
 
     st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de processos. O treino e a análise correm sobre uma amostra de 500 processos para garantir a performance.")
@@ -1493,7 +1618,7 @@ def rl_page():
                 index=default_index
             )
         with c2:
-            num_episodes = st.number_input("Número de Episódios de Treino", min_value=100, max_value=10000, value=1000, step=100)
+            num_episodes = st.number_input("Número de Episódios de Treino", min_value=20, max_value=10000, value=1000, step=100)
 
         st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
         rc1, rc2, rc3 = st.columns(3)
@@ -1509,6 +1634,17 @@ def rl_page():
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
             pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
         
+        st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
+        c_ag1, c_ag2, c_ag3 = st.columns(3)
+        with c_ag1:
+            agent_lr = st.number_input("Learning rate (lr)", min_value=0.0001, max_value=1.0, value=0.1, step=0.0001, format="%.4f")
+            agent_gamma = st.number_input("Gamma (discount)", min_value=0.0, max_value=1.0, value=0.9, step=0.01, format="%.2f")
+        with c_ag2:
+            agent_epsilon = st.number_input("Epsilon (start)", min_value=0.0, max_value=1.0, value=1.0, step=0.01, format="%.2f")
+            agent_epsilon_decay = st.number_input("Epsilon decay", min_value=0.0, max_value=1.0, value=0.9995, step=0.0001, format="%.4f")
+        with c_ag3:
+            agent_min_epsilon = st.number_input("Epsilon min", min_value=0.0, max_value=1.0, value=0.01, step=0.001, format="%.3f")
+
     status_container = st.empty()
 
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
@@ -1528,12 +1664,19 @@ def rl_page():
             status_text.info("A iniciar o treino do agente de RL...")
 
         plots_rl, tables_rl, logs_rl = run_rl_analysis(
-            st.session_state.dfs, 
-            project_id_to_simulate, 
-            num_episodes, 
+            st.session_state.dfs,
+            project_id_to_simulate,
+            num_episodes,
             reward_config,
             progress_bar,
-            status_text
+            status_text,
+            agent_params={
+                'lr': float(agent_lr),
+                'gamma': float(agent_gamma),
+                'epsilon': float(agent_epsilon),
+                'epsilon_decay': float(agent_epsilon_decay),
+                'min_epsilon': float(agent_min_epsilon)
+            }
         )
         st.session_state.plots_rl = plots_rl
         st.session_state.tables_rl = tables_rl
