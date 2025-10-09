@@ -1036,15 +1036,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         "project_total_duration_days": int(df_projects.loc[df_projects['project_id']==str(project_id_to_simulate),'total_duration_days'].iloc[0]) if str(project_id_to_simulate) in df_projects['project_id'].astype(str).values else None
     })
     st.write("CHECK allocs for project:", df_resource_allocations[df_resource_allocations['project_id'].astype(str)==str(project_id_to_simulate)].groupby('task_id')['hours_worked'].sum().reset_index().to_dict())
-
-    # Immediate sanity checks printed to the Streamlit UI
-    status_text.info("DEBUG: amostra carregada — shapes")
-    status_text.info(f"projects: {df_projects.shape}, tasks: {df_tasks.shape}, resources: {df_resources.shape}, allocs: {df_resource_allocations.shape}, deps: {df_dependencies.shape}")
-    status_text.info(f"projects.dtypes: {df_projects.dtypes.to_dict()}")
-    status_text.info(f"tasks.estimated_effort median,sum: median={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').median()}, sum={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').sum()}")
-    status_text.info(f"resources.daily_capacity describe: {pd.to_numeric(df_resources['daily_capacity'],errors='coerce').describe().to_dict()}")
-
-
+    
     def calculate_business_days(start, end):
         return np.busday_count(start.date(), end.date()) if pd.notna(start) and pd.notna(end) else 0
 
@@ -1324,7 +1316,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
     st.write("CHECK_episode_logs_len:", len(getattr(env, "episode_logs", [])))
-    st.write("CHECK_resources_remaining_sample:", {rt: env.resources_by_type[rt][['resource_id','daily_capacity','daily_capacity_remaining']].head(3).to_dict('list') for rt in env.resource_types})
     st.write("DEBUG_resource_types_count:", len(env.resource_types))
     st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
     st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
