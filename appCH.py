@@ -12,7 +12,6 @@ import base64
 import time
 import random
 from datetime import timedelta
-import copy
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -949,8 +948,6 @@ def run_eda_analysis(dfs):
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text):
-    # --- PASSO 0: CRIAR UMA CÓPIA PROFUNDA PARA ISOLAR A EXECUÇÃO ---
-    dfs = copy.deepcopy(dfs) # <-- ADICIONE ESTA LINHA NO INÍCIO DA FUNÇÃO
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
     for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
         df = dfs[df_name]
@@ -996,7 +993,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # --- AMBIENTE E AGENTE (CLASSES) --- (Sem alterações)
     class ProjectManagementEnv:
         def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, reward_config=None, min_progress_for_next_phase=0.7):
-            st.warning(f"DEBUG - Recompensas recebidas pelo ambiente: {reward_config}") # <--- ADICIONE ESTA LINHA
             self.rewards = reward_config; self.df_tasks = df_tasks; self.df_resources = df_resources; self.df_dependencies = df_dependencies; self.df_projects_info = df_projects_info
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist()); self.task_types = sorted(self.df_tasks['task_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
@@ -1046,104 +1042,39 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
-                # CÓDIGO CORRIGIDO
-        # CÓDIGO COM RECOMPENSA CORRIGIDA
         def step(self, action_set):
-            # Se for fim de semana, apenas avança o tempo sem fazer nada
-            if self.current_date.weekday() >= 5: # Sábado (5) ou Domingo (6)
-                self.current_date += timedelta(days=1)
-                return 0, False 
-        
-            # Se chegou aqui, é um dia de semana
-            self.day_count += 1 
-            daily_cost = 0
-            reward_from_tasks = 0
-            resources_used_today = set()
-        
-            # Lógica para alocar recursos e trabalhar nas tarefas
-            for res_type, task_type in action_set:
-                if task_type == "idle":
-                    reward_from_tasks -= self.rewards['idle_penalty']
-                    continue
-                
-                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                if available_resources.empty:
-                    continue
-                
-                res_info = available_resources.sample(1).iloc[0]
-                eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                if not eligible_tasks:
-                    continue
-        
-                resources_used_today.add(res_info['resource_id'])
-                eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True)
-                task_id_to_work = eligible_tasks[0]
-                task_data = self.tasks_state[task_id_to_work]
-                
-                remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                hours_to_work = min(res_info['daily_capacity'], remaining_effort)
-                cost_today = hours_to_work * res_info['cost_per_hour']
-                daily_cost += cost_today
-        
-                # (A lógica interna de logs e progresso continua igual)
-                self.episode_logs.append({
-                    'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type,
-                    'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today,
-                    'action': f'Work on {task_type}'
-                })
-                if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-                task_data['progress'] += hours_to_work
-                if task_data['progress'] >= task_data['estimated_effort']:
-                    task_data['status'] = 'Concluída'
-                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-        
-            # Atualiza o custo total (para logging) e avança o calendário
-            self.current_cost += daily_cost
-            self.current_date += timedelta(days=1)
-            
-            ### ALTERAÇÃO 1: A penalização do custo é agora IMEDIATA E DIÁRIA ###
-            # A recompensa diária agora inclui o custo das ações desse dia
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - (daily_cost * self.rewards['cost_impact_factor'])
-            
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
-        
-            # Se o projeto terminou, aplica as recompensas/penalizações finais
+            if self.current_date.weekday() >= 5: self.current_date += timedelta(days=1); daily_cost = 0; reward_from_tasks = 0
+            else:
+                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
+                for res_type, task_type in action_set:
+                    if task_type == "idle": reward_from_tasks -= self.rewards['idle_penalty']; continue
+                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
+                    if available_resources.empty: continue
+                    res_info = available_resources.sample(1).iloc[0]
+                    eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
+                    if not eligible_tasks: continue
+                    resources_used_today.add(res_info['resource_id']); eligible_tasks.sort(key=lambda tid: self.tasks_state[tid]['priority'], reverse=True); task_id_to_work = eligible_tasks[0]
+                    task_data = self.tasks_state[task_id_to_work]; remaining_effort = task_data['estimated_effort'] - task_data['progress']; hours_to_work = min(res_info['daily_capacity'], remaining_effort)
+                    cost_today = hours_to_work * res_info['cost_per_hour']; daily_cost += cost_today
+                    self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
+                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
+                    task_data['progress'] += hours_to_work
+                    if task_data['progress'] >= task_data['estimated_effort']: task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+                self.current_cost += daily_cost; self.current_date += timedelta(days=1)
+                if self.current_date.weekday() < 5: self.day_count += 1
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
             if project_is_done:
                 project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count
-                total_reward += self.rewards['completion_base']
-                
-                if time_diff >= 0:
-                    total_reward += time_diff * self.rewards['per_day_early_bonus']
-                else:
-                    total_reward += time_diff * self.rewards['per_day_late_penalty']
-                
-                ### ALTERAÇÃO 2: REMOVEMOS a penalização de custo final, pois já foi aplicada diariamente ###
-                # total_reward -= self.current_cost * self.rewards['cost_impact_factor'] # <--- LINHA REMOVIDA/COMENTADA
-        
+                time_diff = project_info['total_duration_days'] - self.day_count; total_reward += self.rewards['completion_base']
+                total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
+                total_reward -= self.current_cost * self.rewards['cost_impact_factor']
             return total_reward, project_is_done
 
-    
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
-            # Atribuições explícitas, uma por linha
-            self.actions = actions
-            self.action_to_index = {action: i for i, action in enumerate(actions)}
-            self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
-            
-            # Hiperparâmetros do Agente
-            self.lr = lr
-            self.gamma = gamma
-            self.epsilon = epsilon
-            self.epsilon_decay = epsilon_decay
-            self.min_epsilon = min_epsilon
-            
-            # Listas para guardar o histórico de treino
-            self.epsilon_history = []
-            self.episode_rewards = []
-            self.episode_durations = []
-            self.episode_costs = []
-
+            self.actions = actions; self.action_to_index = {action: i for i, action in enumerate(actions)}; self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
+            self.lr, self.gamma, self.epsilon = lr, gamma, epsilon; self.epsilon_decay, self.min_epsilon = epsilon_decay, min_epsilon
+            self.epsilon_history, self.episode_rewards, self.episode_durations, self.episode_costs = [], [], [], []
         def choose_action(self, state, possible_actions):
             if not possible_actions: return None
             if random.uniform(0, 1) < self.epsilon: return random.choice(possible_actions)
@@ -1151,15 +1082,14 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 q_values = {action: self.q_table[state][self.action_to_index[action]] for action in possible_actions if action in self.action_to_index}
                 if not q_values: return random.choice(possible_actions)
                 max_q = max(q_values.values()); best_actions = sorted([action for action, q_val in q_values.items() if q_val == max_q]); return best_actions[0]
-
         def update_q_table(self, state, action, reward, next_state):
             action_index = self.action_to_index.get(action);
             if action_index is None: return
             old_value = self.q_table[state][action_index]; next_max = np.max(self.q_table[next_state]) if next_state in self.q_table else 0.0
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
-
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
+    # --- O resto da função continua igual, usando as variáveis já preparadas ---
     SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
@@ -1544,72 +1474,59 @@ def rl_page():
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
         
+        # As opções agora vêm da amostra que acabámos de criar.
         project_ids_elegiveis = st.session_state.get('rl_sample_ids', [])
         
         c1, c2 = st.columns(2)
         with c1:
             default_index = 0
+            # Garante que o processo '25' só é pré-selecionado se existir na amostra
             if "25" in project_ids_elegiveis:
                 default_index = project_ids_elegiveis.index("25")
 
-            ### ALTERAÇÃO 1: Adicionar uma 'key' a cada widget ###
-            st.selectbox(
+            project_id_to_simulate = st.selectbox(
                 "Selecione o Processo para Simulação Detalhada (Amostra)",
                 options=project_ids_elegiveis,
-                index=default_index,
-                key="rl_project_id" # <--- Key adicionada
+                index=default_index
             )
         with c2:
-            st.number_input(
-                "Número de Episódios de Treino", 
-                min_value=100, max_value=10000, value=1000, step=100,
-                key="rl_num_episodes" # <--- Key adicionada
-            )
+            num_episodes = st.number_input("Número de Episódios de Treino", min_value=100, max_value=10000, value=1000, step=100)
 
         st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
-            st.number_input("Fator de Impacto do Custo", value=0.1, key="rl_cost_factor")
-            st.number_input("Penalização Diária por Tempo", value=400.0, key="rl_time_penalty")
-            st.number_input("Penalização por Inatividade", value=200.0, key="rl_idle_penalty")
+            cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=1.0)
+            daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=20.0)
+            idle_penalty = st.number_input("Penalização por Inatividade", value=10.0)
         with rc2:
-            st.number_input("Bónus por Dia de Adiantamento", value=500.0, key="rl_early_bonus")
-            st.number_input("Recompensa Base por Conclusão", value=5000.0, key="rl_completion_base")
-            st.number_input("Penalização por Dia de Atraso", value=1500.0, key="rl_late_penalty")
+            per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=500.0)
+            completion_base = st.number_input("Recompensa Base por Conclusão", value=5000.0)
+            per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=1500.0)
         with rc3:
-            st.number_input("Bónus por Tarefa Prioritária", value=500, key="rl_priority_bonus")
-            st.number_input("Penalização por Tarefa Pendente", value=20, key="rl_pending_penalty")
+            priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
+            pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
         
     status_container = st.empty()
 
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
         st.session_state.rl_params_expanded = False
-        
-        ### ALTERAÇÃO 2: Ler os valores a partir do st.session_state ###
-        st.session_state.project_id_simulated = st.session_state.rl_project_id
-        
-        # Construir o dicionário de recompensas a partir do session_state
-        reward_config = {
-            'cost_impact_factor': st.session_state.rl_cost_factor,
-            'daily_time_penalty': st.session_state.rl_time_penalty,
-            'idle_penalty': st.session_state.rl_idle_penalty,
-            'per_day_early_bonus': st.session_state.rl_early_bonus,
-            'completion_base': st.session_state.rl_completion_base,
-            'per_day_late_penalty': st.session_state.rl_late_penalty,
-            'priority_task_bonus_factor': st.session_state.rl_priority_bonus,
-            'pending_task_penalty_factor': st.session_state.rl_pending_penalty
-        }
+        st.session_state.project_id_simulated = project_id_to_simulate
 
+        reward_config = {
+            'cost_impact_factor': cost_impact_factor, 'daily_time_penalty': daily_time_penalty, 'idle_penalty': idle_penalty,
+            'per_day_early_bonus': per_day_early_bonus, 'completion_base': completion_base, 'per_day_late_penalty': per_day_late_penalty,
+            'priority_task_bonus_factor': priority_task_bonus_factor, 'pending_task_penalty_factor': pending_task_penalty_factor
+        }
+        
         with status_container.container():
             progress_bar = st.progress(0)
             status_text = st.empty()
             status_text.info("A iniciar o treino do agente de RL...")
 
-        # Chamar a função de análise com os valores guardados no session_state
         plots_rl, tables_rl, logs_rl = run_rl_analysis(
             st.session_state.dfs, 
-            st.session_state.rl_project_id, 
-            st.session_state.rl_num_episodes, 
+            project_id_to_simulate, 
+            num_episodes, 
             reward_config,
             progress_bar,
             status_text
@@ -1619,7 +1536,6 @@ def rl_page():
         st.session_state.logs_rl = logs_rl
         st.session_state.rl_analysis_run = True
         st.rerun()
-
 
     
     if st.session_state.rl_analysis_run:
