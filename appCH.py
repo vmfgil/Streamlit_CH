@@ -1186,36 +1186,67 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
         def step(self, action_set):
-            if self.current_date.weekday() >= 5: self.current_date += timedelta(days=1); daily_cost = 0; reward_from_tasks = 0
+            if self.current_date.weekday() >= 5:
+                # fim de semana: avança dia sem trabalho
+                self.current_date += timedelta(days=1)
+                daily_cost = 0
+                reward_from_tasks = 0
             else:
-                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
+                # dia útil: inicializações e reset diário de capacidades
+                daily_cost = 0
+                reward_from_tasks = 0
+                resources_used_today = set()
+        
+                # --- RESET diário da capacidade dos recursos (cada dia começa com a capacidade nominal) ---
+                for rt in list(self.resources_by_type.keys()):
+                    try:
+                        df_rt = self.resources_by_type[rt]
+                        df_rt = df_rt.copy()
+                        if 'daily_capacity' in df_rt.columns:
+                            df_rt['daily_capacity'] = pd.to_numeric(df_rt['daily_capacity'], errors='coerce').fillna(0)
+                        else:
+                            df_rt['daily_capacity'] = 0
+                        df_rt['daily_capacity_remaining'] = df_rt['daily_capacity'].astype(float)
+                        self.resources_by_type[rt] = df_rt
+                    except Exception:
+                        continue
+                # -------------------------------------------------------------------------------------
+        
+                # Processar cada ação decidida para este dia
                 for res_type, task_type in action_set:
                     if task_type == "idle":
                         reward_from_tasks -= self.rewards['idle_penalty']
                         continue
+        
                     # selecionar um recurso livre deste tipo que ainda tenha capacidade hoje
-                    available_resources = self.resources_by_type[res_type]
+                    available_resources = self.resources_by_type.get(res_type, pd.DataFrame())
+                    if available_resources.empty:
+                        continue
+        
                     # criar coluna temporária daily_capacity_remaining se não existir, inicializada com daily_capacity
                     if 'daily_capacity_remaining' not in available_resources.columns:
                         available_resources = available_resources.copy()
                         available_resources['daily_capacity_remaining'] = pd.to_numeric(available_resources.get('daily_capacity', 0), errors='coerce').fillna(0)
-                        # atualizar o dict para uso posterior
                         self.resources_by_type[res_type] = available_resources
+        
                     # filtrar recursos ainda não usados hoje e com disponibilidade
                     avail_mask = ~available_resources['resource_id'].isin(resources_used_today) & (available_resources['daily_capacity_remaining'] > 0)
                     available_ready = available_resources[avail_mask]
                     if available_ready.empty:
                         continue
+        
                     res_info = available_ready.sample(1).iloc[0]
+        
                     # escolher tarefa elegível
                     eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
                     if not eligible_tasks:
                         continue
+        
                     resources_used_today.add(res_info['resource_id'])
                     task_id_to_work = random.choice(eligible_tasks)
                     task_data = self.tasks_state[task_id_to_work]
                     remaining_effort = max(0, task_data['estimated_effort'] - task_data['progress'])
-
+        
                     # capacidade e custo seguros
                     try:
                         daily_capacity = float(pd.to_numeric(res_info.get('daily_capacity', 0), errors='coerce') or 0)
@@ -1225,19 +1256,19 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         cost_per_hour = float(pd.to_numeric(res_info.get('cost_per_hour', 0), errors='coerce') or 0.0)
                     except Exception:
                         cost_per_hour = 0.0
-
+        
                     # disponibilidade real deste recurso hoje (leva em conta daily_capacity_remaining)
                     rem_col = 'daily_capacity_remaining'
                     res_row_idx = available_resources.index[available_resources['resource_id'] == res_info['resource_id']][0]
                     res_available_hours = float(available_resources.at[res_row_idx, rem_col]) if rem_col in available_resources.columns else daily_capacity
-
+        
                     hours_to_work = min(daily_capacity, res_available_hours, remaining_effort)
                     if hours_to_work <= 0:
                         continue
-
+        
                     cost_today = hours_to_work * cost_per_hour
                     daily_cost += cost_today
-
+        
                     # regista execução
                     self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
                     if task_data['status'] == 'Pendente':
@@ -1248,21 +1279,25 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
                     # decrementar disponibilidade do recurso no dataframe salvo em self.resources_by_type
                     try:
-                        # actualiza a linha correspondente no DataFrame armazenado em self.resources_by_type
                         self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] = max(0.0, self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] - hours_to_work)
                     except Exception:
-                        # fallback: não interromper execução se a estrutura for diferente
                         pass
-
-                self.current_cost += daily_cost; self.current_date += timedelta(days=1)
-                if self.current_date.weekday() < 5: self.day_count += 1
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+        
+                self.current_cost += daily_cost
+                self.current_date += timedelta(days=1)
+                if self.current_date.weekday() < 5:
+                    self.day_count += 1
+        
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
             if project_is_done:
                 project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count; total_reward += self.rewards['completion_base']
+                time_diff = project_info['total_duration_days'] - self.day_count
+                total_reward += self.rewards['completion_base']
                 total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
                 total_reward -= self.current_cost * self.rewards['cost_impact_factor']
             return total_reward, project_is_done
+
 
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
@@ -1288,6 +1323,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
+    st.write("CHECK_episode_logs_len:", len(getattr(env, "episode_logs", [])))
+    st.write("CHECK_resources_remaining_sample:", {rt: env.resources_by_type[rt][['resource_id','daily_capacity','daily_capacity_remaining']].head(3).to_dict('list') for rt in env.resource_types})
     st.write("DEBUG_resource_types_count:", len(env.resource_types))
     st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
     st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
