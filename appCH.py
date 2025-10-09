@@ -1331,14 +1331,16 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
     time_per_episode = 0.01
 
-    # --- DEBUG / SANITY CHECK (será mostrado na UI) ---
+    # DEBUG não invasivo: emitir para o log do servidor em vez de sobrescrever a caixa de progresso
     try:
-        status_text.info(f"Debug: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
         example_task = next(iter(env.tasks_state.items())) if env.tasks_state else None
-        status_text.info(f"Example task (id, data): {example_task}")
+        print(f"DEBUG env._estimated_effort_inference => {env._estimated_effort_inference}")
+        print(f"DEBUG: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
+        print(f"DEBUG: Example task (id, data) = {example_task}")
     except Exception as e:
-        # Em caso de erro no debug, mostra no status_text sem interromper o treino
-        status_text.info(f"Debug: erro ao mostrar info do ambiente: {e}")
+        # manter apenas logging no servidor
+        print(f"DEBUG: erro ao obter info do ambiente: {e}")
+
 
     
     for episode in range(num_episodes):
