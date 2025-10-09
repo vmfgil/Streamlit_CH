@@ -1531,7 +1531,7 @@ def rl_page():
         with rc3:
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
             pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
-        -
+        
         st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
         c_ag1, c_ag2, c_ag3 = st.columns(3)
         with c_ag1:
