@@ -1227,6 +1227,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     #SEED = 123; random.seed(SEED); np.random.seed(SEED)
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
+    env.reset(project_id_to_simulate)
     status_text.info(f"Estimated-effort inference: {env._estimated_effort_inference}")
     status_text.info(f"Sample task state (primeiro): {next(iter(env.tasks_state.items())) if env.tasks_state else 'nenhuma tarefa'}")
 
