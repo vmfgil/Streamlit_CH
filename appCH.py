@@ -1095,8 +1095,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
     # --- O resto da função continua igual, usando as variáveis já preparadas ---
-    SEED = 123; random.seed(SEED); np.random.seed(SEED)
-    df_projects_train = df_projects.sample(frac=0.8, random_state=SEED); df_projects_test = df_projects.drop(df_projects_train.index)
+    #SEED = 123; random.seed(SEED); np.random.seed(SEED)
+    df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, reward_config=reward_config)
 
     # --- Extrair parâmetros do agente (com defaults) ---
