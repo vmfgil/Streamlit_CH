@@ -1273,9 +1273,16 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             possible_actions = env.get_possible_actions_for_state(); action_set = set()
             for res_type in env.resource_types:
                 actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                if actions_for_res:
+                if not actions_for_res:
+                    continue
+                # permitir até N ações por tipo, onde N = número de recursos desse tipo
+                avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
+                chosen_for_type = set()
+                for _ in range(avail_count):
                     chosen_action = agent.choose_action(state, actions_for_res)
-                    if chosen_action: action_set.add(chosen_action)
+                    if chosen_action:
+                        chosen_for_type.add(chosen_action)
+                action_set.update(chosen_for_type)
             reward, done = env.step(action_set); next_state = env.get_state()
             for action in action_set: agent.update_q_table(state, action, reward, next_state)
             state = next_state; episode_reward += reward; calendar_day += 1
