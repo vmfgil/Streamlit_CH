@@ -1030,6 +1030,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_resource_allocations = dfs_rl['resource_allocations'].copy()
     df_dependencies = dfs_rl['dependencies'].copy()
 
+    st.write("CHECK resources.daily_capacity describe:", pd.to_numeric(df_resources['daily_capacity'], errors='coerce').describe().to_dict())
+    st.write("CHECK team capacity and project hist days:", {
+        "team_daily_capacity_sum": pd.to_numeric(df_resources['daily_capacity'], errors='coerce').fillna(0).sum(),
+        "project_total_duration_days": int(df_projects.loc[df_projects['project_id']==str(project_id_to_simulate),'total_duration_days'].iloc[0]) if str(project_id_to_simulate) in df_projects['project_id'].astype(str).values else None
+    })
+    st.write("CHECK allocs for project:", df_resource_allocations[df_resource_allocations['project_id'].astype(str)==str(project_id_to_simulate)].groupby('task_id')['hours_worked'].sum().reset_index().to_dict())
+
     # Immediate sanity checks printed to the Streamlit UI
     status_text.info("DEBUG: amostra carregada — shapes")
     status_text.info(f"projects: {df_projects.shape}, tasks: {df_tasks.shape}, resources: {df_resources.shape}, allocs: {df_resource_allocations.shape}, deps: {df_dependencies.shape}")
