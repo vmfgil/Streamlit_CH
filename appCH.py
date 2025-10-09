@@ -1244,6 +1244,14 @@ def login_page():
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
 def settings_page():
     st.title("⚙️ Configurações e Upload de Dados")
+    st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
+    if st.button("🔴 Limpar Cache e Recomeçar Análise"):
+        st.cache_data.clear()
+        st.success("Cache limpa com sucesso! A página será recarregada. Por favor, carregue os seus ficheiros novamente.")
+        st.rerun()
+    ############################################
+
+    st.markdown("---") # Para separar visualmente
     st.markdown("---")
     st.subheader("Upload dos Ficheiros de Dados (.csv)")
     st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
