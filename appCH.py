@@ -268,7 +268,7 @@ if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
 
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
-@st.cache_data
+#@st.cache_data
 def run_pre_mining_analysis(dfs):
     plots = {}
     tables = {}
@@ -519,8 +519,7 @@ def run_pre_mining_analysis(dfs):
     
     return plots, tables, event_log_pm4py, df_projects, df_tasks, df_resources, df_full_context
 
-@st.cache_data
-@st.cache_data
+#@st.cache_data
 def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_resources, _df_full_context):
     plots = {}
     metrics = {}
@@ -767,7 +766,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
     return plots, metrics
 # --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
-@st.cache_data
+#@st.cache_data
 def run_eda_analysis(dfs):
     plots = {}
     tables = {}
