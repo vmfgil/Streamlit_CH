@@ -1262,46 +1262,42 @@ def login_page():
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
 # SUBSTITUA A SUA FUNÇÃO 'settings_page' ATUAL POR ESTA VERSÃO COMPLETA E CORRIGIDA
 
+# SUBSTITUA TODA A SUA FUNÇÃO 'settings_page' PELA VERSÃO ABAIXO
+
 def settings_page():
     st.title("⚙️ Configurações e Carregamento de Dados")
 
-    st.info("Carregue os 5 ficheiros CSV necessários para a análise.")
+    # A sua estrutura original com sub-cabeçalho e 5 colunas
+    st.subheader('Ficheiros de Input')
+    cols = st.columns(5)
+    dfs_local = {}
 
-    # A estrutura de colunas original para os uploads
-    col1, col2, col3 = st.columns(3)
-    
-    # Dicionário para guardar os ficheiros carregados
-    uploaded_files = {}
+    # O seu layout original com 5 colunas e labels escondidos
+    dfs_local['projects'] = cols[0].file_uploader('projects.csv', type='csv', label_visibility="collapsed")
+    dfs_local['tasks'] = cols[1].file_uploader('tasks.csv', type='csv', label_visibility="collapsed")
+    dfs_local['resources'] = cols[2].file_uploader('resources.csv', type='csv', label_visibility="collapsed")
+    dfs_local['resource_allocations'] = cols[3].file_uploader('resource_allocations.csv', type='csv', label_visibility="collapsed")
+    dfs_local['dependencies'] = cols[4].file_uploader('dependencies.csv', type='csv', label_visibility="collapsed")
 
-    with col1:
-        uploaded_files['projects'] = st.file_uploader("Carregar projects.csv", type="csv")
-        uploaded_files['tasks'] = st.file_uploader("Carregar tasks.csv", type="csv")
-    
-    with col2:
-        uploaded_files['resources'] = st.file_uploader("Carregar resources.csv", type="csv")
-        uploaded_files['resource_allocations'] = st.file_uploader("Carregar resource_allocations.csv", type="csv")
-
-    with col3:
-        uploaded_files['dependencies'] = st.file_uploader("Carregar dependencies.csv", type="csv")
-
-    # A lógica para processar os ficheiros e mostrar o botão de análise
-    if all(uploaded_files.values()):
+    # A sua lógica original para verificar se todos os ficheiros foram carregados
+    if all(dfs_local.values()):
         try:
-            dfs = {name: pd.read_csv(file) for name, file in uploaded_files.items()}
-            st.session_state.dfs = dfs
-            st.success("Todos os ficheiros foram carregados com sucesso!")
+            # Processamento dos ficheiros
+            st.session_state.dfs = {name: pd.read_csv(file) for name, file in dfs_local.items()}
+            st.success("Todos os 5 ficheiros foram carregados com sucesso!")
 
+            # Os seus botões de análise, agora visíveis e funcionais
             st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
             if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
                 
-                ### ESTA É A ÚNICA ALTERAÇÃO FUNCIONAL FEITA AO SEU CÓDIGO ORIGINAL ###
+                ### A ÚNICA CORREÇÃO FUNCIONAL ESTÁ AQUI ###
                 # Apaga a amostra de RL antiga ("congelada") antes de correr a nova análise.
                 if 'rl_sample_ids' in st.session_state:
                     del st.session_state['rl_sample_ids']
-                #########################################################################
+                #############################################
                 
                 with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
-                    # O resto da lógica de análise, tal como estava no seu ficheiro de referência
+                    # O resto da sua lógica original
                     plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_d = run_pre_mining_analysis(st.session_state.dfs)
                     st.session_state.plots_pre_mining = plots_pre
                     st.session_state.tables_pre_mining = tables_pre
@@ -1319,7 +1315,6 @@ def settings_page():
 
         except Exception as e:
             st.error(f"Ocorreu um erro ao processar os ficheiros: {e}")
-
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
