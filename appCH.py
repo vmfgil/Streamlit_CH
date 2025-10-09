@@ -1111,7 +1111,25 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 else:
                     HOURS_PER_DAY = 8
                     inferred_unit = 'days_in_data'
-                self.total_estimated_effort = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
+                # raw estimated total in hours (before sanity cap)
+                raw_total_est_hours = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
+            
+                # --- SANITY CAP: limitar esforço total à capacidade plausível da equipa do projeto
+                try:
+                    team_daily_capacity = int(pd.to_numeric(self.df_resources['daily_capacity'], errors='coerce').fillna(0).sum())
+                except Exception:
+                    team_daily_capacity = 0
+                proj_hist_days = int(project_info.get('total_duration_days', 1) or 1)
+            
+                max_possible_hours = max(1, team_daily_capacity) * max(1, proj_hist_days)
+            
+                # tolerância multiplicadora (ajustar se necessário)
+                cap_multiplier = 10
+                capped_total = min(raw_total_est_hours, max_possible_hours * cap_multiplier)
+            
+                self.total_estimated_effort = int(capped_total)
+            self._estimated_effort_inference = {"method": inferred_unit, "total_est_hours": int(self.total_estimated_effort)}
+
             
             # build tasks_state with estimated_effort ALWAYS in HOURS (keys as strings)
             self.tasks_state = {}
@@ -1172,41 +1190,70 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             else:
                 daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
                 for res_type, task_type in action_set:
-                    if task_type == "idle": reward_from_tasks -= self.rewards['idle_penalty']; continue
-                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                    if available_resources.empty: continue
-                    res_info = available_resources.sample(1).iloc[0]
+                    if task_type == "idle":
+                        reward_from_tasks -= self.rewards['idle_penalty']
+                        continue
+                    # selecionar um recurso livre deste tipo que ainda tenha capacidade hoje
+                    available_resources = self.resources_by_type[res_type]
+                    # criar coluna temporária daily_capacity_remaining se não existir, inicializada com daily_capacity
+                    if 'daily_capacity_remaining' not in available_resources.columns:
+                        available_resources = available_resources.copy()
+                        available_resources['daily_capacity_remaining'] = pd.to_numeric(available_resources.get('daily_capacity', 0), errors='coerce').fillna(0)
+                        # atualizar o dict para uso posterior
+                        self.resources_by_type[res_type] = available_resources
+                    # filtrar recursos ainda não usados hoje e com disponibilidade
+                    avail_mask = ~available_resources['resource_id'].isin(resources_used_today) & (available_resources['daily_capacity_remaining'] > 0)
+                    available_ready = available_resources[avail_mask]
+                    if available_ready.empty:
+                        continue
+                    res_info = available_ready.sample(1).iloc[0]
+                    # escolher tarefa elegível
                     eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                    if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id']); task_id_to_work = random.choice(eligible_tasks)
+                    if not eligible_tasks:
+                        continue
+                    resources_used_today.add(res_info['resource_id'])
+                    task_id_to_work = random.choice(eligible_tasks)
                     task_data = self.tasks_state[task_id_to_work]
-                    remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                    
-                    # casts seguros para evitar multiplicações com strings/NaN
-                    daily_capacity_raw = res_info.get('daily_capacity', 0)
-                    cost_per_hour_raw = res_info.get('cost_per_hour', 0)
-                    
+                    remaining_effort = max(0, task_data['estimated_effort'] - task_data['progress'])
+
+                    # capacidade e custo seguros
                     try:
-                        daily_capacity = int(pd.to_numeric(daily_capacity_raw, errors='coerce') or 0)
+                        daily_capacity = float(pd.to_numeric(res_info.get('daily_capacity', 0), errors='coerce') or 0)
                     except Exception:
-                        daily_capacity = 0
+                        daily_capacity = 0.0
                     try:
-                        cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
+                        cost_per_hour = float(pd.to_numeric(res_info.get('cost_per_hour', 0), errors='coerce') or 0.0)
                     except Exception:
                         cost_per_hour = 0.0
-                    
-                    hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
+
+                    # disponibilidade real deste recurso hoje (leva em conta daily_capacity_remaining)
+                    rem_col = 'daily_capacity_remaining'
+                    res_row_idx = available_resources.index[available_resources['resource_id'] == res_info['resource_id']][0]
+                    res_available_hours = float(available_resources.at[res_row_idx, rem_col]) if rem_col in available_resources.columns else daily_capacity
+
+                    hours_to_work = min(daily_capacity, res_available_hours, remaining_effort)
                     if hours_to_work <= 0:
-                        # nada a fazer neste recurso hoje
                         continue
-                    
+
                     cost_today = hours_to_work * cost_per_hour
                     daily_cost += cost_today
 
+                    # regista execução
                     self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
+                    if task_data['status'] == 'Pendente':
+                        task_data['status'] = 'Em Andamento'
                     task_data['progress'] += hours_to_work
-                    if task_data['progress'] >= task_data['estimated_effort']: task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+                    if task_data['progress'] >= task_data['estimated_effort']:
+                        task_data['status'] = 'Concluída'
+                        reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+                    # decrementar disponibilidade do recurso no dataframe salvo em self.resources_by_type
+                    try:
+                        # actualiza a linha correspondente no DataFrame armazenado em self.resources_by_type
+                        self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] = max(0.0, self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] - hours_to_work)
+                    except Exception:
+                        # fallback: não interromper execução se a estrutura for diferente
+                        pass
+
                 self.current_cost += daily_cost; self.current_date += timedelta(days=1)
                 if self.current_date.weekday() < 5: self.day_count += 1
             project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
@@ -1278,11 +1325,21 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 # permitir até N ações por tipo, onde N = número de recursos desse tipo
                 avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
                 chosen_for_type = set()
+                local_pool = actions_for_res.copy()
                 for _ in range(avail_count):
-                    chosen_action = agent.choose_action(state, actions_for_res)
-                    if chosen_action:
-                        chosen_for_type.add(chosen_action)
+                    if not local_pool:
+                        break
+                    chosen_action = agent.choose_action(state, local_pool)
+                    if not chosen_action:
+                        break
+                    chosen_for_type.add(chosen_action)
+                    # remover a action escolhida do pool local para evitar duplicados este dia
+                    try:
+                        local_pool.remove(chosen_action)
+                    except ValueError:
+                        pass
                 action_set.update(chosen_for_type)
+
             reward, done = env.step(action_set); next_state = env.get_state()
             for action in action_set: agent.update_q_table(state, action, reward, next_state)
             state = next_state; episode_reward += reward; calendar_day += 1
@@ -1311,9 +1368,26 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 possible_actions = env.get_possible_actions_for_state(); action_set = set()
                 for res_type in env.resource_types:
                     actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                    if actions_for_res:
-                        chosen_action = agent.choose_action(state, actions_for_res)
-                        if chosen_action: action_set.add(chosen_action)
+                    if not actions_for_res:
+                        continue
+                    # permitir até N ações por tipo, onde N = número de recursos desse tipo
+                    avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
+                    chosen_for_type = set()
+                    local_pool = actions_for_res.copy()
+                    for _ in range(avail_count):
+                        if not local_pool:
+                            break
+                        chosen_action = agent.choose_action(state, local_pool)
+                        if not chosen_action:
+                            break
+                        chosen_for_type.add(chosen_action)
+                        # remover a action escolhida do pool local para evitar duplicados este dia
+                        try:
+                            local_pool.remove(chosen_action)
+                        except ValueError:
+                            pass
+                    action_set.update(chosen_for_type)
+
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
@@ -1343,9 +1417,26 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         possible_actions = env.get_possible_actions_for_state(); action_set = set()
         for res_type in env.resource_types:
             actions_for_res = [a for a in possible_actions if a[0] == res_type]
-            if actions_for_res:
-                action = agent.choose_action(state, actions_for_res);
-                if action: action_set.add(action)
+            if not actions_for_res:
+                continue
+            # permitir até N ações por tipo, onde N = número de recursos desse tipo
+            avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
+            chosen_for_type = set()
+            local_pool = actions_for_res.copy()
+            for _ in range(avail_count):
+                if not local_pool:
+                    break
+                chosen_action = agent.choose_action(state, local_pool)
+                if not chosen_action:
+                    break
+                chosen_for_type.add(chosen_action)
+                # remover a action escolhida do pool local para evitar duplicados este dia
+                try:
+                    local_pool.remove(chosen_action)
+                except ValueError:
+                    pass
+            action_set.update(chosen_for_type)
+
         _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
         if env.day_count > 730: break
     simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
