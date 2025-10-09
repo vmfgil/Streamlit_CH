@@ -1036,7 +1036,15 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         "project_total_duration_days": int(df_projects.loc[df_projects['project_id']==str(project_id_to_simulate),'total_duration_days'].iloc[0]) if str(project_id_to_simulate) in df_projects['project_id'].astype(str).values else None
     })
     st.write("CHECK allocs for project:", df_resource_allocations[df_resource_allocations['project_id'].astype(str)==str(project_id_to_simulate)].groupby('task_id')['hours_worked'].sum().reset_index().to_dict())
-    
+
+    # Immediate sanity checks printed to the Streamlit UI
+    status_text.info("DEBUG: amostra carregada — shapes")
+    status_text.info(f"projects: {df_projects.shape}, tasks: {df_tasks.shape}, resources: {df_resources.shape}, allocs: {df_resource_allocations.shape}, deps: {df_dependencies.shape}")
+    status_text.info(f"projects.dtypes: {df_projects.dtypes.to_dict()}")
+    status_text.info(f"tasks.estimated_effort median,sum: median={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').median()}, sum={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').sum()}")
+    status_text.info(f"resources.daily_capacity describe: {pd.to_numeric(df_resources['daily_capacity'],errors='coerce').describe().to_dict()}")
+
+
     def calculate_business_days(start, end):
         return np.busday_count(start.date(), end.date()) if pd.notna(start) and pd.notna(end) else 0
 
@@ -1103,25 +1111,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 else:
                     HOURS_PER_DAY = 8
                     inferred_unit = 'days_in_data'
-                # raw estimated total in hours (before sanity cap)
-                raw_total_est_hours = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
-            
-                # --- SANITY CAP: limitar esforço total à capacidade plausível da equipa do projeto
-                try:
-                    team_daily_capacity = int(pd.to_numeric(self.df_resources['daily_capacity'], errors='coerce').fillna(0).sum())
-                except Exception:
-                    team_daily_capacity = 0
-                proj_hist_days = int(project_info.get('total_duration_days', 1) or 1)
-            
-                max_possible_hours = max(1, team_daily_capacity) * max(1, proj_hist_days)
-            
-                # tolerância multiplicadora (ajustar se necessário)
-                cap_multiplier = 10
-                capped_total = min(raw_total_est_hours, max_possible_hours * cap_multiplier)
-            
-                self.total_estimated_effort = int(capped_total)
-            self._estimated_effort_inference = {"method": inferred_unit, "total_est_hours": int(self.total_estimated_effort)}
-
+                self.total_estimated_effort = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
             
             # build tasks_state with estimated_effort ALWAYS in HOURS (keys as strings)
             self.tasks_state = {}
@@ -1178,118 +1168,54 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
         def step(self, action_set):
-            if self.current_date.weekday() >= 5:
-                # fim de semana: avança dia sem trabalho
-                self.current_date += timedelta(days=1)
-                daily_cost = 0
-                reward_from_tasks = 0
+            if self.current_date.weekday() >= 5: self.current_date += timedelta(days=1); daily_cost = 0; reward_from_tasks = 0
             else:
-                # dia útil: inicializações e reset diário de capacidades
-                daily_cost = 0
-                reward_from_tasks = 0
-                resources_used_today = set()
-        
-                # --- RESET diário da capacidade dos recursos (cada dia começa com a capacidade nominal) ---
-                for rt in list(self.resources_by_type.keys()):
-                    try:
-                        df_rt = self.resources_by_type[rt]
-                        df_rt = df_rt.copy()
-                        if 'daily_capacity' in df_rt.columns:
-                            df_rt['daily_capacity'] = pd.to_numeric(df_rt['daily_capacity'], errors='coerce').fillna(0)
-                        else:
-                            df_rt['daily_capacity'] = 0
-                        df_rt['daily_capacity_remaining'] = df_rt['daily_capacity'].astype(float)
-                        self.resources_by_type[rt] = df_rt
-                    except Exception:
-                        continue
-                # -------------------------------------------------------------------------------------
-        
-                # Processar cada ação decidida para este dia
+                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
                 for res_type, task_type in action_set:
-                    if task_type == "idle":
-                        reward_from_tasks -= self.rewards['idle_penalty']
-                        continue
-        
-                    # selecionar um recurso livre deste tipo que ainda tenha capacidade hoje
-                    available_resources = self.resources_by_type.get(res_type, pd.DataFrame())
-                    if available_resources.empty:
-                        continue
-        
-                    # criar coluna temporária daily_capacity_remaining se não existir, inicializada com daily_capacity
-                    if 'daily_capacity_remaining' not in available_resources.columns:
-                        available_resources = available_resources.copy()
-                        available_resources['daily_capacity_remaining'] = pd.to_numeric(available_resources.get('daily_capacity', 0), errors='coerce').fillna(0)
-                        self.resources_by_type[res_type] = available_resources
-        
-                    # filtrar recursos ainda não usados hoje e com disponibilidade
-                    avail_mask = ~available_resources['resource_id'].isin(resources_used_today) & (available_resources['daily_capacity_remaining'] > 0)
-                    available_ready = available_resources[avail_mask]
-                    if available_ready.empty:
-                        continue
-        
-                    res_info = available_ready.sample(1).iloc[0]
-        
-                    # escolher tarefa elegível
+                    if task_type == "idle": reward_from_tasks -= self.rewards['idle_penalty']; continue
+                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
+                    if available_resources.empty: continue
+                    res_info = available_resources.sample(1).iloc[0]
                     eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                    if not eligible_tasks:
-                        continue
-        
-                    resources_used_today.add(res_info['resource_id'])
-                    task_id_to_work = random.choice(eligible_tasks)
+                    if not eligible_tasks: continue
+                    resources_used_today.add(res_info['resource_id']); task_id_to_work = random.choice(eligible_tasks)
                     task_data = self.tasks_state[task_id_to_work]
-                    remaining_effort = max(0, task_data['estimated_effort'] - task_data['progress'])
-        
-                    # capacidade e custo seguros
+                    remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                    
+                    # casts seguros para evitar multiplicações com strings/NaN
+                    daily_capacity_raw = res_info.get('daily_capacity', 0)
+                    cost_per_hour_raw = res_info.get('cost_per_hour', 0)
+                    
                     try:
-                        daily_capacity = float(pd.to_numeric(res_info.get('daily_capacity', 0), errors='coerce') or 0)
+                        daily_capacity = int(pd.to_numeric(daily_capacity_raw, errors='coerce') or 0)
                     except Exception:
-                        daily_capacity = 0.0
+                        daily_capacity = 0
                     try:
-                        cost_per_hour = float(pd.to_numeric(res_info.get('cost_per_hour', 0), errors='coerce') or 0.0)
+                        cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
                     except Exception:
                         cost_per_hour = 0.0
-        
-                    # disponibilidade real deste recurso hoje (leva em conta daily_capacity_remaining)
-                    rem_col = 'daily_capacity_remaining'
-                    res_row_idx = available_resources.index[available_resources['resource_id'] == res_info['resource_id']][0]
-                    res_available_hours = float(available_resources.at[res_row_idx, rem_col]) if rem_col in available_resources.columns else daily_capacity
-        
-                    hours_to_work = min(daily_capacity, res_available_hours, remaining_effort)
+                    
+                    hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
                     if hours_to_work <= 0:
+                        # nada a fazer neste recurso hoje
                         continue
-        
+                    
                     cost_today = hours_to_work * cost_per_hour
                     daily_cost += cost_today
-        
-                    # regista execução
+
                     self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-                    if task_data['status'] == 'Pendente':
-                        task_data['status'] = 'Em Andamento'
+                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
                     task_data['progress'] += hours_to_work
-                    if task_data['progress'] >= task_data['estimated_effort']:
-                        task_data['status'] = 'Concluída'
-                        reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-                    # decrementar disponibilidade do recurso no dataframe salvo em self.resources_by_type
-                    try:
-                        self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] = max(0.0, self.resources_by_type[res_type].at[res_row_idx, 'daily_capacity_remaining'] - hours_to_work)
-                    except Exception:
-                        pass
-        
-                self.current_cost += daily_cost
-                self.current_date += timedelta(days=1)
-                if self.current_date.weekday() < 5:
-                    self.day_count += 1
-        
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+                    if task_data['progress'] >= task_data['estimated_effort']: task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+                self.current_cost += daily_cost; self.current_date += timedelta(days=1)
+                if self.current_date.weekday() < 5: self.day_count += 1
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
             if project_is_done:
                 project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count
-                total_reward += self.rewards['completion_base']
+                time_diff = project_info['total_duration_days'] - self.day_count; total_reward += self.rewards['completion_base']
                 total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
                 total_reward -= self.current_cost * self.rewards['cost_impact_factor']
             return total_reward, project_is_done
-
 
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
@@ -1315,7 +1241,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
-    st.write("CHECK_episode_logs_len:", len(getattr(env, "episode_logs", [])))
     st.write("DEBUG_resource_types_count:", len(env.resource_types))
     st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
     st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
@@ -1331,16 +1256,14 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
     time_per_episode = 0.01
 
-    # DEBUG não invasivo: emitir para o log do servidor em vez de sobrescrever a caixa de progresso
+    # --- DEBUG / SANITY CHECK (será mostrado na UI) ---
     try:
+        status_text.info(f"Debug: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
         example_task = next(iter(env.tasks_state.items())) if env.tasks_state else None
-        print(f"DEBUG env._estimated_effort_inference => {env._estimated_effort_inference}")
-        print(f"DEBUG: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
-        print(f"DEBUG: Example task (id, data) = {example_task}")
+        status_text.info(f"Example task (id, data): {example_task}")
     except Exception as e:
-        # manter apenas logging no servidor
-        print(f"DEBUG: erro ao obter info do ambiente: {e}")
-
+        # Em caso de erro no debug, mostra no status_text sem interromper o treino
+        status_text.info(f"Debug: erro ao mostrar info do ambiente: {e}")
 
     
     for episode in range(num_episodes):
@@ -1355,21 +1278,11 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 # permitir até N ações por tipo, onde N = número de recursos desse tipo
                 avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
                 chosen_for_type = set()
-                local_pool = actions_for_res.copy()
                 for _ in range(avail_count):
-                    if not local_pool:
-                        break
-                    chosen_action = agent.choose_action(state, local_pool)
-                    if not chosen_action:
-                        break
-                    chosen_for_type.add(chosen_action)
-                    # remover a action escolhida do pool local para evitar duplicados este dia
-                    try:
-                        local_pool.remove(chosen_action)
-                    except ValueError:
-                        pass
+                    chosen_action = agent.choose_action(state, actions_for_res)
+                    if chosen_action:
+                        chosen_for_type.add(chosen_action)
                 action_set.update(chosen_for_type)
-
             reward, done = env.step(action_set); next_state = env.get_state()
             for action in action_set: agent.update_q_table(state, action, reward, next_state)
             state = next_state; episode_reward += reward; calendar_day += 1
@@ -1398,26 +1311,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 possible_actions = env.get_possible_actions_for_state(); action_set = set()
                 for res_type in env.resource_types:
                     actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                    if not actions_for_res:
-                        continue
-                    # permitir até N ações por tipo, onde N = número de recursos desse tipo
-                    avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
-                    chosen_for_type = set()
-                    local_pool = actions_for_res.copy()
-                    for _ in range(avail_count):
-                        if not local_pool:
-                            break
-                        chosen_action = agent.choose_action(state, local_pool)
-                        if not chosen_action:
-                            break
-                        chosen_for_type.add(chosen_action)
-                        # remover a action escolhida do pool local para evitar duplicados este dia
-                        try:
-                            local_pool.remove(chosen_action)
-                        except ValueError:
-                            pass
-                    action_set.update(chosen_for_type)
-
+                    if actions_for_res:
+                        chosen_action = agent.choose_action(state, actions_for_res)
+                        if chosen_action: action_set.add(chosen_action)
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
@@ -1447,26 +1343,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         possible_actions = env.get_possible_actions_for_state(); action_set = set()
         for res_type in env.resource_types:
             actions_for_res = [a for a in possible_actions if a[0] == res_type]
-            if not actions_for_res:
-                continue
-            # permitir até N ações por tipo, onde N = número de recursos desse tipo
-            avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
-            chosen_for_type = set()
-            local_pool = actions_for_res.copy()
-            for _ in range(avail_count):
-                if not local_pool:
-                    break
-                chosen_action = agent.choose_action(state, local_pool)
-                if not chosen_action:
-                    break
-                chosen_for_type.add(chosen_action)
-                # remover a action escolhida do pool local para evitar duplicados este dia
-                try:
-                    local_pool.remove(chosen_action)
-                except ValueError:
-                    pass
-            action_set.update(chosen_for_type)
-
+            if actions_for_res:
+                action = agent.choose_action(state, actions_for_res);
+                if action: action_set.add(action)
         _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
         if env.day_count > 730: break
     simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
@@ -1499,82 +1378,24 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     
     total_estimated_effort = env.total_estimated_effort
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-
-    # Defensive normalization of simulated_log
-    if 'simulated_log' not in locals() or simulated_log is None or simulated_log.empty:
-        simulated_log = pd.DataFrame(columns=['day', 'daily_cost', 'hours_worked'])
-    else:
-        if 'day' not in simulated_log.columns:
-            simulated_log['day'] = 0
-        if 'daily_cost' not in simulated_log.columns:
-            simulated_log['daily_cost'] = 0.0
-        if 'hours_worked' not in simulated_log.columns:
-            simulated_log['hours_worked'] = 0.0
-        simulated_log['day'] = pd.to_numeric(simulated_log['day'], errors='coerce').fillna(0).astype(int)
-        simulated_log['daily_cost'] = pd.to_numeric(simulated_log['daily_cost'], errors='coerce').fillna(0.0)
-        simulated_log['hours_worked'] = pd.to_numeric(simulated_log['hours_worked'], errors='coerce').fillna(0.0)
-    
-    max_day_sim = int(simulated_log['day'].max()) if not simulated_log.empty else 0
-    max_day_plot = int(max(max_day_sim, 0 if real_duration is None else int(real_duration or 0)))
-    day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
-    
-    # Aggregate simulated costs/progress with safe fallbacks
-    if not simulated_log.empty:
-        sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum()
-        sim_daily_cost = sim_daily_cost.reindex(day_range, fill_value=0.0)
-        sim_cumulative_cost = sim_daily_cost.cumsum()
-        sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum()
-        sim_daily_progress = sim_daily_progress.reindex(day_range, fill_value=0.0)
-        sim_cumulative_progress = sim_daily_progress.cumsum()
-    else:
-        sim_cumulative_cost = pd.Series(0.0, index=day_range)
-        sim_cumulative_progress = pd.Series(0.0, index=day_range)
-    
-    # Prepare real allocations defensively
-    if real_allocations is None or (hasattr(real_allocations, "empty") and real_allocations.empty):
-        real_log_merged = pd.DataFrame(columns=['day', 'hours_worked', 'resource_id', 'cost_per_hour'])
-    else:
-        real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
-        if 'day' not in real_log_merged.columns:
-            real_log_merged['day'] = 0
-        real_log_merged['day'] = pd.to_numeric(real_log_merged['day'], errors='coerce').fillna(0).astype(int)
-        real_log_merged['hours_worked'] = pd.to_numeric(real_log_merged.get('hours_worked', 0), errors='coerce').fillna(0.0)
-        real_log_merged['cost_per_hour'] = pd.to_numeric(real_log_merged.get('cost_per_hour', 0), errors='coerce').fillna(0.0)
-        real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    
-    if not real_log_merged.empty:
-        real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum()
-        real_daily_cost = real_daily_cost.reindex(day_range, fill_value=0.0)
-        real_cumulative_cost = real_daily_cost.cumsum()
-        real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum()
-        real_daily_progress = real_daily_progress.reindex(day_range, fill_value=0.0)
-        real_cumulative_progress = real_daily_progress.cumsum()
-    else:
-        real_cumulative_cost = pd.Series(0.0, index=day_range)
-        real_cumulative_progress = pd.Series(0.0, index=day_range)
-    
-    # Plot cumulative cost
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
+    max_day_plot = int(max(max_day_sim, real_duration)); day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
+    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum(); sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
+    real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
+    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum(); real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
     axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
     axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
-    if real_duration is not None:
-        try:
-            axes[0].axvline(x=int(real_duration), color='k', linestyle=':', label=f'Fim Real ({int(real_duration)} dias úteis)')
-        except Exception:
-            pass
-    axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
-    
-    # Plot cumulative progress (hours)
+    axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
+    sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum(); sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
+    real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
     axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
     axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
     axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
-    axes[1].set_ylabel('Horas acumuladas'); axes[1].set_title('Progresso Acumulado'); axes[1].legend(); axes[1].grid(True)
-    
-    fig.tight_layout()
-    plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
+    axes[1].set_ylabel('Horas acumuladas')
+    fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
     return plots, tables, logs
-
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
