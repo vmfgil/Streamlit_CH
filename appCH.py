@@ -1077,6 +1077,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 hours_to_work = min(res_info['daily_capacity'], task_data['estimated_effort'] - task_data['progress'])
                 cost_today = hours_to_work * res_info['cost_per_hour']
                 daily_cost += cost_today
+                self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today})
                 
                 if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
                 task_data['progress'] += hours_to_work
