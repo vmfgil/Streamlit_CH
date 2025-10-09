@@ -501,15 +501,15 @@ def run_pre_mining_analysis(dfs):
     
     def get_phase(task_type):
         if task_type in ['Onboarding', 'Validação KYC', 'Análise Documental']:
-            return '1. Onboarding, KYC e Documentação'
+            return 'Onboarding, KYC e Documentação'
         elif task_type in ['Análise de Risco']:
-            return '2. Análise de Risco'
+            return 'Análise de Risco'
         elif task_type in ['Avaliação da Imóvel']:
-            return '2. Avaliação de imóvel'
-        elif task_type in ['Decisão de Crédito', 'Preparação Legal']:
-            return '3. Decisão e Contratual'
-        elif task_type == 'Fecho':
-            return '4. Fecho e Desembolso'
+            return 'Avaliação de imóvel'
+        elif task_type in ['Decisão de Crédito']:
+            return 'Decisão de crédito'
+        elif task_type in ['Fecho', 'Preparação Legal']:
+            return 'Contratação e Desembolso'
         return task_type
     df_tasks['phase'] = df_tasks['task_type'].apply(get_phase)
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
