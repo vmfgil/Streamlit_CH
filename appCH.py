@@ -1120,7 +1120,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     
     for episode in range(num_episodes):
-        project_id = df_projects_train.sample(1, random_state=episode).iloc[0]['project_id']; state = env.reset(project_id)
+        project_id = df_projects_train.sample(1).iloc[0]['project_id']; state = env.reset(project_id)
         episode_reward, done = 0, False; calendar_day = 0
         while not done and calendar_day < 1000:
             possible_actions = env.get_possible_actions_for_state(); action_set = set()
