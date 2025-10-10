@@ -1335,8 +1335,25 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     if actions_for_res:
                         chosen_action = agent.choose_action(state, actions_for_res)
                         if chosen_action: action_set.add(chosen_action)
-                _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
-                if env.day_count > 730: break
+                _, done = env.step(action_set)
+                state = env.get_state()
+                calendar_day += 1
+
+                # EVAL_STEP_INTERNAL debug — imprime quando a simulação termina ou atinge limite
+                if done:
+                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
+                    try: status_text.info(dbg_msg)
+                    except Exception: pass
+                    print(dbg_msg)
+                    break
+
+                if calendar_day >= 730:
+                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
+                    try: status_text.info(dbg_msg)
+                    except Exception: pass
+                    print(dbg_msg)
+                    break
+
             # EVAL_DEBUG (UI + status_text + log) — inserir exatamente aqui
             proj_dbg_msg = (
                 f"EVAL_DEBUG project_id={prj_info['project_id']} "
