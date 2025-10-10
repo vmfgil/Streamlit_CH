@@ -1338,7 +1338,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 _, done = env.step(action_set)
                 state = env.get_state()
                 calendar_day += 1
-
+                try: env.day_count = calendar_day
+                except Exception: pass
+               
                 # EVAL_STEP_INTERNAL debug — imprime quando a simulação termina ou atinge limite
                 if done:
                     dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
