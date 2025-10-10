@@ -1075,7 +1075,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return tuple(sorted(list(actions)))
         def reset(self, project_id):
             self.current_project_id = project_id
-            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == project_id].iloc[0]
+            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == str(project_id)].iloc[0]
             self.current_risk_rating = project_info['risk_rating']; self.current_cost = 0.0; self.day_count = 0; self.current_date = project_info['start_date']; self.episode_logs = []
             project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
@@ -1267,7 +1267,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     
     for episode in range(num_episodes):
-        project_id = df_projects_train.sample(1).iloc[0]['project_id']; state = env.reset(project_id)
+        project_id = str(df_projects_train.sample(1).iloc[0]['project_id'])
+        state = env.reset(project_id)
         episode_reward, done = 0, False; calendar_day = 0
         while not done and calendar_day < 1000:
             possible_actions = env.get_possible_actions_for_state(); action_set = set()
@@ -1304,7 +1305,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
         for _, prj_info in df_projects_to_evaluate.iterrows():
-            state = env.reset(prj_info['project_id']); 
+            proj_id_str = str(prj_info['project_id'])
+            state = env.reset(proj_id_str)
+            # DIAGNÓSTICO: confirmar que o reset encontrou tasks para este projeto
+            print(f"EVAL_DEBUG reset project_id={proj_id_str} tasks_loaded={len(env.tasks_state)} estimated_effort_inference={getattr(env, '_estimated_effort_inference', None)}")
             done = False; 
             calendar_day = 0
             while not done and calendar_day < 1000:
