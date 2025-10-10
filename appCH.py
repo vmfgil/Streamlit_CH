@@ -1019,6 +1019,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         else:
             dfs_rl[nome_df] = df.copy()
 
+    # TYPE_DEBUG: garantir ids como strings e mostrar amostra
+    # TYPE_DEBUG (UI + log)
+    st.write("TYPE_DEBUG projects.dtype, sample:", dfs_rl['projects']['project_id'].dtype, dfs_rl['projects']['project_id'].astype(str).head(6).tolist())
+    st.write("TYPE_DEBUG tasks.dtype, sample:", dfs_rl['tasks']['project_id'].dtype, dfs_rl['tasks']['project_id'].astype(str).head(6).tolist())
+    print("TYPE_DEBUG projects.dtype, sample:", dfs_rl['projects']['project_id'].dtype, dfs_rl['projects']['project_id'].astype(str).head(6).tolist())
+    print("TYPE_DEBUG tasks.dtype, sample:", dfs_rl['tasks']['project_id'].dtype, dfs_rl['tasks']['project_id'].astype(str).head(6).tolist())
+
 
     plots = {}
     tables = {}
@@ -1194,6 +1201,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
                     except Exception:
                         cost_per_hour = 0.0
+                    # STEP_DEBUG: mostrar no painel de status e na UI o recurso selecionado e capacidades lidas
+                    debug_msg = (
+                        f"STEP_DEBUG day={self.day_count} res_type={res_type} chosen_res_id={res_info['resource_id']} "
+                        f"daily_capacity_raw={daily_capacity_raw} daily_capacity_parsed={daily_capacity} "
+                        f"task_id_candidates_count={len(eligible_tasks)} sample_candidates={eligible_tasks[:5]} remaining_effort={remaining_effort}"
+                    )
+                    try:
+                        status_text.info(debug_msg)
+                    except Exception:
+                        pass
+                    st.write(debug_msg)
+                    print(debug_msg)
                     
                     hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
                     if hours_to_work <= 0:
@@ -1241,6 +1260,24 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
+    # RES_DEBUG: resumo por tipo de recurso (UI + status_text + log)
+    res_summary = {
+        rt: {
+            'count': len(df),
+            'cap_min': int(pd.to_numeric(df['daily_capacity'], errors='coerce').min()) if not df.empty else None,
+            'cap_median': float(pd.to_numeric(df['daily_capacity'], errors='coerce').median()) if not df.empty else None,
+            'examples': df[['resource_id', 'resource_name', 'daily_capacity']].head(3).to_dict(orient='records')
+        }
+        for rt, df in env.resources_by_type.items()
+    }
+    # Mostrar no painel de status se disponível
+    try:
+        status_text.info(f"RES_DEBUG resources_by_type summary: {res_summary}")
+    except Exception:
+        pass
+    st.write("RES_DEBUG resources_by_type summary:", res_summary)
+    print("RES_DEBUG resources_by_type summary:", res_summary)
+
     st.write("DEBUG_resource_types_count:", len(env.resource_types))
     st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
     st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
@@ -1277,7 +1314,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 if not actions_for_res:
                     continue
                 # permitir até N ações por tipo, onde N = número de recursos desse tipo
-                avail_count = max(1, len(env.resources_by_type.get(res_type, [])))
+                actual_count = len(env.resources_by_type.get(res_type, []))
+                # AVAIL_DEBUG (UI + status_text + log)
+                debug_msg = f"AVAIL_DEBUG res_type={res_type} actual_count={actual_count} will_use_avail_count={max(1, actual_count)}"
+                try:
+                    status_text.info(debug_msg)
+                except Exception:
+                    pass
+                st.write(debug_msg)
+                # manter também no log do servidor
+                print(debug_msg)
+
+                avail_count = max(1, actual_count)
                 chosen_for_type = set()
                 for _ in range(avail_count):
                     chosen_action = agent.choose_action(state, actions_for_res)
