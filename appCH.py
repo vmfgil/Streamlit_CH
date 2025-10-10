@@ -1059,19 +1059,42 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 for task_type in self.task_types: actions.add((res_type, task_type))
             return tuple(sorted(list(actions)))
         def reset(self, project_id):
-            self.current_project_id = project_id
-            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == str(project_id)].iloc[0]
-            self.current_risk_rating = project_info['risk_rating']; self.current_cost = 0.0; self.day_count = 0; self.current_date = project_info['start_date']; self.episode_logs = []
-            project_tasks = self.df_tasks[self.df_tasks['project_id'] == project_id].sort_values('task_id')
+            # ENSURE_RESET_STATE: forçar reinicialização completa do estado da simulação
+            self.day_count = 0
+            self.current_cost = 0.0
+            self.total_estimated_effort = 0.0
+            # reiniciar container de estado das tarefas — será repopulado abaixo
+            self.tasks_state = {}
+            # reiniciar uso de recursos do dia, se existir
+            if hasattr(self, 'resources_used_today'):
+                self.resources_used_today = set()
+            # reiniciar histórico diário/ledger, se existir
+            if hasattr(self, 'daily_history'):
+                self.daily_history = []
+        
+            # garantir project_id com tipo consistente (string) e guardar contexto do projecto
+            proj_id_str = str(project_id)
+            self.current_project_id = proj_id_str
+        
+            # carregar info do projecto (filtro seguro por string)
+            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == proj_id_str].iloc[0]
+            self.current_risk_rating = project_info.get('risk_rating', None)
+            self.current_date = project_info.get('start_date', None)
+            self.episode_logs = []
+        
+            # carregar tasks do projecto usando comparação por string para evitar mismatch de tipos
+            project_tasks = self.df_tasks[self.df_tasks['project_id'].astype(str) == proj_id_str].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
-            self.total_estimated_budget = project_info['total_actual_cost']
-            # --- Robust handling of estimated_effort units: produce estimated_effort IN HOURS ---
-            project_dependencies = self.df_dependencies[self.df_dependencies['project_id'] == project_id]
-            self.task_dependencies = {row['task_id_successor']: row['task_id_predecessor'] for _, row in project_dependencies.iterrows()}
-            
+        
+            # tornar leitura de budget/custo robusta
+            self.total_estimated_budget = project_info.get('total_actual_cost', None)
+        
+            # filtrar dependências por project_id usando comparação por string e garantir chaves string
+            project_dependencies = self.df_dependencies[self.df_dependencies['project_id'].astype(str) == proj_id_str]
+            self.task_dependencies = {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in project_dependencies.iterrows()}
+        
             # prefer observed allocation hours for this project if available
             alloc_df = getattr(self, 'df_resource_allocations', None)
-            proj_id_str = str(project_id)
             project_alloc_hours = {}
             task_alloc_hours = {}
             if alloc_df is not None and 'project_id' in alloc_df.columns and 'hours_worked' in alloc_df.columns:
@@ -1081,15 +1104,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 tmp_alloc['hours_worked'] = pd.to_numeric(tmp_alloc['hours_worked'], errors='coerce').fillna(0)
                 project_alloc_hours = tmp_alloc.groupby('project_id')['hours_worked'].sum().to_dict()
                 task_alloc_hours = tmp_alloc.groupby('task_id')['hours_worked'].sum().to_dict()
-            
+                # garantir chaves de task_alloc_hours como strings
+                task_alloc_hours = {str(k): v for k, v in task_alloc_hours.items()}
+        
+            # inferência de esforço total (HORAS)
             if project_alloc_hours.get(proj_id_str, 0) > 0:
-                # use observed allocation hours as total effort (hours)
+                # usar horas observadas como esforço total
                 self.total_estimated_effort = int(project_alloc_hours.get(proj_id_str, 0))
                 HOURS_PER_DAY = 1
                 inferred_unit = 'hours_from_allocations'
             else:
-                # infer if estimated_effort in project_tasks is days or hours (median heuristic)
-                est_series = pd.to_numeric(project_tasks['estimated_effort'], errors='coerce').dropna()
+                # inferir unidade em project_tasks (dias ou horas)
+                est_series = pd.to_numeric(project_tasks.get('estimated_effort', pd.Series([], dtype=float)), errors='coerce').dropna()
                 if not est_series.empty and est_series.median() > 24:
                     HOURS_PER_DAY = 1
                     inferred_unit = 'hours_in_data'
@@ -1097,11 +1123,11 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     HOURS_PER_DAY = 8
                     inferred_unit = 'days_in_data'
                 self.total_estimated_effort = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
-            
+        
             # build tasks_state with estimated_effort ALWAYS in HOURS (keys as strings)
             self.tasks_state = {}
             for _, task in project_tasks.iterrows():
-                tid = str(task['task_id'])
+                tid = str(task.get('task_id'))
                 if task_alloc_hours and tid in task_alloc_hours:
                     est_hours = int(task_alloc_hours[tid])
                 else:
@@ -1119,11 +1145,16 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     'priority': int(task.get('priority', 0) or 0),
                     'task_type': task.get('task_type')
                 }
-            
+        
             # save inference info for debug
             self._estimated_effort_inference = {'method': inferred_unit, 'total_est_hours': self.total_estimated_effort}
-
+        
+            # garantir que campos críticos estão definidos antes de devolver o estado
+            self.day_count = 0
+            self.current_cost = 0.0
+        
             return self.get_state()
+
         def get_state(self):
             progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values()); progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
             budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
@@ -1281,6 +1312,19 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         for _, prj_info in df_projects_to_evaluate.iterrows():
             proj_id_str = str(prj_info['project_id'])
             state = env.reset(proj_id_str)
+            # FORCE_REINIT: garantir variáveis críticas reiniciadas entre projectos (workaround)
+            try:
+                env.day_count = 0
+                env.current_cost = 0.0
+                env.total_estimated_effort = getattr(env, 'total_estimated_effort', 0.0)
+                env.tasks_state = getattr(env, 'tasks_state', {}) or {}
+                if hasattr(env, 'resources_used_today'):
+                    env.resources_used_today = set()
+                if hasattr(env, 'daily_history'):
+                    env.daily_history = []
+            except Exception:
+                pass
+            state = env.get_state()
             
             done = False; 
             calendar_day = 0
