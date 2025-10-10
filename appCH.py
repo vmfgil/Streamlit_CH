@@ -1018,15 +1018,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             dfs_rl[nome_df] = df[df['project_id'].astype(str).isin(ids_amostra)].copy()
         else:
             dfs_rl[nome_df] = df.copy()
-
-    # TYPE_DEBUG: garantir ids como strings e mostrar amostra
-    # TYPE_DEBUG (UI + log)
-    st.write("TYPE_DEBUG projects.dtype, sample:", dfs_rl['projects']['project_id'].dtype, dfs_rl['projects']['project_id'].astype(str).head(6).tolist())
-    st.write("TYPE_DEBUG tasks.dtype, sample:", dfs_rl['tasks']['project_id'].dtype, dfs_rl['tasks']['project_id'].astype(str).head(6).tolist())
-    print("TYPE_DEBUG projects.dtype, sample:", dfs_rl['projects']['project_id'].dtype, dfs_rl['projects']['project_id'].astype(str).head(6).tolist())
-    print("TYPE_DEBUG tasks.dtype, sample:", dfs_rl['tasks']['project_id'].dtype, dfs_rl['tasks']['project_id'].astype(str).head(6).tolist())
-
-
+            
     plots = {}
     tables = {}
     logs = {}
@@ -1036,20 +1028,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_resources = dfs_rl['resources'].copy()
     df_resource_allocations = dfs_rl['resource_allocations'].copy()
     df_dependencies = dfs_rl['dependencies'].copy()
-
-    st.write("CHECK resources.daily_capacity describe:", pd.to_numeric(df_resources['daily_capacity'], errors='coerce').describe().to_dict())
-    st.write("CHECK team capacity and project hist days:", {
-        "team_daily_capacity_sum": pd.to_numeric(df_resources['daily_capacity'], errors='coerce').fillna(0).sum(),
-        "project_total_duration_days": int(df_projects.loc[df_projects['project_id']==str(project_id_to_simulate),'total_duration_days'].iloc[0]) if str(project_id_to_simulate) in df_projects['project_id'].astype(str).values else None
-    })
-    st.write("CHECK allocs for project:", df_resource_allocations[df_resource_allocations['project_id'].astype(str)==str(project_id_to_simulate)].groupby('task_id')['hours_worked'].sum().reset_index().to_dict())
-
-    # Immediate sanity checks printed to the Streamlit UI
-    status_text.info("DEBUG: amostra carregada — shapes")
-    status_text.info(f"projects: {df_projects.shape}, tasks: {df_tasks.shape}, resources: {df_resources.shape}, allocs: {df_resource_allocations.shape}, deps: {df_dependencies.shape}")
-    status_text.info(f"projects.dtypes: {df_projects.dtypes.to_dict()}")
-    status_text.info(f"tasks.estimated_effort median,sum: median={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').median()}, sum={pd.to_numeric(df_tasks['estimated_effort'],errors='coerce').sum()}")
-    status_text.info(f"resources.daily_capacity describe: {pd.to_numeric(df_resources['daily_capacity'],errors='coerce').describe().to_dict()}")
 
 
     def calculate_business_days(start, end):
@@ -1201,19 +1179,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
                     except Exception:
                         cost_per_hour = 0.0
-                    # STEP_DEBUG: mostrar no painel de status e na UI o recurso selecionado e capacidades lidas
-                    debug_msg = (
-                        f"STEP_DEBUG day={self.day_count} res_type={res_type} chosen_res_id={res_info['resource_id']} "
-                        f"daily_capacity_raw={daily_capacity_raw} daily_capacity_parsed={daily_capacity} "
-                        f"task_id_candidates_count={len(eligible_tasks)} sample_candidates={eligible_tasks[:5]} remaining_effort={remaining_effort}"
-                    )
-                    try:
-                        status_text.info(debug_msg)
-                    except Exception:
-                        pass
-                    st.write(debug_msg)
-                    print(debug_msg)
-                    
+                        
                     hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
                     if hours_to_work <= 0:
                         # nada a fazer neste recurso hoje
@@ -1260,29 +1226,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
     env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
     env.reset(str(project_id_to_simulate))
-    # RES_DEBUG: resumo por tipo de recurso (UI + status_text + log)
-    res_summary = {
-        rt: {
-            'count': len(df),
-            'cap_min': int(pd.to_numeric(df['daily_capacity'], errors='coerce').min()) if not df.empty else None,
-            'cap_median': float(pd.to_numeric(df['daily_capacity'], errors='coerce').median()) if not df.empty else None,
-            'examples': df[['resource_id', 'resource_name', 'daily_capacity']].head(3).to_dict(orient='records')
-        }
-        for rt, df in env.resources_by_type.items()
-    }
-    # Mostrar no painel de status se disponível
-    try:
-        status_text.info(f"RES_DEBUG resources_by_type summary: {res_summary}")
-    except Exception:
-        pass
-    st.write("RES_DEBUG resources_by_type summary:", res_summary)
-    print("RES_DEBUG resources_by_type summary:", res_summary)
-
-    st.write("DEBUG_resource_types_count:", len(env.resource_types))
-    st.write("DEBUG_resources_per_type_sample:", {rt: len(env.resources_by_type[rt]) for rt in env.resource_types})
-    st.write("DEBUG: Estimated-effort inference =>", env._estimated_effort_inference)
-    st.write("DEBUG: Sample task state (primeiro) =>", next(iter(env.tasks_state.items())) if env.tasks_state else "nenhuma tarefa")
-
+    
     # --- Extrair parâmetros do agente (com defaults) ---
     lr = float(agent_params.get('lr', 0.1))
     gamma = float(agent_params.get('gamma', 0.9))
@@ -1293,16 +1237,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
     time_per_episode = 0.01
 
-    # --- DEBUG / SANITY CHECK (será mostrado na UI) ---
-    try:
-        status_text.info(f"Debug: total_estimated_effort (horas) = {env.total_estimated_effort}, agent_params = {agent_params}")
-        example_task = next(iter(env.tasks_state.items())) if env.tasks_state else None
-        status_text.info(f"Example task (id, data): {example_task}")
-    except Exception as e:
-        # Em caso de erro no debug, mostra no status_text sem interromper o treino
-        status_text.info(f"Debug: erro ao mostrar info do ambiente: {e}")
-
-    
+       
     for episode in range(num_episodes):
         project_id = str(df_projects_train.sample(1).iloc[0]['project_id'])
         state = env.reset(project_id)
@@ -1315,16 +1250,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     continue
                 # permitir até N ações por tipo, onde N = número de recursos desse tipo
                 actual_count = len(env.resources_by_type.get(res_type, []))
-                # AVAIL_DEBUG (UI + status_text + log)
-                debug_msg = f"AVAIL_DEBUG res_type={res_type} actual_count={actual_count} will_use_avail_count={max(1, actual_count)}"
-                try:
-                    status_text.info(debug_msg)
-                except Exception:
-                    pass
-                st.write(debug_msg)
-                # manter também no log do servidor
-                print(debug_msg)
-
+                 
                 avail_count = max(1, actual_count)
                 chosen_for_type = set()
                 for _ in range(avail_count):
@@ -1355,8 +1281,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         for _, prj_info in df_projects_to_evaluate.iterrows():
             proj_id_str = str(prj_info['project_id'])
             state = env.reset(proj_id_str)
-            # DIAGNÓSTICO: confirmar que o reset encontrou tasks para este projeto
-            print(f"EVAL_DEBUG reset project_id={proj_id_str} tasks_loaded={len(env.tasks_state)} estimated_effort_inference={getattr(env, '_estimated_effort_inference', None)}")
+            
             done = False; 
             calendar_day = 0
             while not done and calendar_day < 1000:
@@ -1368,6 +1293,21 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                         if chosen_action: action_set.add(chosen_action)
                 _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
                 if env.day_count > 730: break
+            # EVAL_DEBUG (UI + status_text + log) — inserir exatamente aqui
+            proj_dbg_msg = (
+                f"EVAL_DEBUG project_id={prj_info['project_id']} "
+                f"simulated_day_count={getattr(env,'day_count',None)} "
+                f"simulated_cost={getattr(env,'current_cost',None)} "
+                f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
+                f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
+            )
+            try:
+                status_text.info(proj_dbg_msg)
+            except Exception:
+                pass
+            st.write(proj_dbg_msg)
+            print(proj_dbg_msg)
+
             results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
         return pd.DataFrame(results)
 
