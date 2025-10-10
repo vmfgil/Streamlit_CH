@@ -1352,7 +1352,17 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             st.write(proj_dbg_msg)
             print(proj_dbg_msg)
 
-            results.append({'project_id': prj_info['project_id'], 'simulated_duration': env.day_count, 'simulated_cost': env.current_cost, 'real_duration': prj_info['total_duration_days'], 'real_cost': prj_info['total_actual_cost']})
+            # gravar razão de término para diagnóstico: use calendar_day (contador do loop) em vez de env.day_count
+            termination_reason = getattr(env, 'last_termination_reason', None) if hasattr(env, 'last_termination_reason') else None
+            results.append({
+                'project_id': prj_info['project_id'],
+                'simulated_duration': calendar_day,            # usar o contador local do while
+                'simulated_duration_env': getattr(env, 'day_count', None),  # manter para comparação
+                'simulated_cost': getattr(env, 'current_cost', None),
+                'real_duration': prj_info.get('total_duration_days'),
+                'real_cost': prj_info.get('total_actual_cost'),
+                'termination_reason': termination_reason
+            })            
         return pd.DataFrame(results)
 
     test_results_df = evaluate_agent(agent, env, df_projects_test)
