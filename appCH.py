@@ -1350,12 +1350,47 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     status_text.success("Treino e simulação concluídos!")
     
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10)); rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
-    axes[0, 0].plot(rewards, alpha=0.6); axes[0, 0].plot(pd.Series(rewards).rolling(50).mean(), lw=2, label='Média Móvel (50 ep)'); axes[0, 0].set_title('Recompensa por Episódio'); axes[0, 0].legend(); axes[0, 0].grid(True)
-    axes[0, 1].plot(durations, alpha=0.6); axes[0, 1].plot(pd.Series(durations).rolling(50).mean(), lw=2, label='Média Móvel (50 ep)'); axes[0, 1].set_title('Duração por Episódio'); axes[0, 1].legend(); axes[0, 1].grid(True)
-    axes[1, 0].plot(epsilon_history); axes[1, 0].set_title('Decaimento do Epsilon'); axes[1, 0].grid(True)
-    axes[1, 1].plot(costs, alpha=0.6); axes[1, 1].plot(pd.Series(costs).rolling(50).mean(), lw=2, label='Média Móvel (50 ep)'); axes[1, 1].set_title('Custo por Episódio'); axes[1, 1].legend(); axes[1, 1].grid(True)
-    fig.tight_layout(); plots['training_metrics'] = convert_fig_to_bytes(fig)
+    # CÓDIGO CORRIGIDO
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
+    rolling_avg = 50
+    
+    # Gráfico de Recompensa
+    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio') # Linha de dados brutos mais transparente
+    axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)') # Linha de tendência mais grossa e com cor de destaque
+    axes[0, 0].set_title('Recompensa por Episódio')
+    axes[0, 0].set_xlabel('Episódio')
+    axes[0, 0].set_ylabel('Recompensa Total')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, linestyle='--', alpha=0.6)
+    
+    # Gráfico de Duração
+    axes[0, 1].plot(durations, alpha=0.3, label='Duração do Episódio')
+    axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)')
+    axes[0, 1].set_title('Duração por Episódio')
+    axes[0, 1].set_xlabel('Episódio')
+    axes[0, 1].set_ylabel('Duração (dias úteis)')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, linestyle='--', alpha=0.6)
+    
+    # Gráfico de Epsilon
+    axes[1, 0].plot(epsilon_history, color='orange')
+    axes[1, 0].set_title('Decaimento do Epsilon (Exploração)')
+    axes[1, 0].set_xlabel('Episódio')
+    axes[1, 0].set_ylabel('Valor de Epsilon')
+    axes[1, 0].grid(True, linestyle='--', alpha=0.6)
+    
+    # Gráfico de Custo
+    axes[1, 1].plot(costs, alpha=0.3, label='Custo do Episódio')
+    axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)')
+    axes[1, 1].set_title('Custo por Episódio')
+    axes[1, 1].set_xlabel('Episódio')
+    axes[1, 1].set_ylabel('Custo (€)')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, linestyle='--', alpha=0.6)
+    
+    fig.tight_layout()
+    plots['training_metrics'] = convert_fig_to_bytes(fig)
 
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
@@ -1412,11 +1447,31 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     test_results_df = evaluate_agent(agent, env, df_projects_test)
     df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
+    # CÓDIGO CORRIGIDO
     fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
-    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered'); axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)'); axes[0].set_xticks(index_test); axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[0].legend()
-    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered'); axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right"); axes[1].legend()
+    
+    # Gráfico da Esquerda (Duração)
+    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
+    axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
+    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
+    axes[0].set_xlabel('ID do Processo')
+    axes[0].set_ylabel('Duração (dias úteis)')
+    axes[0].set_xticks(index_test)
+    axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+    axes[0].legend()
+    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Gráfico da Direita (Custo)
+    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
+    axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
+    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)')
+    axes[1].set_xlabel('ID do Processo')
+    axes[1].set_ylabel('Custo (€)')
+    axes[1].set_xticks(index_test)
+    axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+    axes[1].legend()
+    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+    
     plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
     def get_global_performance_df(results_df):
@@ -1807,16 +1862,11 @@ def rl_page():
         
         c1, c2 = st.columns(2)
         with c1:
-            default_index = 0
-            # Garante que o processo '25' só é pré-selecionado se existir na amostra
-            if "25" in project_ids_elegiveis:
-                default_index = project_ids_elegiveis.index("25")
-
             project_id_to_simulate = st.selectbox(
-                "Selecione o Processo para Simulação Detalhada (Amostra)",
-                options=project_ids_elegiveis,
-                index=default_index
-            )
+            "Selecione o Processo para Simulação Detalhada (Amostra)",
+            options=project_ids_elegiveis,
+            index=0  # Garante que o primeiro item da lista é sempre o default
+        )
         with c2:
             num_episodes = st.number_input("Número de Episódios de Treino", min_value=20, max_value=10000, value=1000, step=100)
 
@@ -1862,29 +1912,32 @@ def rl_page():
             progress_bar = st.progress(0)
             status_text = st.empty()
             status_text.info("A iniciar o treino do agente de RL...")
-
-        plots_rl, tables_rl, logs_rl = run_rl_analysis(
-            st.session_state.dfs,
-            project_id_to_simulate,
-            num_episodes,
-            reward_config,
-            progress_bar,
-            status_text,
-            agent_params={
-                'lr': float(agent_lr),
-                'gamma': float(agent_gamma),
-                'epsilon': float(agent_epsilon),
-                'epsilon_decay': float(agent_epsilon_decay),
-                'min_epsilon': float(agent_min_epsilon)
-            }
-        )
+    
+            plots_rl, tables_rl, logs_rl = run_rl_analysis(
+                st.session_state.dfs,
+                project_id_to_simulate,
+                num_episodes,
+                reward_config,
+                progress_bar,
+                status_text,
+                agent_params={
+                    'lr': float(agent_lr),
+                    'gamma': float(agent_gamma),
+                    'epsilon': float(agent_epsilon),
+                    'epsilon_decay': float(agent_epsilon_decay),
+                    'min_epsilon': float(agent_min_epsilon)
+                }
+            )
+            
+            # Localização Correta das Novas Linhas
+            status_text.info("Treino concluído. A gerar os gráficos e relatórios de análise, por favor aguarde...")
+            time.sleep(2)
+    
         st.session_state.plots_rl = plots_rl
         st.session_state.tables_rl = tables_rl
         st.session_state.logs_rl = logs_rl
         st.session_state.rl_analysis_run = True
         st.rerun()
-
-    
     if st.session_state.rl_analysis_run:
         # (O resto da sua função rl_page para mostrar os resultados continua aqui, sem alterações)
         st.markdown("---")
