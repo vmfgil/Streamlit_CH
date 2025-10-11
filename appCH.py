@@ -1413,158 +1413,158 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     fig.tight_layout()
     plots['training_metrics'] = convert_fig_to_bytes(fig)
 
-def evaluate_agent(agent, env, df_projects_to_evaluate):
-    agent.epsilon = 0; results = []
-    for _, prj_info in df_projects_to_evaluate.iterrows():
-        proj_id_str = str(prj_info['project_id'])
-        # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
-        state = env.reset(proj_id_str)
+    def evaluate_agent(agent, env, df_projects_to_evaluate):
+        agent.epsilon = 0; results = []
+        for _, prj_info in df_projects_to_evaluate.iterrows():
+            proj_id_str = str(prj_info['project_id'])
+            # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
+            state = env.reset(proj_id_str)
+            
+            done = False; 
+            calendar_day = 0
+            while not done and calendar_day < 1000:
+                possible_actions = env.get_possible_actions_for_state()
+                # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
+                action_list = []
+                for res_type in env.resource_types:
+                    actions_for_res = [a for a in possible_actions if a[0] == res_type]
+                    if actions_for_res:
+                        num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+                        for _ in range(num_resources_of_type):
+                            chosen_action = agent.choose_action(state, actions_for_res)
+                            if chosen_action: action_list.append(chosen_action)
+                
+                _, done = env.step(action_list)
+                state = env.get_state()
+                calendar_day += 1
+                
+                if done:
+                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
+                    print(dbg_msg)
+                    break
+    
+                if env.day_count >= 730:
+                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
+                    print(dbg_msg)
+                    break
+    
+            proj_dbg_msg = (
+                f"EVAL_DEBUG project_id={prj_info['project_id']} "
+                f"simulated_day_count={getattr(env,'day_count',None)} "
+                f"simulated_cost={getattr(env,'current_cost',None)} "
+                f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
+                f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
+            )
+            print(proj_dbg_msg)
+    
+            results.append({
+                'project_id': prj_info['project_id'],
+                'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
+                'simulated_cost': getattr(env, 'current_cost', None),
+                'real_duration': prj_info.get('total_duration_days'),
+                'real_cost': prj_info.get('total_actual_cost'),
+            })           
+        return pd.DataFrame(results)
+    
+    test_results_df = evaluate_agent(agent, env, df_projects_test)
+    df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
+    # CÓDIGO CORRIGIDO
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
+    
+    # Gráfico da Esquerda (Duração)
+    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
+    axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
+    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
+    axes[0].set_xlabel('ID do Processo')
+    axes[0].set_ylabel('Duração (dias úteis)')
+    axes[0].set_xticks(index_test)
+    axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+    axes[0].legend()
+    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Gráfico da Direita (Custo)
+    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
+    axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
+    axes[1].set_title('--- TESTE ---')
+    axes[1].set_xlabel('ID do Processo')
+    axes[1].set_ylabel('Custo (€)')
+    axes[1].set_xticks(index_test)
+    axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+    axes[1].legend()
+    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+    
+    plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
+    
+    def get_global_performance_df(results_df):
+            real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
+            dur_improv = real_duration - sim_duration; cost_improv = real_cost - sim_cost
+            dur_improv_perc = (dur_improv / real_duration) * 100 if real_duration > 0 else 0; cost_improv_perc = (cost_improv / real_cost) * 100 if real_cost > 0 else 0
+            perf_data = {'Métrica': ['Duração Total (dias úteis)', 'Custo Total (€)'], 'Real (Histórico)': [f"{real_duration:.0f}", f"€{real_cost:,.2f}"], 'Simulado (RL)': [f"{sim_duration:.0f}", f"€{sim_cost:,.2f}"], 'Melhoria': [f"{dur_improv:.0f} ({dur_improv_perc:.1f}%)", f"€{cost_improv:,.2f} ({cost_improv_perc:.1f}%)"]}
+            return pd.DataFrame(perf_data)
+            
+        tables['global_performance_test'] = get_global_performance_df(test_results_df)
         
-        done = False; 
-        calendar_day = 0
+        agent.epsilon = 0; state = env.reset(project_id_to_simulate)
+        done = False; calendar_day = 0
         while not done and calendar_day < 1000:
             possible_actions = env.get_possible_actions_for_state()
-            # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
             action_list = []
             for res_type in env.resource_types:
                 actions_for_res = [a for a in possible_actions if a[0] == res_type]
                 if actions_for_res:
                     num_resources_of_type = len(env.resources_by_type.get(res_type, []))
                     for _ in range(num_resources_of_type):
-                        chosen_action = agent.choose_action(state, actions_for_res)
-                        if chosen_action: action_list.append(chosen_action)
-            
-            _, done = env.step(action_list)
-            state = env.get_state()
-            calendar_day += 1
-            
-            if done:
-                dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
-                print(dbg_msg)
-                break
-
-            if env.day_count >= 730:
-                dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
-                print(dbg_msg)
-                break
-
-        proj_dbg_msg = (
-            f"EVAL_DEBUG project_id={prj_info['project_id']} "
-            f"simulated_day_count={getattr(env,'day_count',None)} "
-            f"simulated_cost={getattr(env,'current_cost',None)} "
-            f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
-            f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
-        )
-        print(proj_dbg_msg)
-
-        results.append({
-            'project_id': prj_info['project_id'],
-            'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
-            'simulated_cost': getattr(env, 'current_cost', None),
-            'real_duration': prj_info.get('total_duration_days'),
-            'real_cost': prj_info.get('total_actual_cost'),
-        })           
-    return pd.DataFrame(results)
-
-test_results_df = evaluate_agent(agent, env, df_projects_test)
-df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
-# CÓDIGO CORRIGIDO
-fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
-
-# Gráfico da Esquerda (Duração)
-axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
-axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
-axes[0].set_xlabel('ID do Processo')
-axes[0].set_ylabel('Duração (dias úteis)')
-axes[0].set_xticks(index_test)
-axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-axes[0].legend()
-axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-
-# Gráfico da Direita (Custo)
-axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
-axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-axes[1].set_title('--- TESTE ---')
-axes[1].set_xlabel('ID do Processo')
-axes[1].set_ylabel('Custo (€)')
-axes[1].set_xticks(index_test)
-axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-axes[1].legend()
-axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-
-plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
-
-def get_global_performance_df(results_df):
-        real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
-        dur_improv = real_duration - sim_duration; cost_improv = real_cost - sim_cost
-        dur_improv_perc = (dur_improv / real_duration) * 100 if real_duration > 0 else 0; cost_improv_perc = (cost_improv / real_cost) * 100 if real_cost > 0 else 0
-        perf_data = {'Métrica': ['Duração Total (dias úteis)', 'Custo Total (€)'], 'Real (Histórico)': [f"{real_duration:.0f}", f"€{real_cost:,.2f}"], 'Simulado (RL)': [f"{sim_duration:.0f}", f"€{sim_cost:,.2f}"], 'Melhoria': [f"{dur_improv:.0f} ({dur_improv_perc:.1f}%)", f"€{cost_improv:,.2f} ({cost_improv_perc:.1f}%)"]}
-        return pd.DataFrame(perf_data)
+                        action = agent.choose_action(state, actions_for_res);
+                        if action: action_list.append(action)
+            _, done = env.step(action_list); state = env.get_state(); calendar_day += 1
+            if env.day_count > 730: break
+        simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
         
-    tables['global_performance_test'] = get_global_performance_df(test_results_df)
+        # Usar os dataframes AMOSTRADOS (df_projects, df_resource_allocations, df_resources)
     
-    agent.epsilon = 0; state = env.reset(project_id_to_simulate)
-    done = False; calendar_day = 0
-    while not done and calendar_day < 1000:
-        possible_actions = env.get_possible_actions_for_state()
-        action_list = []
-        for res_type in env.resource_types:
-            actions_for_res = [a for a in possible_actions if a[0] == res_type]
-            if actions_for_res:
-                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-                for _ in range(num_resources_of_type):
-                    action = agent.choose_action(state, actions_for_res);
-                    if action: action_list.append(action)
-        _, done = env.step(action_list); state = env.get_state(); calendar_day += 1
-        if env.day_count > 730: break
-    simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
+        project_info_full = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
+        real_duration, real_cost = project_info_full.get('total_duration_days'), project_info_full.get('total_actual_cost')
+        
+        # Guardar o resumo do projeto usando valores reais da amostra
+        tables['project_summary'] = pd.DataFrame({
+            'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
+            'Real (Histórico)': [real_duration, real_cost],
+            'Simulado (RL)': [sim_duration, sim_cost]
+        })
+        
+        # Usar start_date e alocações da amostra
+        project_start_date = df_projects.loc[df_projects['project_id'] == project_id_to_simulate, 'start_date'].iloc[0]
+        real_allocations = df_resource_allocations[df_resource_allocations['project_id'] == project_id_to_simulate].copy()
+        
+        # garantir que allocation_date é datetime antes de calcular dias úteis
+        if 'allocation_date' in real_allocations.columns:
+            real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'], errors='coerce')
+        
+        real_allocations['day'] = real_allocations.apply(
+            lambda row: np.busday_count(project_start_date.date(), row['allocation_date'].date())
+            if pd.notna(row.get('allocation_date')) else 0,
+            axis=1
+        )
     
-    # Usar os dataframes AMOSTRADOS (df_projects, df_resource_allocations, df_resources)
-
-    project_info_full = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
-    real_duration, real_cost = project_info_full.get('total_duration_days'), project_info_full.get('total_actual_cost')
-    
-    # Guardar o resumo do projeto usando valores reais da amostra
-    tables['project_summary'] = pd.DataFrame({
-        'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
-        'Real (Histórico)': [real_duration, real_cost],
-        'Simulado (RL)': [sim_duration, sim_cost]
-    })
-    
-    # Usar start_date e alocações da amostra
-    project_start_date = df_projects.loc[df_projects['project_id'] == project_id_to_simulate, 'start_date'].iloc[0]
-    real_allocations = df_resource_allocations[df_resource_allocations['project_id'] == project_id_to_simulate].copy()
-    
-    # garantir que allocation_date é datetime antes de calcular dias úteis
-    if 'allocation_date' in real_allocations.columns:
-        real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'], errors='coerce')
-    
-    real_allocations['day'] = real_allocations.apply(
-        lambda row: np.busday_count(project_start_date.date(), row['allocation_date'].date())
-        if pd.notna(row.get('allocation_date')) else 0,
-        axis=1
-    )
-
-    
-    total_estimated_effort = env.total_estimated_effort
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
-    max_day_plot = int(max(max_day_sim, real_duration)); day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
-    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum(); sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
-    real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
-    real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum(); real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
-    axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
-    axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
-    axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
-    sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum(); sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
-    real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
-    axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
-    axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
-    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
-    axes[1].set_ylabel('Horas acumuladas')
-    fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
-    
+        
+        total_estimated_effort = env.total_estimated_effort
+        fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
+        max_day_plot = int(max(max_day_sim, real_duration)); day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
+        sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum(); sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
+        real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
+        real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
+        real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum(); real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
+        axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
+        axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
+        axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
+        sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum(); sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
+        real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
+        axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
+        axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
+        axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
+        axes[1].set_ylabel('Horas acumuladas')
+        fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
+        
     return plots, tables, logs
 
 # --- PÁGINA DE LOGIN ---
