@@ -963,7 +963,6 @@ def run_eda_analysis(dfs):
 
 # --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
-#@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
     if agent_params is None:
         agent_params = {}    
@@ -1414,8 +1413,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     fig.tight_layout()
     plots['training_metrics'] = convert_fig_to_bytes(fig)
 
-    ### INÍCIO DO BLOCO CORRIGIDO ###
-    # Todo este bloco foi indentado um nível para a direita.
     def evaluate_agent(agent, env, df_projects_to_evaluate):
         agent.epsilon = 0; results = []
         for _, prj_info in df_projects_to_evaluate.iterrows():
@@ -1488,7 +1485,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Gráfico da Direita (Custo)
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
     axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)'')
+    axes[1].set_title('--- TESTE ---')
     axes[1].set_xlabel('ID do Processo')
     axes[1].set_ylabel('Custo (€)')
     axes[1].set_xticks(index_test)
@@ -1549,7 +1546,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         axis=1
     )
 
-    
     # Prepara os dados de custo e progresso (horas) para o projeto simulado
     total_estimated_effort = env.total_estimated_effort
     fig, axes = plt.subplots(1, 2, figsize=(20, 8))
@@ -1570,8 +1566,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
     axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)')
     axes[0].set_title('Custo Acumulado')
-    axes[0].set_xlabel('Dias úteis') # <-- ADICIONADO
-    axes[0].set_ylabel('Custo Acumulado (€)') # <-- ADICIONADO
+    axes[0].set_xlabel('Dias úteis')
+    axes[0].set_ylabel('Custo Acumulado (€)')
     axes[0].legend()
     axes[0].grid(True)
 
@@ -1585,19 +1581,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
     axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
     axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
-    axes[1].set_title('Progresso Acumulado (Horas)') # <-- ADICIONADO
-    axes[1].set_xlabel('Dias úteis') # <-- ADICIONADO
-    axes[1].set_ylabel('Horas Acumuladas') # <-- ALTERADO para consistência
-    axes[1].legend() # <-- ADICIONADO
-    axes[1].grid(True) # <-- ADICIONADO
+    axes[1].set_title('Progresso Acumulado (Horas)')
+    axes[1].set_xlabel('Dias úteis')
+    axes[1].set_ylabel('Horas Acumuladas')
+    axes[1].legend()
+    axes[1].grid(True)
 
     # Finaliza e guarda a figura
     fig.tight_layout()
     plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
-    ### FIM DO BLOCO CORRIGIDO ###
-
     return plots, tables, logs
+
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
