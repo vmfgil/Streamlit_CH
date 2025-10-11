@@ -1181,7 +1181,25 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 return False
             if task_data['status'] == 'Concluída': return False
             pred_id = self.task_dependencies.get(task_id)
-            if pred_id and self.tasks_state.get(pred_id, {}).get('status') != 'Concluída': return False
+            if pred_id:
+                predecessor_data = self.tasks_state.get(pred_id, {})
+                # Verifica se a tarefa anterior já foi concluída
+                if predecessor_data.get('status') != 'Concluída':
+                    return False
+            
+                # <<< INÍCIO DA NOVA LÓGICA DE ESPERA >>>
+                completion_date = predecessor_data.get('completion_date')
+                if completion_date:
+                    # Calcula quantos dias úteis passaram desde a conclusão
+                    days_passed = np.busday_count(completion_date.date(), self.current_date.date())
+            
+                    # Define um tempo de espera mínimo (ex: 2 dias úteis)
+                    required_wait_days = 2
+            
+                    # Se ainda não passou tempo suficiente, a tarefa não é elegível
+                    if days_passed < required_wait_days:
+                        return False
+                # <<< FIM DA NOVA LÓGICA DE ESPERA >>>
             task_type = task_data['task_type']
             if task_type == 'Decisão de Crédito e Condições':
                 required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
@@ -1261,6 +1279,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 # [CORREÇÃO PONTO 9] - Comparação robusta de floats para conclusão
                 if task_data['progress'] >= task_data['estimated_effort'] - 1e-9:
                     task_data['status'] = 'Concluída'
+                    task_data['completion_date'] = self.current_date  # <<< ADICIONAR ESTA LINHA
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
             
             self.current_cost += daily_cost
