@@ -1192,8 +1192,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         def step(self, action_list):
             self.resources_used_today = set() # Limpa recursos no início do dia
             
-            # [CORREÇÃO PONTO 13] - Lógica de dia útil melhorada
-            if not pd.to_datetime(self.current_date).is_busday:
+            if self.current_date.weekday() >= 5:
                 self.current_date += timedelta(days=1)
                 return 0, False # Dia não útil, sem recompensa, sem custo
             
