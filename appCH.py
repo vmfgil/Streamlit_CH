@@ -1495,7 +1495,7 @@ axes[1].grid(axis='y', linestyle='--', alpha=0.7)
 
 plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
-    def get_global_performance_df(results_df):
+def get_global_performance_df(results_df):
         real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
         dur_improv = real_duration - sim_duration; cost_improv = real_cost - sim_cost
         dur_improv_perc = (dur_improv / real_duration) * 100 if real_duration > 0 else 0; cost_improv_perc = (cost_improv / real_cost) * 100 if real_cost > 0 else 0
