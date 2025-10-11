@@ -1413,87 +1413,87 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     fig.tight_layout()
     plots['training_metrics'] = convert_fig_to_bytes(fig)
 
-    def evaluate_agent(agent, env, df_projects_to_evaluate):
-        agent.epsilon = 0; results = []
-        for _, prj_info in df_projects_to_evaluate.iterrows():
-            proj_id_str = str(prj_info['project_id'])
-            # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
-            state = env.reset(proj_id_str)
+def evaluate_agent(agent, env, df_projects_to_evaluate):
+    agent.epsilon = 0; results = []
+    for _, prj_info in df_projects_to_evaluate.iterrows():
+        proj_id_str = str(prj_info['project_id'])
+        # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
+        state = env.reset(proj_id_str)
+        
+        done = False; 
+        calendar_day = 0
+        while not done and calendar_day < 1000:
+            possible_actions = env.get_possible_actions_for_state()
+            # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
+            action_list = []
+            for res_type in env.resource_types:
+                actions_for_res = [a for a in possible_actions if a[0] == res_type]
+                if actions_for_res:
+                    num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+                    for _ in range(num_resources_of_type):
+                        chosen_action = agent.choose_action(state, actions_for_res)
+                        if chosen_action: action_list.append(chosen_action)
             
-            done = False; 
-            calendar_day = 0
-            while not done and calendar_day < 1000:
-                possible_actions = env.get_possible_actions_for_state()
-                # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
-                action_list = []
-                for res_type in env.resource_types:
-                    actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                    if actions_for_res:
-                        num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-                        for _ in range(num_resources_of_type):
-                            chosen_action = agent.choose_action(state, actions_for_res)
-                            if chosen_action: action_list.append(chosen_action)
-                
-                _, done = env.step(action_list)
-                state = env.get_state()
-                calendar_day += 1
-                
-                if done:
-                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
-                    print(dbg_msg)
-                    break
+            _, done = env.step(action_list)
+            state = env.get_state()
+            calendar_day += 1
+            
+            if done:
+                dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
+                print(dbg_msg)
+                break
 
-                if env.day_count >= 730:
-                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
-                    print(dbg_msg)
-                    break
+            if env.day_count >= 730:
+                dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
+                print(dbg_msg)
+                break
 
-            proj_dbg_msg = (
-                f"EVAL_DEBUG project_id={prj_info['project_id']} "
-                f"simulated_day_count={getattr(env,'day_count',None)} "
-                f"simulated_cost={getattr(env,'current_cost',None)} "
-                f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
-                f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
-            )
-            print(proj_dbg_msg)
+        proj_dbg_msg = (
+            f"EVAL_DEBUG project_id={prj_info['project_id']} "
+            f"simulated_day_count={getattr(env,'day_count',None)} "
+            f"simulated_cost={getattr(env,'current_cost',None)} "
+            f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
+            f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
+        )
+        print(proj_dbg_msg)
 
-            results.append({
-                'project_id': prj_info['project_id'],
-                'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
-                'simulated_cost': getattr(env, 'current_cost', None),
-                'real_duration': prj_info.get('total_duration_days'),
-                'real_cost': prj_info.get('total_actual_cost'),
-            })           
-        return pd.DataFrame(results)
+        results.append({
+            'project_id': prj_info['project_id'],
+            'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
+            'simulated_cost': getattr(env, 'current_cost', None),
+            'real_duration': prj_info.get('total_duration_days'),
+            'real_cost': prj_info.get('total_actual_cost'),
+        })           
+    return pd.DataFrame(results)
 
-    test_results_df = evaluate_agent(agent, env, df_projects_test)
-    df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
-    # CÓDIGO CORRIGIDO
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
-    
-    # Gráfico da Esquerda (Duração)
-    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
-    axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
-    axes[0].set_xlabel('ID do Processo')
-    axes[0].set_ylabel('Duração (dias úteis)')
-    axes[0].set_xticks(index_test)
-    axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-    axes[0].legend()
-    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-    
-    # Gráfico da Direita (Custo)
-    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
-    axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('--- TESTE ---')
-    axes[1].set_xlabel('ID do Processo')
-    axes[1].set_ylabel('Custo (€)')
-    axes[1].set_xticks(index_test)
-    axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-    axes[1].legend()
-    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-    
-    plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
+test_results_df = evaluate_agent(agent, env, df_projects_test)
+df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
+# CÓDIGO CORRIGIDO
+fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
+
+# Gráfico da Esquerda (Duração)
+axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
+axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
+axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
+axes[0].set_xlabel('ID do Processo')
+axes[0].set_ylabel('Duração (dias úteis)')
+axes[0].set_xticks(index_test)
+axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+axes[0].legend()
+axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+
+# Gráfico da Direita (Custo)
+axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
+axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
+axes[1].set_title('--- TESTE ---')
+axes[1].set_xlabel('ID do Processo')
+axes[1].set_ylabel('Custo (€)')
+axes[1].set_xticks(index_test)
+axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
+axes[1].legend()
+axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+
+plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
     def get_global_performance_df(results_df):
         real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
