@@ -639,13 +639,13 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         # 3. Etiquetas: Aumentado o contraste das caixas amarelas
         nx.draw_networkx_edge_labels(G, 
-                                     pos, 
-                                     edge_labels=nx.get_edge_attributes(G, 'weight'), 
-                                     ax=ax_net, 
-                                     font_color='#FBBF24', 
-                                     font_size=7,
-                                     # Bbox com alpha (opacidade) reduzido para destacar mais a cor sólida
-                                     bbox={'facecolor':'#1E293B', 'alpha':0.9, 'edgecolor':'#FBBF24'}); # ALTERADO: Adicionado 'edgecolor' amarelo
+                                        pos, 
+                                        edge_labels=nx.get_edge_attributes(G, 'weight'), 
+                                        ax=ax_net, 
+                                        font_color='#FBBF24', 
+                                        font_size=7,
+                                        # Bbox com alpha (opacidade) reduzido para destacar mais a cor sólida
+                                        bbox={'facecolor':'#1E293B', 'alpha':0.9, 'edgecolor':'#FBBF24'}); # ALTERADO: Adicionado 'edgecolor' amarelo
         
         ax_net.set_title('Rede Social de Recursos (Handover Network)')
         plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
@@ -965,7 +965,7 @@ def run_eda_analysis(dfs):
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
     if agent_params is None:
-        agent_params = {}   
+        agent_params = {}    
     dfs = {key: df.copy() for key, df in dfs.items()}
     
     # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
@@ -1036,7 +1036,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects['planned_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['planned_end_date']), axis=1)
     df_projects['total_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['end_date']), axis=1)
     
-    # --- AMBIENTE E AGENTE (CLASSES) --- (Sem alterações)
+    # --- AMBIENTE E AGENTE (CLASSES) --- (Com alterações para maior realismo)
     class ProjectManagementEnv:
         def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, df_resource_allocations=None, reward_config=None, min_progress_for_next_phase=0.7):
             self.rewards = reward_config
@@ -1058,41 +1058,38 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 actions.add((res_type, 'idle'));
                 for task_type in self.task_types: actions.add((res_type, task_type))
             return tuple(sorted(list(actions)))
+
+        # [CORREÇÃO PONTO 7] - Método reset robustecido para garantir reinicialização completa
         def reset(self, project_id):
-            # ENSURE_RESET_STATE: forçar reinicialização completa do estado da simulação
+            # Reinicialização completa de todas as variáveis de estado da simulação
             self.day_count = 0
             self.current_cost = 0.0
             self.total_estimated_effort = 0.0
-            # reiniciar container de estado das tarefas — será repopulado abaixo
             self.tasks_state = {}
-            # reiniciar uso de recursos do dia, se existir
-            if hasattr(self, 'resources_used_today'):
-                self.resources_used_today = set()
-            # reiniciar histórico diário/ledger, se existir
-            if hasattr(self, 'daily_history'):
-                self.daily_history = []
-        
+            self.resources_used_today = set()
+            self.daily_history = []
+            self.episode_logs = []
+            
             # garantir project_id com tipo consistente (string) e guardar contexto do projecto
             proj_id_str = str(project_id)
             self.current_project_id = proj_id_str
-        
+            
             # carregar info do projecto (filtro seguro por string)
             project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == proj_id_str].iloc[0]
             self.current_risk_rating = project_info.get('risk_rating', None)
             self.current_date = project_info.get('start_date', None)
-            self.episode_logs = []
-        
+            
             # carregar tasks do projecto usando comparação por string para evitar mismatch de tipos
             project_tasks = self.df_tasks[self.df_tasks['project_id'].astype(str) == proj_id_str].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
-        
+            
             # tornar leitura de budget/custo robusta
             self.total_estimated_budget = project_info.get('total_actual_cost', None)
-        
+            
             # filtrar dependências por project_id usando comparação por string e garantir chaves string
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'].astype(str) == proj_id_str]
             self.task_dependencies = {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in project_dependencies.iterrows()}
-        
+            
             # prefer observed allocation hours for this project if available
             alloc_df = getattr(self, 'df_resource_allocations', None)
             project_alloc_hours = {}
@@ -1106,11 +1103,11 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 task_alloc_hours = tmp_alloc.groupby('task_id')['hours_worked'].sum().to_dict()
                 # garantir chaves de task_alloc_hours como strings
                 task_alloc_hours = {str(k): v for k, v in task_alloc_hours.items()}
-        
+            
             # inferência de esforço total (HORAS)
             if project_alloc_hours.get(proj_id_str, 0) > 0:
                 # usar horas observadas como esforço total
-                self.total_estimated_effort = int(project_alloc_hours.get(proj_id_str, 0))
+                self.total_estimated_effort = project_alloc_hours.get(proj_id_str, 0)
                 HOURS_PER_DAY = 1
                 inferred_unit = 'hours_from_allocations'
             else:
@@ -1122,37 +1119,33 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 else:
                     HOURS_PER_DAY = 8
                     inferred_unit = 'days_in_data'
-                self.total_estimated_effort = int(est_series.sum() * HOURS_PER_DAY) if not est_series.empty else 0
-        
+                self.total_estimated_effort = est_series.sum() * HOURS_PER_DAY if not est_series.empty else 0
+            
             # build tasks_state with estimated_effort ALWAYS in HOURS (keys as strings)
             self.tasks_state = {}
             for _, task in project_tasks.iterrows():
                 tid = str(task.get('task_id'))
                 if task_alloc_hours and tid in task_alloc_hours:
-                    est_hours = int(task_alloc_hours[tid])
+                    est_hours = task_alloc_hours[tid]
                 else:
                     try:
                         raw_eff = float(task.get('estimated_effort', 0) or 0)
                     except Exception:
                         raw_eff = 0.0
-                    est_hours = int(raw_eff * HOURS_PER_DAY)
+                    est_hours = raw_eff * HOURS_PER_DAY
                 if est_hours <= 0:
                     est_hours = 1
                 self.tasks_state[tid] = {
                     'status': 'Pendente',
                     'progress': 0.0,
-                    'estimated_effort': est_hours,   # hours
+                    'estimated_effort': float(est_hours),
                     'priority': int(task.get('priority', 0) or 0),
                     'task_type': task.get('task_type')
                 }
-        
+            
             # save inference info for debug
             self._estimated_effort_inference = {'method': inferred_unit, 'total_est_hours': self.total_estimated_effort}
-        
-            # garantir que campos críticos estão definidos antes de devolver o estado
-            self.day_count = 0
-            self.current_cost = 0.0
-        
+            
             return self.get_state()
 
         def get_state(self):
@@ -1183,54 +1176,96 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
-        def step(self, action_set):
-            if self.current_date.weekday() >= 5: self.current_date += timedelta(days=1); daily_cost = 0; reward_from_tasks = 0
-            else:
-                daily_cost = 0; reward_from_tasks = 0; resources_used_today = set()
-                for res_type, task_type in action_set:
-                    if task_type == "idle": reward_from_tasks -= self.rewards['idle_penalty']; continue
-                    available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(resources_used_today)]
-                    if available_resources.empty: continue
-                    res_info = available_resources.sample(1).iloc[0]
-                    eligible_tasks = [tid for tid, tdata in self.tasks_state.items() if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)]
-                    if not eligible_tasks: continue
-                    resources_used_today.add(res_info['resource_id']); task_id_to_work = random.choice(eligible_tasks)
-                    task_data = self.tasks_state[task_id_to_work]
-                    remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                    
-                    # casts seguros para evitar multiplicações com strings/NaN
-                    daily_capacity_raw = res_info.get('daily_capacity', 0)
-                    cost_per_hour_raw = res_info.get('cost_per_hour', 0)
-                    
-                    try:
-                        daily_capacity = int(pd.to_numeric(daily_capacity_raw, errors='coerce') or 0)
-                    except Exception:
-                        daily_capacity = 0
-                    try:
-                        cost_per_hour = float(pd.to_numeric(cost_per_hour_raw, errors='coerce') or 0.0)
-                    except Exception:
-                        cost_per_hour = 0.0
-                        
-                    hours_to_work = min(daily_capacity, int(max(0, remaining_effort)))
-                    if hours_to_work <= 0:
-                        # nada a fazer neste recurso hoje
-                        continue
-                    
-                    cost_today = hours_to_work * cost_per_hour
-                    daily_cost += cost_today
+        
+        # [CORREÇÕES PONTOS 1, 2, 3, 6, 9, 10, 11, 13] - Método step reescrito
+        def step(self, action_list):
+            self.resources_used_today = set() # Limpa recursos no início do dia
+            
+            # [CORREÇÃO PONTO 13] - Lógica de dia útil melhorada
+            if not pd.to_datetime(self.current_date).is_busday:
+                self.current_date += timedelta(days=1)
+                return 0, False # Dia não útil, sem recompensa, sem custo
+            
+            daily_cost = 0
+            reward_from_tasks = 0
+            
+            # Itera sobre a lista de ações (mantém duplicados e ordem)
+            for res_type, task_type in action_list:
+                if task_type == "idle":
+                    reward_from_tasks -= self.rewards['idle_penalty']
+                    continue
+                
+                # Encontra um recurso disponível DESTE TIPO que ainda não trabalhou hoje
+                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(self.resources_used_today)]
+                if available_resources.empty:
+                    continue # Não há mais recursos deste tipo disponíveis hoje
+                
+                # [CORREÇÃO PONTO 6] - Prioritiza a tarefa mais importante
+                eligible_tasks = [
+                    (tid, tdata) for tid, tdata in self.tasks_state.items() 
+                    if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)
+                ]
+                if not eligible_tasks:
+                    continue
+                
+                # Ordena as tarefas elegíveis pela sua prioridade (valor mais alto primeiro)
+                eligible_tasks.sort(key=lambda item: item[1]['priority'], reverse=True)
+                task_id_to_work, task_data = eligible_tasks[0] # Escolhe a de maior prioridade
+                
+                # Escolhe um recurso específico aleatoriamente do pool disponível
+                res_info = available_resources.sample(1).iloc[0]
+                self.resources_used_today.add(res_info['resource_id'])
 
-                    self.episode_logs.append({'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type, 'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today, 'action': f'Work on {task_type}'})
-                    if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-                    task_data['progress'] += hours_to_work
-                    if task_data['progress'] >= task_data['estimated_effort']: task_data['status'] = 'Concluída'; reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-                self.current_cost += daily_cost; self.current_date += timedelta(days=1)
-                if self.current_date.weekday() < 5: self.day_count += 1
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values()); total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+                # [CORREÇÃO PONTO 11] - Adiciona variabilidade no esforço ao iniciar a tarefa
+                if task_data['status'] == 'Pendente':
+                    task_data['status'] = 'Em Andamento'
+                    # Simula incerteza: o esforço real só é "conhecido" quando se começa a trabalhar
+                    uncertainty_factor = random.uniform(0.95, 1.10)
+                    task_data['estimated_effort'] *= uncertainty_factor
+
+                remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                
+                daily_capacity = float(pd.to_numeric(res_info.get('daily_capacity', 0), errors='coerce') or 0.0)
+                cost_per_hour = float(pd.to_numeric(res_info.get('cost_per_hour', 0), errors='coerce') or 0.0)
+                # [CORREÇÃO PONTO 10] - Usa o fator de performance do recurso individual
+                performance_factor = float(res_info.get('performance_factor', 1.0))
+
+                # [CORREÇÃO PONTO 2 & 9] - Usa floats, sem arredondamentos forçados (int())
+                hours_to_work = min(daily_capacity, max(0.0, remaining_effort / performance_factor))
+                
+                if hours_to_work <= 1e-9:
+                    continue
+                
+                cost_today = hours_to_work * cost_per_hour
+                daily_cost += cost_today
+                
+                progress_added = hours_to_work * performance_factor
+                task_data['progress'] += progress_added
+
+                self.episode_logs.append({
+                    'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type,
+                    'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today,
+                    'action': f'Work on {task_type}'
+                })
+                
+                # [CORREÇÃO PONTO 9] - Comparação robusta de floats para conclusão
+                if task_data['progress'] >= task_data['estimated_effort'] - 1e-9:
+                    task_data['status'] = 'Concluída'
+                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+            
+            self.current_cost += daily_cost
+            self.current_date += timedelta(days=1)
+            self.day_count += 1 # Incrementa o contador de dias úteis trabalhados
+
+            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
             if project_is_done:
                 project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count; total_reward += self.rewards['completion_base']
+                time_diff = project_info['total_duration_days'] - self.day_count
+                total_reward += self.rewards['completion_base']
                 total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
                 total_reward -= self.current_cost * self.rewards['cost_impact_factor']
+            
             return total_reward, project_is_done
 
     class QLearningAgent:
@@ -1268,31 +1303,36 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
     time_per_episode = 0.01
 
-       
+        
     for episode in range(num_episodes):
         project_id = str(df_projects_train.sample(1).iloc[0]['project_id'])
         state = env.reset(project_id)
         episode_reward, done = 0, False; calendar_day = 0
         while not done and calendar_day < 1000:
-            possible_actions = env.get_possible_actions_for_state(); action_set = set()
+            possible_actions = env.get_possible_actions_for_state()
+            # [CORREÇÃO PONTO 1] - Usa uma lista para permitir múltiplas ações do mesmo tipo
+            action_list = []
             for res_type in env.resource_types:
                 actions_for_res = [a for a in possible_actions if a[0] == res_type]
                 if not actions_for_res:
                     continue
-                # permitir até N ações por tipo, onde N = número de recursos desse tipo
-                actual_count = len(env.resources_by_type.get(res_type, []))
-                 
-                avail_count = max(1, actual_count)
-                chosen_for_type = set()
-                for _ in range(avail_count):
+                # Permitir uma decisão por cada recurso disponível daquele tipo
+                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+                for _ in range(num_resources_of_type):
                     chosen_action = agent.choose_action(state, actions_for_res)
                     if chosen_action:
-                        chosen_for_type.add(chosen_action)
-                action_set.update(chosen_for_type)
-            reward, done = env.step(action_set); next_state = env.get_state()
-            for action in action_set: agent.update_q_table(state, action, reward, next_state)
-            state = next_state; episode_reward += reward; calendar_day += 1
-            if env.day_count > 730: break
+                        action_list.append(chosen_action)
+
+            reward, done = env.step(action_list)
+            next_state = env.get_state()
+            # A atualização da Q-table continua a ser feita ação a ação para um aprendizado granular
+            for action in action_list:
+                agent.update_q_table(state, action, reward, next_state)
+            
+            state = next_state
+            episode_reward += reward
+            calendar_day += 1
+            if env.day_count > 730: break # Limite de segurança de dias úteis
         agent.decay_epsilon(); agent.episode_rewards.append(episode_reward); agent.episode_durations.append(env.day_count); agent.episode_costs.append(env.current_cost)
         progress = (episode + 1) / num_episodes; progress_bar.progress(progress)
         remaining_time = (num_episodes - (episode + 1)) * time_per_episode
@@ -1311,52 +1351,37 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         agent.epsilon = 0; results = []
         for _, prj_info in df_projects_to_evaluate.iterrows():
             proj_id_str = str(prj_info['project_id'])
+            # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
             state = env.reset(proj_id_str)
-            # FORCE_REINIT: garantir variáveis críticas reiniciadas entre projectos (workaround)
-            try:
-                env.day_count = 0
-                env.current_cost = 0.0
-                env.total_estimated_effort = getattr(env, 'total_estimated_effort', 0.0)
-                env.tasks_state = getattr(env, 'tasks_state', {}) or {}
-                if hasattr(env, 'resources_used_today'):
-                    env.resources_used_today = set()
-                if hasattr(env, 'daily_history'):
-                    env.daily_history = []
-            except Exception:
-                pass
-            state = env.get_state()
             
             done = False; 
             calendar_day = 0
             while not done and calendar_day < 1000:
-                possible_actions = env.get_possible_actions_for_state(); action_set = set()
+                possible_actions = env.get_possible_actions_for_state()
+                # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
+                action_list = []
                 for res_type in env.resource_types:
                     actions_for_res = [a for a in possible_actions if a[0] == res_type]
                     if actions_for_res:
-                        chosen_action = agent.choose_action(state, actions_for_res)
-                        if chosen_action: action_set.add(chosen_action)
-                _, done = env.step(action_set)
+                        num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+                        for _ in range(num_resources_of_type):
+                            chosen_action = agent.choose_action(state, actions_for_res)
+                            if chosen_action: action_list.append(chosen_action)
+                
+                _, done = env.step(action_list)
                 state = env.get_state()
                 calendar_day += 1
-                try: env.day_count = calendar_day
-                except Exception: pass
-               
-                # EVAL_STEP_INTERNAL debug — imprime quando a simulação termina ou atinge limite
+                
                 if done:
                     dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
-                    try: status_text.info(dbg_msg)
-                    except Exception: pass
                     print(dbg_msg)
                     break
 
-                if calendar_day >= 730:
+                if env.day_count >= 730:
                     dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
-                    try: status_text.info(dbg_msg)
-                    except Exception: pass
                     print(dbg_msg)
                     break
 
-            # EVAL_DEBUG (UI + status_text + log) — inserir exatamente aqui
             proj_dbg_msg = (
                 f"EVAL_DEBUG project_id={prj_info['project_id']} "
                 f"simulated_day_count={getattr(env,'day_count',None)} "
@@ -1364,24 +1389,15 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
                 f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
             )
-            try:
-                status_text.info(proj_dbg_msg)
-            except Exception:
-                pass
-            st.write(proj_dbg_msg)
             print(proj_dbg_msg)
 
-            # gravar razão de término para diagnóstico: use calendar_day (contador do loop) em vez de env.day_count
-            termination_reason = getattr(env, 'last_termination_reason', None) if hasattr(env, 'last_termination_reason') else None
             results.append({
                 'project_id': prj_info['project_id'],
-                'simulated_duration': calendar_day,            # usar o contador local do while
-                'simulated_duration_env': getattr(env, 'day_count', None),  # manter para comparação
+                'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
                 'simulated_cost': getattr(env, 'current_cost', None),
                 'real_duration': prj_info.get('total_duration_days'),
                 'real_cost': prj_info.get('total_actual_cost'),
-                'termination_reason': termination_reason
-            })            
+            })           
         return pd.DataFrame(results)
 
     test_results_df = evaluate_agent(agent, env, df_projects_test)
@@ -1405,13 +1421,16 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     agent.epsilon = 0; state = env.reset(project_id_to_simulate)
     done = False; calendar_day = 0
     while not done and calendar_day < 1000:
-        possible_actions = env.get_possible_actions_for_state(); action_set = set()
+        possible_actions = env.get_possible_actions_for_state()
+        action_list = []
         for res_type in env.resource_types:
             actions_for_res = [a for a in possible_actions if a[0] == res_type]
             if actions_for_res:
-                action = agent.choose_action(state, actions_for_res);
-                if action: action_set.add(action)
-        _, done = env.step(action_set); state = env.get_state(); calendar_day += 1
+                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+                for _ in range(num_resources_of_type):
+                    action = agent.choose_action(state, actions_for_res);
+                    if action: action_list.append(action)
+        _, done = env.step(action_list); state = env.get_state(); calendar_day += 1
         if env.day_count > 730: break
     simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
     
@@ -1511,6 +1530,10 @@ def settings_page():
                     if num_col in df.columns:
                         df[num_col] = pd.to_numeric(df[num_col], errors='coerce').fillna(0)
                 
+                # [CORREÇÃO PONTO 10] Adiciona performance_factor se não existir
+                if name == 'resources' and 'performance_factor' not in df.columns:
+                    df['performance_factor'] = 1.0
+
                 # datas: parse imediato
                 for date_col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
                     if date_col in df.columns:
@@ -1645,7 +1668,7 @@ def dashboard_page():
         
         c3, c4 = st.columns(2)
         with c3:
-             create_card("Diferença entre Data Real e Planeada", "🗓️", chart_bytes=plots_eda.get('plot_03'))
+                create_card("Diferença entre Data Real e Planeada", "🗓️", chart_bytes=plots_eda.get('plot_03'))
         with c4:
             create_card("Estatísticas de Performance", "📈", dataframe=tables_pre.get('perf_stats'))
             
@@ -1707,7 +1730,7 @@ def dashboard_page():
             if 'milestone_time_analysis_plot' in plots_post:
                 create_card("Análise de Tempo entre Marcos do Processo", "🚩", chart_bytes=plots_post.get('milestone_time_analysis_plot'))
         with c4:
-             create_card("Tempo Médio de Espera por Atividade", "⏱️", chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
+                create_card("Tempo Médio de Espera por Atividade", "⏱️", chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
         
         create_card("Matriz de Tempo de Espera entre Atividades (horas)", "⏳", chart_bytes=plots_post.get('waiting_time_matrix_plot'))
 
@@ -1743,7 +1766,7 @@ def dashboard_page():
 
         c5, c6 = st.columns(2)
         with c5:
-             create_card("Top 10 Variantes de Processo por Frequência", "📊", chart_bytes=plots_pre.get('variants_frequency'))
+                create_card("Top 10 Variantes de Processo por Frequência", "📊", chart_bytes=plots_pre.get('variants_frequency'))
         with c6:
             create_card("Grafo de Dependências: Processo 25", "📈", chart_bytes=plots_eda.get('plot_26'))
 
