@@ -1368,15 +1368,17 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         status_text.info(f"A treinar... Episódio {episode + 1}/{num_episodes}. Tempo estimado restante: {remaining_time:.0f} segundos.")
     
     status_text.success("Treino e simulação concluídos!")
+    status_text.info("A preparar os gráficos e análises finais. Por favor, aguarde...") # <<< ADICIONE ESTA LINHA AQUI
     
-    # CÓDIGO CORRIGIDO
+    # CÓDIGO CORRIGIDO (com média móvel corrigida e cor laranja)
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
-    rolling_avg = 50
+    rolling_avg_window = 50
     
     # Gráfico de Recompensa
-    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio') # Linha de dados brutos mais transparente
-    axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)') # Linha de tendência mais grossa e com cor de destaque
+    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio')
+    # A alteração está aqui: .rolling(..., min_periods=1) e color='orange'
+    axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
     axes[0, 0].set_title('Recompensa por Episódio')
     axes[0, 0].set_xlabel('Episódio')
     axes[0, 0].set_ylabel('Recompensa Total')
@@ -1385,7 +1387,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     # Gráfico de Duração
     axes[0, 1].plot(durations, alpha=0.3, label='Duração do Episódio')
-    axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)')
+    axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
     axes[0, 1].set_title('Duração por Episódio')
     axes[0, 1].set_xlabel('Episódio')
     axes[0, 1].set_ylabel('Duração (dias úteis)')
@@ -1393,7 +1395,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     axes[0, 1].grid(True, linestyle='--', alpha=0.6)
     
     # Gráfico de Epsilon
-    axes[1, 0].plot(epsilon_history, color='orange')
+    axes[1, 0].plot(epsilon_history, color='green')
     axes[1, 0].set_title('Decaimento do Epsilon (Exploração)')
     axes[1, 0].set_xlabel('Episódio')
     axes[1, 0].set_ylabel('Valor de Epsilon')
@@ -1401,7 +1403,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     # Gráfico de Custo
     axes[1, 1].plot(costs, alpha=0.3, label='Custo do Episódio')
-    axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg).mean(), lw=2.5, color='dodgerblue', label=f'Média Móvel ({rolling_avg} ep)')
+    axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
     axes[1, 1].set_title('Custo por Episódio')
     axes[1, 1].set_xlabel('Episódio')
     axes[1, 1].set_ylabel('Custo (€)')
@@ -1949,8 +1951,7 @@ def rl_page():
             )
             
             # Localização Correta das Novas Linhas
-            status_text.info("Treino concluído. A gerar os gráficos e relatórios de análise, por favor aguarde...")
-            time.sleep(2)
+            
     
         st.session_state.plots_rl = plots_rl
         st.session_state.tables_rl = tables_rl
