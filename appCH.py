@@ -1183,7 +1183,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             pred_id = self.task_dependencies.get(task_id)
             if pred_id and self.tasks_state.get(pred_id, {}).get('status') != 'Concluída': return False
             task_type = task_data['task_type']
-            if task_type == 'Decisão de Crédito':
+            if task_type == 'Decisão de Crédito e Condições':
                 required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
             else:
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
