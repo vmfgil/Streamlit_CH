@@ -1488,7 +1488,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Gráfico da Direita (Custo)
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
     axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('--- TESTE ---')
+    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)'')
     axes[1].set_xlabel('ID do Processo')
     axes[1].set_ylabel('Custo (€)')
     axes[1].set_xticks(index_test)
@@ -1550,23 +1550,50 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     )
 
     
+    # Prepara os dados de custo e progresso (horas) para o projeto simulado
     total_estimated_effort = env.total_estimated_effort
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
-    max_day_plot = int(max(max_day_sim, real_duration)); day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
-    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum(); sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+    max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
+    max_day_plot = int(max(max_day_sim, real_duration))
+    day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
+
+    # Dados para o Gráfico de Custo Acumulado (à esquerda)
+    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum()
+    sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
     real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
     real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum(); real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum()
+    real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
+
+    # --- Gráfico de Custo Acumulado (Esquerda) ---
     axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
     axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
-    axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)'); axes[0].set_title('Custo Acumulado'); axes[0].legend(); axes[0].grid(True)
-    sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum(); sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
-    real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum(); real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
+    axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)')
+    axes[0].set_title('Custo Acumulado')
+    axes[0].set_xlabel('Dias úteis') # <-- ADICIONADO
+    axes[0].set_ylabel('Custo Acumulado (€)') # <-- ADICIONADO
+    axes[0].legend()
+    axes[0].grid(True)
+
+    # Dados para o Gráfico de Horas Acumuladas (à direita)
+    sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum()
+    sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
+    real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum()
+    real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
+
+    # --- Gráfico de Progresso Acumulado (Direita) ---
     axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
     axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
     axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
-    axes[1].set_ylabel('Horas acumuladas')
-    fig.tight_layout(); plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
+    axes[1].set_title('Progresso Acumulado (Horas)') # <-- ADICIONADO
+    axes[1].set_xlabel('Dias úteis') # <-- ADICIONADO
+    axes[1].set_ylabel('Horas Acumuladas') # <-- ALTERADO para consistência
+    axes[1].legend() # <-- ADICIONADO
+    axes[1].grid(True) # <-- ADICIONADO
+
+    # Finaliza e guarda a figura
+    fig.tight_layout()
+    plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
     ### FIM DO BLOCO CORRIGIDO ###
 
