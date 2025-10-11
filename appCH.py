@@ -500,13 +500,13 @@ def run_pre_mining_analysis(dfs):
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
     def get_phase(task_type):
-        if task_type in ['Onboarding', 'Validação KYC', 'Análise Documental']:
+        if task_type in ['Onboarding', 'Validação KYC e Conformidade', 'Análise Documental']:
             return '1. Onboarding, KYC e Documentação'
-        elif task_type in ['Análise de Risco']:
+        elif task_type in ['Análise de Risco e Proposta']:
             return '2. Análise de Risco'
         elif task_type in ['Avaliação da Imóvel']:
             return '3. Avaliação de imóvel'
-        elif task_type in ['Decisão de Crédito']:
+        elif task_type in ['Decisão de Crédito e Condições']:
             return '4. Decisão de crédito'
         elif task_type in ['Fecho', 'Preparação Legal']:
             return '5. Contratação e Desembolso'
@@ -1050,7 +1050,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
             self.all_actions = self._generate_all_actions()
             self.min_progress_for_next_phase = min_progress_for_next_phase
-            self.TASK_TYPE_RESOURCE_MAP = {'Onboarding': ['Analista Comercial'], 'Validação KYC': ['Analista Comercial'], 'Análise Documental': ['Analista Operações/Legal'],'Análise de Risco': ['Analista de Risco'], 'Avaliação da Imóvel': ['Avaliador Externo'],'Decisão de Crédito': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo'],'Preparação Legal': ['Analista Operações/Legal'], 'Fecho': ['Analista Operações/Legal']}
+            self.TASK_TYPE_RESOURCE_MAP = {
+            'Onboarding': ['Analista Comercial', 'Gerente Comercial'],
+            'Validação KYC e Conformidade': ['Analista de Risco', 'Analista Operações/Legal'],
+            'Análise Documental': ['Analista Comercial', 'Gerente Comercial'],
+            'Análise de Risco e Proposta': ['Analista de Risco'],
+            'Avaliação da Imóvel': ['Avaliador Externo'],
+            # A tarefa 'Decisão de Crédito e Condições' é tratada pelo RISK_ESCALATION_MAP, 
+            # por isso não precisa de estar aqui. Deixei-a comentada para referência.
+            # 'Decisão de Crédito e Condições': [], 
+            'Preparação Legal': ['Analista Operações/Legal'],
+            'Fecho': ['Analista Operações/Legal']
+        }
             self.RISK_ESCALATION_MAP = {'A': ['Analista de Risco'], 'B': ['Analista de Risco', 'Diretor de Risco'],'C': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito'],'D': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo']}
         def _generate_all_actions(self):
             actions = set();
