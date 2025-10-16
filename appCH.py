@@ -11,10 +11,8 @@ import io
 import base64
 import time
 import random
-import time
-import math
+import threading
 from datetime import timedelta
-import multiprocessing
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -1488,7 +1486,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Gráfico da Direita (Custo)
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
     axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)')
+    axes[1].set_title('--- TESTE ---')
     axes[1].set_xlabel('ID do Processo')
     axes[1].set_ylabel('Custo (€)')
     axes[1].set_xticks(index_test)
@@ -1596,6 +1594,38 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     return plots, tables, logs
 
+# === BACKGROUND WORKER PARA EXECUTAR A ANÁLISE SEM BLOQUEAR A UI ===
+def background_analysis(dfs):
+    """
+    Executa o pipeline de análises (pre -> post -> eda) em background.
+    Guarda os resultados em st.session_state quando terminar.
+    NÃO usa st.* dentro desta função (Thread-safety).
+    """
+    try:
+        plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(dfs)
+        st.session_state.plots_pre_mining = plots_pre
+        st.session_state.tables_pre_mining = tables_pre
+
+        # converter e correr post-mining
+        log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
+        plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
+        st.session_state.plots_post_mining = plots_post
+        st.session_state.metrics = metrics
+
+        # correr EDA
+        plots_eda, tables_eda = run_eda_analysis(dfs)
+        st.session_state.plots_eda = plots_eda
+        st.session_state.tables_eda = tables_eda
+
+        # sinalizar conclusão
+        st.session_state.analysis_run = True
+        st.session_state.analysis_completed = True
+
+    except Exception as e:
+        # Guarda o erro para mostrar depois na UI principal
+        st.session_state.analysis_error = str(e)
+        st.session_state.analysis_completed = True
+        st.session_state.analysis_run = False
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
@@ -1613,33 +1643,6 @@ def login_page():
 
 
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
-# --- FUNÇÃO WORKER PARA ANÁLISE CONCORRENTE ---
-def analysis_worker(dfs, result_queue):
-    """
-    Esta função executa todas as análises num processo separado
-    para não bloquear a interface do Streamlit.
-    """
-    try:
-        # Executa as 3 funções de análise principais em sequência
-        plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(dfs)
-        log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
-        plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
-        plots_eda, tables_eda = run_eda_analysis(dfs)
-        
-        # Coloca o dicionário de resultados na fila para a página principal recolher
-        result_queue.put({
-            "plots_pre_mining": plots_pre,
-            "tables_pre_mining": tables_pre,
-            "plots_post_mining": plots_post,
-            "metrics": metrics,
-            "plots_eda": plots_eda,
-            "tables_eda": tables_eda,
-            "success": True
-        })
-    except Exception as e:
-        # Em caso de erro, envia uma mensagem de falha
-        result_queue.put({"success": False, "error": str(e)})
-
 def settings_page():
     st.title("⚙️ Configurações e Upload de Dados")
     st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
@@ -1698,56 +1701,49 @@ def settings_page():
         st.subheader("Execução da Análise")
         st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
         if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
-            
-            # 1. Calcular tempo estimado (como antes)
-            num_tasks = len(st.session_state.dfs['tasks'])
-            estimated_time_seconds = math.ceil(num_tasks / 100)
-
-            # 2. Preparar para a execução concorrente
-            result_queue = multiprocessing.Queue()
-            analysis_process = multiprocessing.Process(
-                target=analysis_worker, 
-                args=(st.session_state.dfs, result_queue)
-            )
-            analysis_process.start() # Inicia a análise no processo em segundo plano
-
-            # 3. Mostrar progresso ENQUANTO a análise corre
-            progress_bar = st.progress(0)
-            status_placeholder = st.empty()
-            start_time = time.time()
-            
-            while analysis_process.is_alive():
-                elapsed_time = time.time() - start_time
-                remaining_time = max(0, estimated_time_seconds - int(elapsed_time))
-                
-                # A barra de progresso avança com base no tempo decorrido vs estimado
-                progress_percentage = min(1.0, elapsed_time / estimated_time_seconds)
-                progress_bar.progress(progress_percentage)
-                
-                status_placeholder.info(f"A executar a análise em segundo plano... Tempo estimado restante: {remaining_time} segundos.")
-                time.sleep(1) # Pausa de 1 segundo entre atualizações da UI
-
-            # 4. Processo terminou, vamos recolher os resultados
-            analysis_process.join() # Garante que o processo terminou completamente
-            results = result_queue.get()
-
-            if results["success"]:
-                # Atualiza o estado da sessão com os resultados
-                for key, value in results.items():
-                    if key != "success":
-                        st.session_state[key] = value
-                
-                progress_bar.progress(1.0)
-                status_placeholder.empty()
-                progress_bar.empty()
-                
-                st.session_state.analysis_run = True
-                st.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
-                st.balloons()
+            # limpa flags anteriores
+            st.session_state.analysis_completed = False
+            st.session_state.analysis_error = None
+            st.session_state.analysis_run = False
+        
+            # assegurar que há tasks carregadas
+            if not st.session_state.dfs.get('tasks') is None:
+                num_tasks = len(st.session_state.dfs['tasks'])
             else:
-                # Mostra uma mensagem de erro se a análise falhar
-                st.error(f"Ocorreu um erro durante a análise: {results['error']}")
-
+                num_tasks = 0
+        
+            # 1 segundo por cada 100 registos; pelo menos 1 segundo
+            estimated_time = max(1, num_tasks // 100)
+        
+            # placeholder para a contagem regressiva / estado
+            countdown_ph = st.empty()
+            status_ph = st.empty()
+        
+            # iniciar a thread de análise
+            analysis_thread = threading.Thread(target=background_analysis, args=(st.session_state.dfs,), daemon=True)
+            analysis_thread.start()
+        
+            # Mostrar contagem regressiva enquanto a thread corre
+            for remaining in range(estimated_time, 0, -1):
+                # se a análise já terminou, sai do loop
+                if st.session_state.get('analysis_completed', False):
+                    break
+                countdown_ph.info(f"⏳ Análise em curso... tempo estimado restante: {remaining} segundos")
+                time.sleep(1)
+        
+            # Depois da contagem: indicar que a análise continua a correr e aguardar (não bloqueante visual)
+            if not st.session_state.get('analysis_completed', False):
+                countdown_ph.info("⏳ A análise continua a correr — a preparar resultados. Irá aparecer uma notificação quando terminar.")
+            else:
+                # terminou durante a contagem
+                if st.session_state.get('analysis_error'):
+                    status_ph.error(f"Erro durante a análise: {st.session_state.get('analysis_error')}")
+                else:
+                    status_ph.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
+                    # Opcional: desfazer o placeholder da contagem
+                    countdown_ph.empty()
+                    # opcional: balões — só chamar no thread principal (aqui é seguro)
+                    st.balloons()
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
