@@ -142,10 +142,7 @@ st.markdown("""
         color: var(--text-color) !important;
         border: 2px solid var(--warning-color) !important;
     }
-    .scrollable-chart-card .card-body {
-    max-height: 500px; /* Define uma altura máxima para o corpo do cartão */
-    overflow-y: auto;  /* Adiciona scroll vertical se o conteúdo (a imagem) for maior */
-    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -179,10 +176,9 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
-def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, scrollable=False):
+def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False):
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
-        card_class = "card scrollable-chart-card" if scrollable else "card"
         st.markdown(f"""
         <div class="{card_class}">
             <div class="card-header"><h4>{icon_html} {title}</h4></div>
@@ -632,7 +628,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         edge_labels = nx.get_edge_attributes(G_bipartite, 'weight')
         nx.draw_networkx_edge_labels(G_bipartite, pos, edge_labels=edge_labels, ax=ax, font_color='#dc3545', font_size=8)
-        ax.set_title('Rede de Recursos por Função (Top 30 por Atividade + Principais)')
+        ax.set_title('Rede de Top 30 Recursos por Função (Atividade + Principais)')
         plots['resource_network_bipartite'] = convert_fig_to_bytes(fig)
 
     variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('time:timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
@@ -725,22 +721,44 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig, ax = plt.subplots(figsize=(10, 8)); sns.heatmap(waiting_times_matrix * 24, cmap='Blues', annot=True, fmt='.1f', ax=ax, annot_kws={"size": 8}, linewidths=.5, linecolor='#374151'); ax.set_title('Matriz de Tempo de Espera entre Atividades (horas)'); fig.tight_layout()
     plots['waiting_time_matrix_plot'] = convert_fig_to_bytes(fig)
     
-    resource_efficiency = _df_full_context.groupby('resource_name').agg(total_hours_worked=('hours_worked', 'sum'), total_tasks_completed=('task_name', 'count')).reset_index()
+    resource_efficiency = _df_full_context.groupby('resource_name').agg(
+        total_hours_worked=('hours_worked', 'sum'),
+        total_tasks_completed=('task_name', 'count')
+    ).reset_index()
     resource_efficiency['avg_hours_per_task'] = resource_efficiency['total_hours_worked'] / resource_efficiency['total_tasks_completed']
     
-    # --- INÍCIO DA ALTERAÇÃO ---
-    # 1. Contar o número de recursos para tornar a altura do gráfico dinâmica
-    n_recursos = len(resource_efficiency)
+    # --- INÍCIO DA NOVA LÓGICA: TOP 10 MELHORES E PIORES ---
+    # Garantir que temos pelo menos 20 recursos para mostrar
+    if len(resource_efficiency) > 20:
+        # Piores: os que demoram MAIS horas por tarefa
+        piores = resource_efficiency.sort_values(by='avg_hours_per_task', ascending=False).head(10)
+        piores['Desempenho'] = '10 Piores (Mais Horas/Tarefa)'
+        
+        # Melhores: os que demoram MENOS horas por tarefa
+        melhores = resource_efficiency.sort_values(by='avg_hours_per_task', ascending=True).head(10)
+        melhores['Desempenho'] = '10 Melhores (Menos Horas/Tarefa)'
+        
+        # Combinar os dois dataframes
+        data_para_plot = pd.concat([piores, melhores]).sort_values(by='avg_hours_per_task', ascending=False)
+        
+        # Definir uma altura fixa, pois agora temos sempre 20 itens
+        altura_figura = 10
+        titulo_grafico = 'Métricas de Eficiência: Top 10 Melhores e Piores Recursos'
+    else:
+        # Se houver 20 ou menos recursos, mostrar todos
+        data_para_plot = resource_efficiency.sort_values(by='avg_hours_per_task', ascending=False)
+        data_para_plot['Desempenho'] = 'Recursos'
+        altura_figura = max(6, len(data_para_plot) * 0.4)
+        titulo_grafico = 'Métricas de Eficiência Individual por Recurso'
     
-    # 2. Calcular a altura da figura (ex: 0.4 polegadas por recurso, com uma altura mínima de 6)
-    altura_figura = max(6, n_recursos * 0.4)
-    
-    # 3. Usar a altura dinâmica ao criar a figura
     fig, ax = plt.subplots(figsize=(10, altura_figura))
-    # --- FIM DA ALTERAÇÃO ---
+    sns.barplot(data=data_para_plot, x='avg_hours_per_task', y='resource_name',
+                hue='Desempenho', palette={'10 Piores (Mais Horas/Tarefa)': '#dc3545', '10 Melhores (Menos Horas/Tarefa)': '#198754', 'Recursos': '#0d6efd'},
+                ax=ax, dodge=False) # dodge=False para não separar as barras
     
-    sns.barplot(data=resource_efficiency.sort_values(by='avg_hours_per_task'), x='avg_hours_per_task', y='resource_name', orient='h', ax=ax, hue='resource_name', legend=False, palette='viridis')
-    ax.set_title('Métricas de Eficiência Individual por Recurso')
+    ax.set_title(titulo_grafico)
+    ax.set_xlabel("Média de Horas por Tarefa")
+    ax.set_ylabel("Recurso")
     fig.tight_layout()
     plots['resource_efficiency_plot'] = convert_fig_to_bytes(fig)
 
@@ -1788,28 +1806,32 @@ def dashboard_page():
 
     elif st.session_state.current_section == "recursos":
         st.subheader("3. Recursos e Equipa")
-        c1, c2 = st.columns(2)
         
+        # Primeira linha de cartões
+        c1, c2 = st.columns(2)
         with c1:
             create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'))
             create_card("Recursos por Média de Tarefas/Processo", '<i class="bi bi-person-workspace"></i>', chart_bytes=plots_pre.get('resource_avg_events'))
             create_card("Eficiência Semanal (Horas Trabalhadas)", '<i class="bi bi-calendar3-week"></i>', chart_bytes=plots_pre.get('weekly_efficiency'))
             create_card("Impacto do Tamanho da Equipa no Atraso (PM)", '<i class="bi bi-people"></i>', chart_bytes=plots_pre.get('delay_by_teamsize'))
             create_card("Benchmark de Throughput por Equipa", '<i class="bi bi-trophy"></i>', chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'))
-            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'))
         with c2:
             create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'))
             create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'))
-            create_card("Métricas de Eficiência Individual por Recurso", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'), scrollable=True)
+            create_card("Métricas de Eficiência: Top 10 Melhores e Piores Recursos", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'))
             create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'))
             create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'))
             create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'))
-        # --- NOVO BLOCO CORRIGIDO ---
-        # Gráficos que merecem largura total para melhor visualização
-        
-        if 'skill_vs_performance_adv' in plots_post:
-            create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
-        
+
+        # Segunda linha de cartões, para os gráficos de análise de Skill
+        c3, c4 = st.columns(2)
+        with c3:
+            if 'skill_vs_performance_adv' in plots_post:
+                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+        with c4:
+            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'))
+
+        # Gráficos complexos que ocupam a largura total
         if 'resource_network_bipartite' in plots_post:
             create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
 
