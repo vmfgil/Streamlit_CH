@@ -488,7 +488,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
 
     # 2. Descoberta de Modelos e Métricas (usando uma amostra das 3 variantes principais para performance)
     variants_dict = variants_filter.get_variants(_event_log_pm4py)
-    top_variants_list = sorted(variants_dict.items(), key=lambda x: len(x[1]), reverse=True)[:3]
+    top_variants_list = sorted(variants_dict.items(), key=lambda x: len(x[1]), reverse=True)[:10]
     top_variant_names = [v[0] for v in top_variants_list]
     log_top_3_variants = variants_filter.apply(_event_log_pm4py, top_variant_names)
     
