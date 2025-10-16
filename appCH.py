@@ -2163,7 +2163,7 @@ def main():
         login_page()
     else:
         with st.sidebar:
-            st.markdown(f'<h3><i class="bi bi-person-circle"></i> {st.session_state.get('user_name', 'Admin')}")
+            st.markdown(f'<h3><i class="bi bi-person-circle"></i> {st.session_state.get("user_name", "Admin")}</h3>', unsafe_allow_html=True)
             st.markdown("---")
             if st.button("🏠 Process Mining", use_container_width=True):
                 st.session_state.current_page = "Dashboard"
