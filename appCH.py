@@ -11,6 +11,8 @@ import io
 import base64
 import time
 import random
+import time
+import math
 from datetime import timedelta
 
 # Imports de Process Mining (PM4PY)
@@ -1485,7 +1487,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Gráfico da Direita (Custo)
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
     axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('--- TESTE ---')
+    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)')
     axes[1].set_xlabel('ID do Processo')
     axes[1].set_ylabel('Custo (€)')
     axes[1].set_xticks(index_test)
@@ -1668,21 +1670,55 @@ def settings_page():
         st.subheader("Execução da Análise")
         st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
         if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
-            with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
+            
+            # 1. Calcular o tempo estimado
+            num_tasks = len(st.session_state.dfs['tasks'])
+            # Usamos math.ceil para arredondar para cima e garantir pelo menos 1 segundo
+            estimated_time_seconds = math.ceil(num_tasks / 100)
+
+            # 2. Criar placeholders para a mensagem e a barra de progresso
+            status_placeholder = st.empty()
+            progress_bar = st.progress(0)
+
+            # 3. Lógica da contagem regressiva
+            for i in range(estimated_time_seconds, -1, -1):
+                # Atualiza a percentagem da barra de progresso
+                progress_percentage = (estimated_time_seconds - i) / estimated_time_seconds
+                progress_bar.progress(progress_percentage)
+                
+                # Atualiza a mensagem de texto
+                status_placeholder.info(f"A preparar a análise... Tempo estimado restante: {i} segundos.")
+                
+                # Espera 1 segundo
+                time.sleep(1)
+
+            # 4. Mensagem final antes de iniciar a análise pesada
+            status_placeholder.info("A processar os dados... Por favor, aguarde. Isto pode demorar um pouco.")
+            progress_bar.progress(1.0) # Completa a barra
+
+            # 5. Executar a análise (dentro de um spinner para feedback visual adicional)
+            with st.spinner("A processar modelos e a gerar visualizações..."):
                 plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(st.session_state.dfs)
                 st.session_state.plots_pre_mining = plots_pre
                 st.session_state.tables_pre_mining = tables_pre
+                
                 log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
                 plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
                 st.session_state.plots_post_mining = plots_post
                 st.session_state.metrics = metrics
+                
                 plots_eda, tables_eda = run_eda_analysis(st.session_state.dfs)
                 st.session_state.plots_eda = plots_eda
                 st.session_state.tables_eda = tables_eda
 
+            # Limpar a mensagem de status após a conclusão
+            status_placeholder.empty()
+            progress_bar.empty()
+
             st.session_state.analysis_run = True
             st.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
             st.balloons()
+            
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
