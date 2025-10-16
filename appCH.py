@@ -923,7 +923,7 @@ def run_eda_analysis(dfs):
     
     fig, (ax1, ax2) = plt.subplots(2,1, figsize=(14,10));
     ax1.bar(monthly_kpis['completion_month'], monthly_kpis['completed_projects'], color='seagreen'); ax1.set_title('Nº de Processos Concluídos por Mês'); ax1.grid(True)
-    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='white',linewidth=3); ax2.set_title('Duração Média dos Processos Concluídos'); ax2.grid(True)
+    ax2.plot(monthly_kpis['completion_month'], monthly_kpis['mean_duration'], marker='o', color='#0d6efd',linewidth=3); ax2.set_title('Duração Média dos Processos Concluídos'); ax2.grid(True)
     plots['plot_31'] = convert_fig_to_bytes(fig)
 
     return plots, tables
