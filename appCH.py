@@ -12,6 +12,7 @@ import base64
 import time
 import random
 from datetime import timedelta
+import textwrap
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -376,8 +377,35 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(12, 6)); sns.barplot(x='frequency', y='variant_str', data=variant_analysis.head(10), ax=ax, orient='h', hue='variant_str', legend=False, palette='coolwarm'); ax.set_title("Top 10 Variantes de Processo por Frequência")
     plots['variants_frequency'] = convert_fig_to_bytes(fig)
     
-    rework_loops = Counter(f"{trace[i]} -> {trace[i+1]} -> {trace[i]}" for trace in variants_df['trace'] for i in range(len(trace) - 2) if trace[i] == trace[i+2] and trace[i] != trace[i+1])
+    # --- INÍCIO DA CORREÇÃO: Lógica de Deteção de Rework Melhorada ---
+    rework_loops = Counter()
+    for trace in variants_df['trace']:
+        # Encontra todas as atividades que se repetem na mesma trace
+        seen_activities = defaultdict(list)
+        for i, activity in enumerate(trace):
+            seen_activities[activity].append(i)
+        
+        # Para cada atividade que aparece mais de uma vez, regista o loop
+        for activity, indices in seen_activities.items():
+            if len(indices) > 1:
+                # Itera sobre os pares de ocorrências da mesma atividade (ex: a 1ª e a 2ª, a 2ª e a 3ª, etc.)
+                for i in range(len(indices) - 1):
+                    start_index = indices[i]
+                    end_index = indices[i+1]
+                    
+                    # Ignora self-loops diretos (ex: A -> A), que não são rework
+                    if end_index == start_index + 1:
+                        continue
+    
+                    # O loop é a sequência de atividades entre as duas ocorrências (inclusive)
+                    loop_sequence = trace[start_index : end_index + 1]
+                    
+                    # Formata a string do loop para ser legível e adiciona ao contador
+                    loop_str = ' -> '.join(loop_sequence)
+                    rework_loops[loop_str] += 1
+    
     tables['rework_loops_table'] = pd.DataFrame(rework_loops.most_common(10), columns=['rework_loop', 'frequency'])
+    # --- FIM DA CORREÇÃO ---
 
     delayed_projects = df_projects[df_projects['days_diff'] > 0].copy()
 
@@ -636,10 +664,30 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('time:timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
     variants_df['duration_hours'] = (variants_df['end_timestamp'] - variants_df['start_timestamp']).dt.total_seconds() / 3600
     variant_durations = variants_df.groupby('variant').agg(count=('case:concept:name', 'count'), avg_duration_hours=('duration_hours', 'mean')).reset_index().sort_values(by='count', ascending=False).head(10)
-    variant_durations['variant_str'] = variant_durations['variant'].apply(lambda x: ' -> '.join([str(i) for i in x][:4]) + '...')
-    fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_duration_hours', y='variant_str', data=variant_durations.astype({'avg_duration_hours':'float'}), ax=ax, hue='variant_str', legend=False, palette='plasma'); ax.set_title('Duração Média das 10 Variantes Mais Comuns'); fig.tight_layout()
+    
+    # --- INÍCIO DA ALTERAÇÃO ---
+    # 1. Criar o texto completo da variante e usar textwrap para quebrar em múltiplas linhas
+    variant_durations['variant_str_wrapped'] = variant_durations['variant'].apply(
+        lambda x: textwrap.fill(' -> '.join(map(str, x)), width=50) # 'width' controla o comprimento da linha
+    )
+    
+    # 2. Aumentar o tamanho da figura para dar espaço aos labels maiores
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # 3. Usar a nova coluna com o texto quebrado ('variant_str_wrapped') no eixo Y
+    sns.barplot(x='avg_duration_hours', y='variant_str_wrapped',
+                data=variant_durations.astype({'avg_duration_hours':'float'}),
+                ax=ax, hue='variant_str_wrapped', legend=False, palette='plasma')
+    
+    # 4. Aumentar o tamanho da fonte dos labels do eixo Y
+    ax.tick_params(axis='y', labelsize=10)
+    # --- FIM DA ALTERAÇÃO ---
+    
+    ax.set_title('Duração Média das 10 Variantes Mais Comuns')
+    ax.set_ylabel('Variante do Processo') # Adicionar um label descritivo
+    ax.set_xlabel('Duração Média (horas)') # Adicionar um label descritivo
+    fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
-
     # 6. ABORDAGEM DEFINITIVA PARA ANÁLISE DE ALINHAMENTOS (usa amostra de 50 se os dados forem grandes)
     log_df_para_alinhar = pm4py.convert_to_dataframe(log_full_pm4py)
     num_cases = log_df_para_alinhar['case:concept:name'].nunique()
