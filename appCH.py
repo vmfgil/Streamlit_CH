@@ -1853,7 +1853,7 @@ def dashboard_page():
             create_card("Top Recursos por Tempo de Espera Gerado", '<i class="bi bi-sign-stop"></i>', chart_bytes=plots_pre.get('bottleneck_by_resource'))
             create_card("Custo Real vs. Atraso", '<i class="bi bi-cash-stack"></i>', chart_bytes=plots_eda.get('plot_18'))
             create_card("Nº de Recursos vs. Custo Total", '<i class="bi bi-people-fill"></i>', chart_bytes=plots_eda.get('plot_20'))
-            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'))
+            
         with c2:
             create_card("Tempo Médio de Execução por Atividade", '<i class="bi bi-hammer"></i>', chart_bytes=plots_pre.get('activity_service_times'))
             create_card("Espera vs. Execução (Dispersão)", '<i class="bi bi-search"></i>', chart_bytes=plots_pre.get('wait_vs_service_scatter'))
@@ -1861,9 +1861,20 @@ def dashboard_page():
             create_card("Top 10 Handoffs por Tempo de Espera", '<i class="bi bi-pause-circle"></i>', chart_bytes=plots_pre.get('top_handoffs'))
             create_card("Rate Horário Médio vs. Atraso", '<i class="bi bi-alarm"></i>', chart_bytes=plots_eda.get('plot_19'))
             create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'))
+
+        # --- INÍCIO DA ALTERAÇÃO ---
+        # O cartão "Análise de Tempo entre Marcos" passa a ocupar uma linha inteira para melhor visualização
         if 'milestone_time_analysis_plot' in plots_post:
             create_card("Análise de Tempo entre Marcos do Processo", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'))
-        create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
+        
+        # Nova linha de colunas para colocar os cartões lado a lado, como pedido
+        c3, c4 = st.columns(2)
+        with c3:
+            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'))
+        with c4:
+            create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
+        # --- FIM DA ALTERAÇÃO ---
+            
         create_card("Matriz de Tempo de Espera entre Atividades (horas)", '<i class="bi bi-grid-3x3-gap"></i>', chart_bytes=plots_post.get('waiting_time_matrix_plot'))
 
     elif st.session_state.current_section == "fluxo":
