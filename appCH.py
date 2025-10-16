@@ -384,7 +384,7 @@ def run_pre_mining_analysis(dfs):
     sns.barplot(x='frequency', y='variant_str_wrapped', data=data_plot_freq, ax=ax, 
                 orient='h', hue='variant_str_wrapped', legend=False, palette='coolwarm')
     
-    ax.tick_params(axis='y', labelsize=8)
+    ax.tick_params(axis='y', labelsize=5)
     ax.set_title("Top 10 Variantes de Processo por Frequência")
     ax.set_xlabel("Frequência (Nº de Casos)")
     ax.set_ylabel("Variante do Processo")
@@ -693,7 +693,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
                 ax=ax, hue='variant_str_wrapped', legend=False, palette='plasma')
     
     # Diminuir ainda mais o tamanho da fonte
-    ax.tick_params(axis='y', labelsize=8) 
+    ax.tick_params(axis='y', labelsize=5) 
     
     ax.set_title('Duração Média das 10 Variantes Mais Comuns')
     ax.set_ylabel('Variante do Processo')
