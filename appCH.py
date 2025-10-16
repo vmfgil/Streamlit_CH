@@ -870,6 +870,18 @@ def run_eda_analysis(dfs):
     df_alloc_costs = df_resource_allocations.merge(df_resources, on='resource_id')
     df_alloc_costs['cost_of_work'] = df_alloc_costs['hours_worked'] * df_alloc_costs['cost_per_hour']
 
+    # --- CORREÇÃO DEFINITIVA ---
+    # Este bloco, que existe na outra função, estava em falta aqui.
+    project_aggregates = df_alloc_costs.groupby('project_id').agg(
+        total_actual_cost=('cost_of_work', 'sum'),
+        avg_hourly_rate=('cost_per_hour', 'mean'),
+        num_resources=('resource_id', 'nunique')
+    ).reset_index()
+    
+    df_projects = df_projects.merge(project_aggregates, on='project_id', how='left')
+    df_projects['total_actual_cost'] = df_projects['total_actual_cost'].fillna(0)
+    # --- FIM DA CORREÇÃO ---
+    
     df_projects['cost_diff'] = df_projects['total_actual_cost'] - df_projects['budget_impact']
     df_projects['cost_per_day'] = df_projects['total_actual_cost'] / df_projects['actual_duration_days'].replace(0, np.nan)
 
