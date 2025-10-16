@@ -665,29 +665,30 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     variants_df['duration_hours'] = (variants_df['end_timestamp'] - variants_df['start_timestamp']).dt.total_seconds() / 3600
     variant_durations = variants_df.groupby('variant').agg(count=('case:concept:name', 'count'), avg_duration_hours=('duration_hours', 'mean')).reset_index().sort_values(by='count', ascending=False).head(10)
     
-    # --- INÍCIO DA ALTERAÇÃO ---
-    # 1. Criar o texto completo da variante e usar textwrap para quebrar em múltiplas linhas
+    # --- INÍCIO DA NOVA CORREÇÃO ---
+    # 1. Quebrar o texto em linhas mais compridas, pois o gráfico será mais largo
     variant_durations['variant_str_wrapped'] = variant_durations['variant'].apply(
-        lambda x: textwrap.fill(' -> '.join(map(str, x)), width=50) # 'width' controla o comprimento da linha
+        lambda x: textwrap.fill(' -> '.join(map(str, x)), width=80) # Aumentado de 50 para 80
     )
     
-    # 2. Aumentar o tamanho da figura para dar espaço aos labels maiores
-    fig, ax = plt.subplots(figsize=(10, 8))
+    # 2. Ajustar o aspect ratio da figura para ser mais larga
+    fig, ax = plt.subplots(figsize=(12, 8))
     
-    # 3. Usar a nova coluna com o texto quebrado ('variant_str_wrapped') no eixo Y
+    # 3. Usar a nova coluna com o texto quebrado
     sns.barplot(x='avg_duration_hours', y='variant_str_wrapped',
                 data=variant_durations.astype({'avg_duration_hours':'float'}),
                 ax=ax, hue='variant_str_wrapped', legend=False, palette='plasma')
     
-    # 4. Aumentar o tamanho da fonte dos labels do eixo Y
-    ax.tick_params(axis='y', labelsize=10)
-    # --- FIM DA ALTERAÇÃO ---
+    # 4. Diminuir o tamanho da fonte dos labels do eixo Y
+    ax.tick_params(axis='y', labelsize=9)
+    # --- FIM DA NOVA CORREÇÃO ---
     
     ax.set_title('Duração Média das 10 Variantes Mais Comuns')
-    ax.set_ylabel('Variante do Processo') # Adicionar um label descritivo
-    ax.set_xlabel('Duração Média (horas)') # Adicionar um label descritivo
+    ax.set_ylabel('Variante do Processo')
+    ax.set_xlabel('Duração Média (horas)')
     fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
+    
     # 6. ABORDAGEM DEFINITIVA PARA ANÁLISE DE ALINHAMENTOS (usa amostra de 50 se os dados forem grandes)
     log_df_para_alinhar = pm4py.convert_to_dataframe(log_full_pm4py)
     num_cases = log_df_para_alinhar['case:concept:name'].nunique()
@@ -1937,9 +1938,12 @@ def dashboard_page():
         with c2:
             create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'))
             create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
+        # O gráfico de duração de variantes passa para largura total para melhor legibilidade
+        create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
+
+        # Os restantes cartões mantêm-se na estrutura de duas colunas
         c3, c4 = st.columns(2)
         with c3:
-            create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
             create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'))
             create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'))
             create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'))
