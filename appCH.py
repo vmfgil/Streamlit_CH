@@ -1986,14 +1986,12 @@ def dashboard_page():
         with c2:
             create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'))
         
-        # --- CORREÇÃO DE LAYOUT E ORDEM ---
-        # Gráficos de Variantes, agora em largura total e na ordem correta
+        # Gráficos de Variantes em largura total para legibilidade
         create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
         create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
         create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
-        # --- FIM DA CORREÇÃO ---
 
-        # Restantes cartões voltam para a estrutura de duas colunas
+        # Restantes cartões na estrutura de duas colunas
         c3, c4 = st.columns(2)
         with c3:
             create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'))
@@ -2005,11 +2003,18 @@ def dashboard_page():
             create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'))
             create_card("Distribuição de Tarefas por Prioridade", '<i class="bi bi-award"></i>', chart_bytes=plots_eda.get('plot_09'))
             create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'))
-            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
-            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
 
-        # Gráfico final de largura total
-        create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
+        # --- CORREÇÃO DE LAYOUT PARA OS GRÁFICOS DE COMPLEXIDADE E DEPENDÊNCIAS ---
+        c5, c6 = st.columns(2)
+        with c5:
+            # Gráfico 1 de complexidade, agora na coluna da esquerda
+            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
+            # Gráfico de dependências volta para uma coluna de meia largura
+            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
+        with c6:
+            # Gráfico 2 de complexidade, agora na coluna da direita
+            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
+        # --- FIM DA CORREÇÃO ---
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
