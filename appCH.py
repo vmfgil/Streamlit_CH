@@ -881,6 +881,12 @@ def run_eda_analysis(dfs):
     df_projects = df_projects.merge(project_aggregates, on='project_id', how='left')
     df_projects['total_actual_cost'] = df_projects['total_actual_cost'].fillna(0)
     # --- FIM DA CORREÇÃO ---
+
+    # --- NOVA CORREÇÃO: Restaurar a coluna 'dependency_count' ---
+    dep_counts = df_dependencies.groupby('project_id').size().reset_index(name='dependency_count')
+    df_projects = df_projects.merge(dep_counts, on='project_id', how='left')
+    df_projects['dependency_count'] = df_projects['dependency_count'].fillna(0)
+    # --- FIM DA NOVA CORREÇÃO ---
     
     df_projects['cost_diff'] = df_projects['total_actual_cost'] - df_projects['budget_impact']
     df_projects['cost_per_day'] = df_projects['total_actual_cost'] / df_projects['actual_duration_days'].replace(0, np.nan)
