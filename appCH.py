@@ -338,7 +338,7 @@ def run_pre_mining_analysis(dfs):
     
     resource_activity_matrix_pivot = df_full_context.pivot_table(index='resource_name', columns='task_name', values='hours_worked', aggfunc='sum').fillna(0)
     
-    fig, ax = plt.subplots(figsize=(12, 8)); sns.heatmap(resource_activity_matrix_pivot, cmap='Blues', annot=True, fmt=".0f", ax=ax, annot_kws={"size": 8}, linewidths=.5, linecolor='#374151'); ax.set_title("Heatmap de Esforço por Recurso e Atividade")
+    fig, ax = plt.subplots(figsize=(12, 8)); sns.heatmap(resource_activity_matrix_pivot, cmap='Blues', annot=True, fmt=".0f", ax=ax, annot_kws={"size": 8}, linewidths=.5, linecolor='#374151'); ax.set_title("Heatmap de Esforço por Top 30 Recursos e Atividade")
     plots['resource_activity_matrix'] = convert_fig_to_bytes(fig)
     
     handoff_counts = Counter((trace[i]['org:resource'], trace[i+1]['org:resource']) for trace in event_log_pm4py for i in range(len(trace) - 1) if 'org:resource' in trace[i] and 'org:resource' in trace[i+1] and trace[i]['org:resource'] != trace[i+1]['org:resource'])
@@ -562,41 +562,30 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     G = nx.DiGraph();
     for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
 
-    if G.nodes():
-        # 1. Layout: Mantemos o spring_layout com 'k' baixo para afastar os nós
-        pos = nx.spring_layout(G, k=0.5, iterations=50); 
-        
-        weights = [G[u][v]['weight'] for u,v in G.edges()]; 
-        
-        # 2. Desenho: Aumentado node_size, Borda, e Reduzida a Grossura da Linha
-        # REDUZIR PESO DA ARESTA: Multiplicador alterado de 0.5 para 0.1
-        nx.draw(G, 
-                pos, 
-                with_labels=True, 
-                node_color='#2563EB', 
-                node_size=2000, # AUMENTADO para 2000 para garantir que domina
-                edgecolors='white', 
-                linewidths=2, 
-                edge_color='#E5E7EB', 
-                width=[w*0.1 for w in weights], # ALTERADO: Multiplicador de peso de 0.5 para 0.1 (Linhas 5x mais finas)
-                ax=ax_net, 
-                font_size=8, 
-                font_color='#E5E7EB',
-                alpha=1.0,
-                connectionstyle='arc3,rad=0.1', 
-                labels={node: node for node in G.nodes()})
-        
-        # 3. Etiquetas: Aumentado o contraste das caixas amarelas
-        nx.draw_networkx_edge_labels(G, 
-                                        pos, 
-                                        edge_labels=nx.get_edge_attributes(G, 'weight'), 
-                                        ax=ax_net, 
-                                        font_color='#FBBF24', 
-                                        font_size=7,
-                                        # Bbox com alpha (opacidade) reduzido para destacar mais a cor sólida
-                                        bbox={'facecolor':'#1E293B', 'alpha':0.9, 'edgecolor':'#FBBF24'}); # ALTERADO: Adicionado 'edgecolor' amarelo
-        
-        ax_net.set_title('Rede Social de Recursos (Handover Network)')
+        # Filtrar o grafo para mostrar apenas os nós mais relevantes
+    recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
+    node_degrees = dict(G.degree())
+    recursos_ordenados = sorted(node_degrees, key=node_degrees.get, reverse=True)
+    top_recursos = set(recursos_ordenados[:30])
+    nos_para_manter = top_recursos.union(recursos_importantes)
+    G_filtrado = G.subgraph(nos_para_manter).copy()
+    
+    # Desenhar o grafo filtrado
+    if G_filtrado.nodes():
+        pos = nx.spring_layout(G_filtrado, k=0.8, iterations=50, seed=42)
+        weights = [G_filtrado[u][v]['weight'] for u, v in G_filtrado.edges()]
+    
+        nx.draw(G_filtrado, pos, with_labels=True, node_color='#0d6efd', node_size=2500,
+                edgecolors='#dee2e6', linewidths=1, edge_color='#6c757d',
+                width=[w * 0.2 for w in weights], ax=ax_net, font_size=9,
+                font_color='black', alpha=1.0, connectionstyle='arc3,rad=0.1',
+                labels={node: str(node).replace(" ", "\n") for node in G_filtrado.nodes()})
+    
+        nx.draw_networkx_edge_labels(G_filtrado, pos, edge_labels=nx.get_edge_attributes(G_filtrado, 'weight'),
+                                     ax=ax_net, font_color='#dc3545', font_size=8,
+                                     bbox={'facecolor': 'white', 'alpha': 0.6, 'edgecolor': 'none'})
+    
+        ax_net.set_title('Rede Social de Recursos (Top 30 por Conexões + Principais)')
         plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
 
@@ -609,10 +598,36 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         plots['skill_vs_performance_adv'] = convert_fig_to_bytes(fig)
         
         resource_role_counts = _df_full_context.groupby(['resource_name', 'skill_level']).size().reset_index(name='count')
-        G_bipartite = nx.Graph(); resources_nodes = resource_role_counts['resource_name'].unique(); roles_nodes = resource_role_counts['skill_level'].unique(); G_bipartite.add_nodes_from(resources_nodes, bipartite=0); G_bipartite.add_nodes_from(roles_nodes, bipartite=1)
-        for _, row in resource_role_counts.iterrows(): G_bipartite.add_edge(row['resource_name'], row['skill_level'], weight=row['count'])
-        fig, ax = plt.subplots(figsize=(12, 10)); pos = nx.bipartite_layout(G_bipartite, resources_nodes); nx.draw(G_bipartite, pos, with_labels=True, node_color=['#2563EB' if node in resources_nodes else '#FBBF24' for node in G_bipartite.nodes()], node_size=2000, ax=ax, font_size=8, edge_color='#374151', labels={node: node for node in G_bipartite.nodes()})
-        edge_labels = nx.get_edge_attributes(G_bipartite, 'weight'); nx.draw_networkx_edge_labels(G_bipartite, pos, edge_labels=edge_labels, ax=ax, font_color='#06B6D4'); ax.set_title('Rede de Recursos por Função')
+
+        # Filtrar o dataframe antes de construir o grafo
+        recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
+        recursos_ordenados_df = resource_role_counts.sort_values('count', ascending=False)
+        top_30_recursos = set(recursos_ordenados_df['resource_name'].head(30))
+        recursos_para_manter = top_30_recursos.union(recursos_importantes)
+        df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(recursos_para_manter)]
+        
+        # Construir o grafo bipartido a partir dos dados JÁ FILTRADOS
+        G_bipartite = nx.Graph()
+        resources_nodes = df_filtrado['resource_name'].unique()
+        roles_nodes = df_filtrado['skill_level'].unique()
+        
+        G_bipartite.add_nodes_from(resources_nodes, bipartite=0)
+        G_bipartite.add_nodes_from(roles_nodes, bipartite=1)
+        for _, row in df_filtrado.iterrows():
+            G_bipartite.add_edge(row['resource_name'], row['skill_level'], weight=row['count'])
+        
+        # Desenhar o grafo filtrado
+        fig, ax = plt.subplots(figsize=(12, max(8, len(resources_nodes) * 0.3))) # Altura dinâmica
+        pos = nx.bipartite_layout(G_bipartite, resources_nodes)
+        
+        nx.draw(G_bipartite, pos, with_labels=True,
+                node_color=['#0d6efd' if node in resources_nodes else '#ffc107' for node in G_bipartite.nodes()],
+                node_size=2500, ax=ax, font_size=9, edge_color='#dee2e6', font_color='black',
+                labels={node: str(node).replace(" ", "\n") for node in G_bipartite.nodes()})
+        
+        edge_labels = nx.get_edge_attributes(G_bipartite, 'weight')
+        nx.draw_networkx_edge_labels(G_bipartite, pos, edge_labels=edge_labels, ax=ax, font_color='#dc3545', font_size=8)
+        ax.set_title('Rede de Recursos por Função (Top 30 por Atividade + Principais)')
         plots['resource_network_bipartite'] = convert_fig_to_bytes(fig)
 
     variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('time:timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
@@ -707,7 +722,21 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     
     resource_efficiency = _df_full_context.groupby('resource_name').agg(total_hours_worked=('hours_worked', 'sum'), total_tasks_completed=('task_name', 'count')).reset_index()
     resource_efficiency['avg_hours_per_task'] = resource_efficiency['total_hours_worked'] / resource_efficiency['total_tasks_completed']
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=resource_efficiency.sort_values(by='avg_hours_per_task'), x='avg_hours_per_task', y='resource_name', orient='h', ax=ax, hue='resource_name', legend=False, palette='viridis'); ax.set_title('Métricas de Eficiência Individual por Recurso'); fig.tight_layout()
+    
+    # --- INÍCIO DA ALTERAÇÃO ---
+    # 1. Contar o número de recursos para tornar a altura do gráfico dinâmica
+    n_recursos = len(resource_efficiency)
+    
+    # 2. Calcular a altura da figura (ex: 0.4 polegadas por recurso, com uma altura mínima de 6)
+    altura_figura = max(6, n_recursos * 0.4)
+    
+    # 3. Usar a altura dinâmica ao criar a figura
+    fig, ax = plt.subplots(figsize=(10, altura_figura))
+    # --- FIM DA ALTERAÇÃO ---
+    
+    sns.barplot(data=resource_efficiency.sort_values(by='avg_hours_per_task'), x='avg_hours_per_task', y='resource_name', orient='h', ax=ax, hue='resource_name', legend=False, palette='viridis')
+    ax.set_title('Métricas de Eficiência Individual por Recurso')
+    fig.tight_layout()
     plots['resource_efficiency_plot'] = convert_fig_to_bytes(fig)
 
     df_tasks_sorted['sojourn_time_hours'] = df_tasks_sorted['waiting_time_days'] * 24
@@ -846,7 +875,7 @@ def run_eda_analysis(dfs):
     plt.xticks(rotation=45, ha='right')
     plots['plot_12'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_full_context.groupby('resource_name')['days_diff'].mean().sort_values(ascending=False).reset_index().head(20), y='resource_name', x='days_diff', ax=ax, palette='cividis'); ax.set_title('Atraso Médio por Recurso')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.barplot(data=df_full_context.groupby('resource_name')['days_diff'].mean().sort_values(ascending=False).reset_index().head(20), y='resource_name', x='days_diff', ax=ax, palette='cividis'); ax.set_title('Top 20 Recursos com Maior Atraso Médio (dias)')
     plots['plot_14'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='cost_per_day', kde=True, color='teal', ax=ax); ax.set_title('Distribuição do Custo por Dia (Eficiência)')
@@ -1770,10 +1799,20 @@ def dashboard_page():
             create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'))
             create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'))
             create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'))
-        if 'skill_vs_performance_adv' in plots_post:
-            create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
-        if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
+        c3, c4 = st.columns(2)
+
+        with c3:
+            # Colocar o gráfico "Skill vs Performance" na coluna da esquerda
+            if 'skill_vs_performance_adv' in plots_post:
+                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+        
+        with c4:
+            # Colocar o gráfico "Rede de Recursos" na coluna da direita
+            if 'resource_network_bipartite' in plots_post:
+                create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
+ 
+
+        # Manter os gráficos grandes em largura total (isto está correto)
         create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'))
         create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'))
 
