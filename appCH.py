@@ -1975,26 +1975,31 @@ def dashboard_page():
     elif st.session_state.current_section == "fluxo":
         st.subheader("5. Fluxo e Conformidade")
 
+        # Gráficos de Modelo (largura total)
         create_card("Modelo - Inductive Miner", '<i class="bi bi-compass"></i>', chart_bytes=plots_post.get('model_inductive_petrinet'))
         create_card("Modelo - Heuristics Miner", '<i class="bi bi-gear"></i>', chart_bytes=plots_post.get('model_heuristic_petrinet'))
 
+        # Métricas lado a lado
         c1, c2 = st.columns(2)
         with c1:
             create_card("Métricas (Inductive Miner)", '<i class="bi bi-clipboard-data"></i>', chart_bytes=plots_post.get('metrics_inductive'))
         with c2:
             create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'))
-            create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
-        # O gráfico de duração de variantes passa para largura total para melhor legibilidade
+        
+        # --- CORREÇÃO DE LAYOUT E ORDEM ---
+        # Gráficos de Variantes, agora em largura total e na ordem correta
+        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
         create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
+        create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
+        # --- FIM DA CORREÇÃO ---
 
-        # Os restantes cartões mantêm-se na estrutura de duas colunas
+        # Restantes cartões voltam para a estrutura de duas colunas
         c3, c4 = st.columns(2)
         with c3:
             create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'))
             create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'))
             create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'))
             create_card("Centralidade dos Tipos de Tarefa", '<i class="bi bi-arrows-angle-contract"></i>', chart_bytes=plots_eda.get('plot_25'))
-            create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-journal-minus"></i>', chart_bytes=plots_eda.get('plot_28'))
         with c4:
             create_card("Score de Conformidade ao Longo do Tempo", '<i class="bi bi-check2-circle"></i>', chart_bytes=plots_post.get('conformance_over_time_plot'))
             create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'))
@@ -2002,13 +2007,9 @@ def dashboard_page():
             create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'))
             create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
             create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
-        # --- CORREÇÃO FINAL DE LAYOUT ---
-            # Gráfico de frequência passa a ocupar a largura total
-            create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
-            
-            # Gráfico de dependências também fica em largura total para melhor visualização
-            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
-            # --- FIM DA CORREÇÃO FINAL ---)
+
+        # Gráfico final de largura total
+        create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
