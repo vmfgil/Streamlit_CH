@@ -1485,7 +1485,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     # Gráfico da Direita (Custo)
     axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
     axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('--- TESTE ---')
+    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)')
     axes[1].set_xlabel('ID do Processo')
     axes[1].set_ylabel('Custo (€)')
     axes[1].set_xticks(index_test)
