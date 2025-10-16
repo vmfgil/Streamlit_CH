@@ -1187,9 +1187,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return tuple(sorted(list(actions)))
 
 
+        # [VERSÃO DE CORREÇÃO FINAL E DEFINITIVA]
         def reset(self, project_id):
-            # --- INÍCIO DA SECÇÃO CORRIGIDA ---
-
             # Reinicialização completa de todas as variáveis de estado da simulação
             self.day_count = 0
             self.current_cost = 0.0
@@ -1198,62 +1197,47 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.resources_used_today = set()
             self.daily_history = []
             self.episode_logs = []
-
+            
             # Garantir project_id com tipo consistente (string) e guardar contexto do projecto
             proj_id_str = str(project_id)
             self.current_project_id = proj_id_str
-
+            
             # Carregar info do projecto (filtro seguro por string)
             project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == proj_id_str].iloc[0]
             self.current_risk_rating = project_info.get('risk_rating', None)
             self.current_date = project_info.get('start_date', None)
-
+            
             # Carregar tasks do projecto usando comparação por string para evitar mismatch de tipos
             project_tasks = self.df_tasks[self.df_tasks['project_id'].astype(str) == proj_id_str].sort_values('task_id')
             self.tasks_to_do_count = len(project_tasks)
-
+            
             # Tornar leitura de budget/custo robusta
             self.total_estimated_budget = project_info.get('total_actual_cost', None)
-
+            
             # Filtrar dependências por project_id usando comparação por string e garantir chaves string
             project_dependencies = self.df_dependencies[self.df_dependencies['project_id'].astype(str) == proj_id_str]
             self.task_dependencies = {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in project_dependencies.iterrows()}
-
-            # LÓGICA DE CÁLCULO DE ESFORÇO CORRIGIDA:
-            # Primeiro, vamos buscar as horas reais trabalhadas do ficheiro de alocações.
-            # Esta é a fonte de dados mais fiável.
-            alloc_df = getattr(self, 'df_resource_allocations', None)
-            task_alloc_hours = {}
-            if alloc_df is not None and not alloc_df.empty:
-                tmp_alloc = alloc_df[alloc_df['project_id'].astype(str) == proj_id_str].copy()
-                if not tmp_alloc.empty:
-                    tmp_alloc['task_id'] = tmp_alloc['task_id'].astype(str)
-                    tmp_alloc['hours_worked'] = pd.to_numeric(tmp_alloc['hours_worked'], errors='coerce').fillna(0)
-                    task_alloc_hours = tmp_alloc.groupby('task_id')['hours_worked'].sum().to_dict()
-                    task_alloc_hours = {str(k): v for k, v in task_alloc_hours.items()}
-
-            # Definimos um número fixo e fiável de horas de trabalho por dia.
+            
+            # --- LÓGICA DE CÁLCULO DE ESFORÇO SIMPLIFICADA E À PROVA DE FALHAS ---
+            # Usaremos a única fonte de verdade que é garantida pelo seu script gerador:
+            # a coluna 'estimated_effort' que contém o esforço em DIAS.
+            
             HOURS_PER_DAY_STANDARD = 8
 
-            # Construímos o estado das tarefas com o esforço SEMPRE em HORAS.
             self.tasks_state = {}
             for _, task in project_tasks.iterrows():
                 tid = str(task.get('task_id'))
                 
-                # 1. Tenta usar as horas reais alocadas, que são a fonte mais fiável.
-                est_hours = task_alloc_hours.get(tid)
+                try:
+                    # Lê o 'estimated_effort', que sabemos que o seu gerador criou em DIAS.
+                    planned_days = float(task.get('estimated_effort', 0) or 0)
+                except (ValueError, TypeError):
+                    planned_days = 0.0
+                
+                # Converte os dias planeados para horas de trabalho. Esta é a única lógica.
+                est_hours = planned_days * HOURS_PER_DAY_STANDARD
 
-                # 2. Se não houver horas alocadas, recorre ao esforço planeado (que está em dias) e converte-o.
-                if est_hours is None or est_hours <= 0:
-                    try:
-                        # Lê o 'estimated_effort' que sabemos estar em DIAS.
-                        planned_days = float(task.get('estimated_effort', 0) or 0)
-                    except (ValueError, TypeError):
-                        planned_days = 0.0
-                    # Converte os dias planeados para horas de trabalho.
-                    est_hours = planned_days * HOURS_PER_DAY_STANDARD
-
-                # 3. Garante que cada tarefa tem pelo menos 1 hora de esforço para evitar problemas.
+                # Garante que cada tarefa tem um esforço mínimo para evitar divisões por zero.
                 if est_hours <= 0:
                     est_hours = 1.0
 
@@ -1268,10 +1252,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             # O esforço total estimado do projeto é agora a soma correta dos esforços em horas.
             self.total_estimated_effort = sum(t['estimated_effort'] for t in self.tasks_state.values())
             
-            # --- FIM DA SECÇÃO CORRIGIDA ---
-            
             return self.get_state()
-
+            
         def get_state(self):
             progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values()); progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
             budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
