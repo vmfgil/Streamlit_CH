@@ -870,19 +870,6 @@ def run_eda_analysis(dfs):
     df_alloc_costs = df_resource_allocations.merge(df_resources, on='resource_id')
     df_alloc_costs['cost_of_work'] = df_alloc_costs['hours_worked'] * df_alloc_costs['cost_per_hour']
 
-    dep_counts = df_dependencies.groupby('project_id').size().reset_index(name='dependency_count')
-    task_counts = df_tasks.groupby('project_id').size().reset_index(name='task_count')
-    project_complexity = pd.merge(dep_counts, task_counts, on='project_id', how='outer').fillna(0)
-    project_complexity['complexity_ratio'] = (project_complexity['dependency_count'] / project_complexity['task_count']).fillna(0)
-
-    project_aggregates = df_alloc_costs.groupby('project_id').agg(
-        total_actual_cost=('cost_of_work', 'sum'),
-        avg_hourly_rate=('cost_per_hour', 'mean'),
-        num_resources=('resource_id', 'nunique')
-    ).reset_index()
-
-    df_projects = df_projects.merge(project_aggregates, on='project_id', how='left')
-    df_projects = df_projects.merge(project_complexity, on='project_id', how='left')
     df_projects['cost_diff'] = df_projects['total_actual_cost'] - df_projects['budget_impact']
     df_projects['cost_per_day'] = df_projects['total_actual_cost'] / df_projects['actual_duration_days'].replace(0, np.nan)
 
@@ -890,8 +877,30 @@ def run_eda_analysis(dfs):
     df_full_context = df_full_context.merge(df_resource_allocations.drop(columns=['project_id'], errors='ignore'), on='task_id')
     df_full_context = df_full_context.merge(df_resources, on='resource_id')
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
+
+    # ... (linha que cria df_full_context)
+    df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
     
-    tables['stats_table'] = df_projects[['actual_duration_days', 'days_diff', 'budget_impact', 'total_actual_cost', 'cost_diff', 'num_resources', 'avg_hourly_rate']].describe().round(2)
+    # --- INÍCIO DA NOVA LÓGICA DE COMPLEXIDADE ---
+    # 1. Mapear o Risco para um valor numérico
+    risk_map = {'A': 1, 'B': 2, 'C': 3, 'D': 4}
+    df_full_context['risk_score'] = df_full_context['risk_rating'].map(risk_map)
+    
+    # 2. Calcular o número de funções únicas e o risco por projeto
+    project_complexity_metrics = df_full_context.groupby('project_id').agg(
+        num_unique_roles=('resource_type', 'nunique'),
+        risk_score=('risk_score', 'first') # O risco é o mesmo para todo o projeto
+    ).reset_index()
+    
+    # 3. Criar o novo Índice de Complexidade (Risco * Nº de Funções)
+    project_complexity_metrics['complexity_score'] = project_complexity_metrics['num_unique_roles'] * project_complexity_metrics['risk_score']
+    
+    # 4. Juntar o novo índice ao dataframe principal de projetos
+    df_projects = df_projects.merge(project_complexity_metrics[['project_id', 'complexity_score']], on='project_id', how='left')
+    df_projects['complexity_score'] = df_projects['complexity_score'].fillna(0)
+    # --- FIM DA NOVA LÓGICA DE COMPLEXIDADE ---   
+    tables['stats_table'] = df_projects[['actual_duration_days', 'days_diff', 'budget_impact', 'total_actual_cost', 'cost_diff', 'num_resources', 'avg_hourly_rate', 'complexity_score']].describe().round(2)
+    
 
     # --- Geração dos Gráficos (da célula 6 do notebook) ---
     
@@ -977,7 +986,7 @@ def run_eda_analysis(dfs):
         fig, ax = plt.subplots(figsize=(10, 6)); sns.violinplot(data=df_skill_delay, x='skill_level', y='days_diff', ax=ax, palette='muted'); ax.set_title('Atraso por Nível de Competência')
         plots['plot_23'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_ratio', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Processos')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_score', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Processos')
     plots['plot_24'] = convert_fig_to_bytes(fig)
     
     # ======= Normalizar tipos antes do merge (corrige ValueError int64 vs object) =======
@@ -1007,7 +1016,7 @@ def run_eda_analysis(dfs):
         fig, ax = plt.subplots(figsize=(14, 9)); nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, ax=ax); ax.set_title(f'Grafo de Dependências: Processo {PROJECT_ID_EXAMPLE}')
         plots['plot_26'] = convert_fig_to_bytes(fig)
     
-    fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='complexity_ratio', y='days_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Complexidade e Atraso')
+    fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='complexity_score', y='days_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Complexidade e Atraso')
     plots['plot_27'] = convert_fig_to_bytes(fig)
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='dependency_count', y='cost_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Dependências e Desvio de Custo')
