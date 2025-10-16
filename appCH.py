@@ -374,7 +374,23 @@ def run_pre_mining_analysis(dfs):
     variant_analysis['percentage'] = (variant_analysis['frequency'] / variant_analysis['frequency'].sum()) * 100
     tables['variants_table'] = variant_analysis.head(10)
     
-    fig, ax = plt.subplots(figsize=(12, 6)); sns.barplot(x='frequency', y='variant_str', data=variant_analysis.head(10), ax=ax, orient='h', hue='variant_str', legend=False, palette='coolwarm'); ax.set_title("Top 10 Variantes de Processo por Frequência")
+    # --- CORREÇÃO PARA O GRÁFICO DE FREQUÊNCIA ---
+    data_plot_freq = variant_analysis.head(10)
+    data_plot_freq['variant_str_wrapped'] = data_plot_freq['variant_str'].apply(
+        lambda x: textwrap.fill(x, width=90)
+    )
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    sns.barplot(x='frequency', y='variant_str_wrapped', data=data_plot_freq, ax=ax, 
+                orient='h', hue='variant_str_wrapped', legend=False, palette='coolwarm')
+    
+    ax.tick_params(axis='y', labelsize=8)
+    ax.set_title("Top 10 Variantes de Processo por Frequência")
+    ax.set_xlabel("Frequência (Nº de Casos)")
+    ax.set_ylabel("Variante do Processo")
+    fig.tight_layout()
+    # --- FIM DA CORREÇÃO ---
+    
     plots['variants_frequency'] = convert_fig_to_bytes(fig)
     
     # --- INÍCIO DA CORREÇÃO: Lógica de Deteção de Rework Melhorada ---
@@ -665,23 +681,26 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     variants_df['duration_hours'] = (variants_df['end_timestamp'] - variants_df['start_timestamp']).dt.total_seconds() / 3600
     variant_durations = variants_df.groupby('variant').agg(count=('case:concept:name', 'count'), avg_duration_hours=('duration_hours', 'mean')).reset_index().sort_values(by='count', ascending=False).head(10)
     
-    # --- INÍCIO DA NOVA CORREÇÃO ---
-    # 1. Quebrar o texto em linhas mais compridas, pois o gráfico será mais largo
+    # --- CORREÇÃO FINAL PARA O GRÁFICO DE DURAÇÃO ---
     variant_durations['variant_str_wrapped'] = variant_durations['variant'].apply(
-        lambda x: textwrap.fill(' -> '.join(map(str, x)), width=80) # Aumentado de 50 para 80
+        lambda x: textwrap.fill(' -> '.join(map(str, x)), width=90) # Aumentado para 90
     )
     
-    # 2. Ajustar o aspect ratio da figura para ser mais larga
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    # 3. Usar a nova coluna com o texto quebrado
     sns.barplot(x='avg_duration_hours', y='variant_str_wrapped',
                 data=variant_durations.astype({'avg_duration_hours':'float'}),
                 ax=ax, hue='variant_str_wrapped', legend=False, palette='plasma')
     
-    # 4. Diminuir o tamanho da fonte dos labels do eixo Y
-    ax.tick_params(axis='y', labelsize=9)
-    # --- FIM DA NOVA CORREÇÃO ---
+    # Diminuir ainda mais o tamanho da fonte
+    ax.tick_params(axis='y', labelsize=8) 
+    
+    ax.set_title('Duração Média das 10 Variantes Mais Comuns')
+    ax.set_ylabel('Variante do Processo')
+    ax.set_xlabel('Duração Média (horas)')
+    fig.tight_layout()
+    plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
+    # --- FIM DA CORREÇÃO FINAL ---
     
     ax.set_title('Duração Média das 10 Variantes Mais Comuns')
     ax.set_ylabel('Variante do Processo')
@@ -1983,11 +2002,13 @@ def dashboard_page():
             create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'))
             create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
             create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
-        c5, c6 = st.columns(2)
-        with c5:
-                create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
-        with c6:
+        # --- CORREÇÃO FINAL DE LAYOUT ---
+            # Gráfico de frequência passa a ocupar a largura total
+            create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
+            
+            # Gráfico de dependências também fica em largura total para melhor visualização
             create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
+            # --- FIM DA CORREÇÃO FINAL ---)
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
