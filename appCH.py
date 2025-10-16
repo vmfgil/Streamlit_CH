@@ -11,7 +11,6 @@ import io
 import base64
 import time
 import random
-import threading
 from datetime import timedelta
 
 # Imports de Process Mining (PM4PY)
@@ -1594,38 +1593,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     return plots, tables, logs
 
-# === BACKGROUND WORKER PARA EXECUTAR A ANÁLISE SEM BLOQUEAR A UI ===
-def background_analysis(dfs):
-    """
-    Executa o pipeline de análises (pre -> post -> eda) em background.
-    Guarda os resultados em st.session_state quando terminar.
-    NÃO usa st.* dentro desta função (Thread-safety).
-    """
-    try:
-        plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(dfs)
-        st.session_state.plots_pre_mining = plots_pre
-        st.session_state.tables_pre_mining = tables_pre
-
-        # converter e correr post-mining
-        log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
-        plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
-        st.session_state.plots_post_mining = plots_post
-        st.session_state.metrics = metrics
-
-        # correr EDA
-        plots_eda, tables_eda = run_eda_analysis(dfs)
-        st.session_state.plots_eda = plots_eda
-        st.session_state.tables_eda = tables_eda
-
-        # sinalizar conclusão
-        st.session_state.analysis_run = True
-        st.session_state.analysis_completed = True
-
-    except Exception as e:
-        # Guarda o erro para mostrar depois na UI principal
-        st.session_state.analysis_error = str(e)
-        st.session_state.analysis_completed = True
-        st.session_state.analysis_run = False
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
@@ -1701,50 +1668,21 @@ def settings_page():
         st.subheader("Execução da Análise")
         st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
         if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
+            with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
+                plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(st.session_state.dfs)
+                st.session_state.plots_pre_mining = plots_pre
+                st.session_state.tables_pre_mining = tables_pre
+                log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
+                plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
+                st.session_state.plots_post_mining = plots_post
+                st.session_state.metrics = metrics
+                plots_eda, tables_eda = run_eda_analysis(st.session_state.dfs)
+                st.session_state.plots_eda = plots_eda
+                st.session_state.tables_eda = tables_eda
 
-            # 1) Calcular tempo estimado com base nas tasks
-            num_tasks = len(st.session_state.dfs['tasks'])
-            estimated_time = max(1, num_tasks // 100)
-        
-            # 2) Placeholder para mostrar a contagem
-            placeholder = st.empty()
-        
-            # 3) Contagem regressiva
-            for t in range(estimated_time, 0, -1):
-                placeholder.info(f"⏳ A análise irá demorar aproximadamente {t} segundos...")
-                time.sleep(1)
-        
-            placeholder.info("⏳ A iniciar o processamento...")
-        
-            # 4) EXECUTAR EXACTAMENTE COMO ESTAVA ANTES (SEM THREADS!)
-            plots_pre, tables_pre, event_log, df_projects, df_tasks, df_resources, df_full_context = run_pre_mining_analysis(st.session_state.dfs)
-        
-            # se já fazes post-mining nesta fase, mantém:
-            plots_post, metrics = run_post_mining_analysis(
-                pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log)),
-                df_projects, df_tasks, df_resources, df_full_context
-            )
-        
-            plots_eda, tables_eda = run_eda_analysis(st.session_state.dfs)
-        
-            # 5) Guardar no session_state (se já fazias, mantém)
-            st.session_state.plots_pre_mining = plots_pre
-            st.session_state.tables_pre_mining = tables_pre
-            st.session_state.event_log_pm4py = event_log
-            st.session_state.df_projects = df_projects
-            st.session_state.df_tasks = df_tasks
-            st.session_state.df_resources = df_resources
-            st.session_state.df_full_context = df_full_context
-            st.session_state.plots_post_mining = plots_post
-            st.session_state.metrics = metrics
-            st.session_state.plots_eda = plots_eda
-            st.session_state.tables_eda = tables_eda
-        
-            # 6) Mensagem final (igual dantes)
-            st.success("✅ Análise concluída! Navegue para o Dashboard ou Reinforcement Learning.")
+            st.session_state.analysis_run = True
+            st.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
             st.balloons()
-
-        
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
