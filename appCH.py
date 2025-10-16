@@ -2165,7 +2165,7 @@ def main():
         with st.sidebar:
             st.markdown(f'<h3><i class="bi bi-person-circle"></i> {st.session_state.get("user_name", "Admin")}</h3>', unsafe_allow_html=True)
             st.markdown("---")
-            if st.button("🏠 Process Mining", use_container_width=True):
+            if st.button("🧠 Process Mining", use_container_width=True):
                 st.session_state.current_page = "Dashboard"
                 st.rerun()
             if st.button("🤖 Reinforcement Learning", use_container_width=True):
@@ -2175,7 +2175,7 @@ def main():
                 st.session_state.current_page = "Settings"
                 st.rerun()
             st.markdown("<br><br>", unsafe_allow_html=True)
-            if st.button("🚪 Terminar sessão", use_container_width=True):
+            if st.button(" ⏻ Terminar sessão", use_container_width=True):
                 st.session_state.authenticated = False
                 for key in list(st.session_state.keys()):
                     if key not in ['authenticated']: del st.session_state[key]
