@@ -142,6 +142,10 @@ st.markdown("""
         color: var(--text-color) !important;
         border: 2px solid var(--warning-color) !important;
     }
+    .scrollable-chart-card .card-body {
+    max-height: 500px; /* Define uma altura máxima para o corpo do cartão */
+    overflow-y: auto;  /* Adiciona scroll vertical se o conteúdo (a imagem) for maior */
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -175,12 +179,13 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
-def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False): # mudou 'icon' para 'icon_html'
+def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, scrollable=False):
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
+        card_class = "card scrollable-chart-card" if scrollable else "card"
         st.markdown(f"""
-        <div class="card">
-            <div class="card-header"><h4>{icon_html} {title}</h4></div> <div class="card-body">
+        <div class="{card_class}">
+            <div class="card-header"><h4>{icon_html} {title}</h4></div>
                 <img src="data:image/png;base64,{b64_image}" style="width: 100%; height: auto;">
             </div>
         </div>
@@ -1795,27 +1800,23 @@ def dashboard_page():
         with c2:
             create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'))
             create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'))
-            create_card("Métricas de Eficiência Individual por Recurso", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'))
+            create_card("Métricas de Eficiência Individual por Recurso", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'), scrollable=True)
             create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'))
             create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'))
             create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'))
-        c3, c4 = st.columns(2)
-
-        with c3:
-            # Colocar o gráfico "Skill vs Performance" na coluna da esquerda
-            if 'skill_vs_performance_adv' in plots_post:
-                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+        # --- NOVO BLOCO CORRIGIDO ---
+        # Gráficos que merecem largura total para melhor visualização
         
-        with c4:
-            # Colocar o gráfico "Rede de Recursos" na coluna da direita
-            if 'resource_network_bipartite' in plots_post:
-                create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
- 
+        if 'skill_vs_performance_adv' in plots_post:
+            create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+        
+        if 'resource_network_bipartite' in plots_post:
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
 
-        # Manter os gráficos grandes em largura total (isto está correto)
         create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'))
+        
         create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'))
-
+    
     elif st.session_state.current_section == "gargalos":
         st.subheader("4. Handoffs e Espera")
         create_card("Heatmap de Performance no Processo (Gargalos)", '<i class="bi bi-fire"></i>', chart_bytes=plots_post.get('performance_heatmap'))
