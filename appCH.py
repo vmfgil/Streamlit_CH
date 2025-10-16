@@ -1797,7 +1797,7 @@ def settings_page():
                 st.session_state.tables_eda = tables_eda
 
             st.session_state.analysis_run = True
-            st.success("✅ Análise concluída! Navegue para o 'Dashboard Geral' ou para a página de 'Reinforcement Learning'.")
+            st.success("✅ Análise concluída! Navegue para o 'Process Mining' ou para a página de 'Reinforcement Learning'.")
             st.balloons()
         st.markdown('</div>', unsafe_allow_html=True)
     else:
@@ -1807,7 +1807,7 @@ def settings_page():
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
-    st.title("🏠 Dashboard Geral de Análise de Processos")
+    st.title("🏠 Process Mining")
 
     if st.session_state.get('show_welcome_message', False):
         st.success(f"Bem-vindo, {st.session_state.user_name}!")
@@ -2165,7 +2165,7 @@ def main():
         with st.sidebar:
             st.markdown(f"### 👤 {st.session_state.get('user_name', 'Admin')}")
             st.markdown("---")
-            if st.button("🏠 Dashboard Geral", use_container_width=True):
+            if st.button("🏠 Process Mining", use_container_width=True):
                 st.session_state.current_page = "Dashboard"
                 st.rerun()
             if st.button("🤖 Reinforcement Learning", use_container_width=True):
