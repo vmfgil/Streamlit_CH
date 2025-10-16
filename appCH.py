@@ -798,7 +798,25 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='days_diff', kde=True, color='salmon', ax=ax); ax.set_title('Diferença entre Data Real e Planeada')
     plots['plot_03'] = convert_fig_to_bytes(fig)
 
-    fig, ax = plt.subplots(figsize=(15, 8)); df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False); sns.barplot(data=df_projects_sorted, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax); sns.barplot(data=df_projects_sorted, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax); ax.tick_params(axis='x', rotation=90); ax.legend(); ax.set_title('Custo Real vs. Orçamento por Processo')
+    #Custo Real vs. Orçamento por Processo (plot_04) ---
+    df_projects_sorted = df_projects.sort_values('budget_impact', ascending=False)
+    
+    # Regra: Se houver mais de 50 processos, mostrar apenas os 50 maiores por orçamento
+    if len(df_projects_sorted) > 50:
+        data_para_plot = df_projects_sorted.head(50)
+        titulo_grafico = 'Custo Real vs. Orçamento (Top 50 Processos por Orçamento)'
+    else:
+        data_para_plot = df_projects_sorted
+        titulo_grafico = 'Custo Real vs. Orçamento por Processo'
+    
+    fig, ax = plt.subplots(figsize=(15, 8))
+    sns.barplot(data=data_para_plot, x='project_name', y='budget_impact', color='lightblue', label='Orçamento', ax=ax)
+    sns.barplot(data=data_para_plot, x='project_name', y='total_actual_cost', color='salmon', alpha=0.8, label='Custo Real', ax=ax)
+    
+    ax.tick_params(axis='x', rotation=90)
+    ax.legend()
+    ax.set_title(titulo_grafico)
+    fig.tight_layout() # Adicionado para garantir que os labels do eixo X não são cortados
     plots['plot_04'] = convert_fig_to_bytes(fig)
     
     df_projects_q = df_projects.dropna(subset=['completion_quarter']).copy()
