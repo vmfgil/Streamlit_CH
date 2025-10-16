@@ -2163,7 +2163,7 @@ def main():
         login_page()
     else:
         with st.sidebar:
-            st.markdown(f"### 👤 {st.session_state.get('user_name', 'Admin')}")
+            st.markdown(f'<h3><i class="bi bi-person-circle"></i> {st.session_state.get('user_name', 'Admin')}")
             st.markdown("---")
             if st.button("🏠 Process Mining", use_container_width=True):
                 st.session_state.current_page = "Dashboard"
@@ -2175,7 +2175,7 @@ def main():
                 st.session_state.current_page = "Settings"
                 st.rerun()
             st.markdown("<br><br>", unsafe_allow_html=True)
-            if st.button("🚪 Sair", use_container_width=True):
+            if st.button("🚪 Terminar sessão", use_container_width=True):
                 st.session_state.authenticated = False
                 for key in list(st.session_state.keys()):
                     if key not in ['authenticated']: del st.session_state[key]
