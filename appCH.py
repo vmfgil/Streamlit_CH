@@ -43,160 +43,97 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    @import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css");
+
     html, body, [class*="st-"] { font-family: 'Poppins', sans-serif; }
     
-    /* Nova Paleta de Cores Profissional e de Alto Contraste */
+    /* Nova Paleta de Cores - Tema Claro e Profissional */
     :root {
-        --primary-color: #2563EB; /* Azul de Realce (Botões Ativos, Bordas) */
-        --secondary-color: #FBBF24; /* Amarelo/Âmbar (Alertas, Destaque) */
-        --accent-color: #06B6D4; /* Ciano (Botões de Upload/Análise) */
+        --primary-color: #0d6efd;       /* Azul Principal para botões e links */
+        --secondary-color: #6c757d;      /* Cinza para texto secundário e bordas */
+        --success-color: #198754;       /* Verde para indicadores positivos */
+        --warning-color: #ffc107;       /* Amarelo para alertas e destaques */
         
-        --background-color: #0A112A; /* Fundo Principal Escuro (Azul Marinho Sólido) */
-        --sidebar-background: #111827; /* Fundo da Sidebar Ligeiramente Mais Claro */
-        --card-background-color: #1E293B; /* Fundo dos Cartões (Azul Escuro Suave) */
+        --background-color: #f8f9fa;      /* Fundo Principal (Cinza muito claro) */
+        --sidebar-background: #ffffff;    /* Fundo da Sidebar (Branco) */
+        --card-background-color: #ffffff; /* Fundo dos Cartões (Branco) */
         
-        --text-color-dark-bg: #E5E7EB; /* Texto Principal (Branco Sujo) */
-        --text-color-light-bg: #0A112A; /* Texto em Elementos Claros */
-        --border-color: #374151; /* Cor da Borda/Separador */
-        --inactive-button-bg: #374151; /* Fundo de Botões Inativos */
-        --metric-value-color: #FBBF24; /* Cor para Valores de Métricas */
+        --text-color: #212529;            /* Texto Principal (Quase Preto) */
+        --text-muted-color: #6c757d;     /* Texto Secundário (Cinza) */
+        --border-color: #dee2e6;          /* Cor da Borda/Separador */
     }
     
-    .stApp { background-color: var(--background-color); color: var(--text-color-dark-bg); }
-    h1, h2, h3 { color: var(--text-color-dark-bg); font-weight: 600; }
+    .stApp { background-color: var(--background-color); color: var(--text-color); }
+    h1, h2, h3, h4 { color: var(--text-color); font-weight: 600; }
     
-    [data-testid="stSidebar"] h3 { color: var(--text-color-dark-bg) !important; }
-
-    /* --- ESTILOS PARA BOTÕES DE NAVEGAÇÃO --- */
-    div[data-testid="stHorizontalBlock"] .stButton>button {
-        border: 1px solid var(--border-color) !important;
-        background-color: var(--inactive-button-bg) !important;
-        color: var(--text-color-dark-bg) !important;
-        font-weight: 600;
-        transition: all 0.2s ease-in-out;
-    }
-    div[data-testid="stHorizontalBlock"] .stButton>button:hover {
-        border-color: var(--primary-color) !important;
-        background-color: rgba(37, 99, 235, 0.2) !important; /* Azul com 20% de opacidade */
-    }
-    div.active-button .stButton>button {
-        background-color: var(--primary-color) !important;
-        color: var(--text-color-dark-bg) !important;
-        border: 1px solid var(--primary-color) !important;
-        font-weight: 700 !important;
-    }
-
     /* Painel Lateral */
-    [data-testid="stSidebar"] { background-color: var(--sidebar-background); border-right: 1px solid var(--border-color); }
+    [data-testid="stSidebar"] {
+        background-color: var(--sidebar-background);
+        border-right: 1px solid var(--border-color);
+    }
     [data-testid="stSidebar"] .stButton>button {
-        background-color: var(--primary-color) !important; /* Botões da sidebar com cor de destaque */
-        color: var(--text-color-dark-bg) !important;
+        background-color: transparent !important;
+        color: var(--text-color) !important;
+        border: 1px solid transparent !important;
+        font-weight: 600;
+    }
+    [data-testid="stSidebar"] .stButton>button:hover {
+        background-color: #f8f9fa !important; /* Cinza claro no hover */
+        border: 1px solid transparent !important;
     }
     
-    /* --- CARTÕES --- */
+    /* --- CARTÕES (Cards) --- */
     .card {
         background-color: var(--card-background-color);
-        color: var(--text-color-dark-bg);
-        border-radius: 12px;
+        color: var(--text-color);
+        border-radius: 8px;
         padding: 20px 25px;
         border: 1px solid var(--border-color);
         height: 100%;
         display: flex;
         flex-direction: column;
         margin-bottom: 25px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); /* Sombra suave */
     }
     .card-header { padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
-    .card .card-header h4 { color: var(--text-color-dark-bg); font-size: 1.1rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+    .card .card-header h4 {
+        color: var(--text-color);
+        font-size: 1.1rem;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px; /* Espaço entre ícone e texto */
+    }
+    .card .card-header h4 i { /* Estilo para os ícones */
+        font-size: 1.2rem;
+        color: var(--primary-color);
+    }
     .card-body { flex-grow: 1; padding-top: 15px; }
-    .dataframe-card-body {
-        max-height: 300px;
-        overflow-y: auto;
-        overflow-x: auto;
-        padding: 0;
-    }
-    
-    /* --- BOTÕES DE UPLOAD --- */
-    section[data-testid="stFileUploader"] button,
-    div[data-baseweb="file-uploader"] button {
-        background-color: var(--accent-color) !important;
-        color: var(--text-color-light-bg) !important;
-        border: none !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-    }
-    
-    /* --- BOTÃO DE ANÁLISE --- */
-    .iniciar-analise-button .stButton>button {
-        background-color: var(--secondary-color) !important;
-        color: var(--text-color-light-bg) !important;
-        border: 2px solid var(--secondary-color) !important;
-        font-weight: 700 !important;
-    }
     
     /* --- CARTÕES DE MÉTRICAS (KPIs) --- */
     [data-testid="stMetric"] {
         background-color: var(--card-background-color);
         border: 1px solid var(--border-color);
-        border-radius: 12px;
+        border-left: 4px solid var(--primary-color); /* Borda de destaque à esquerda */
+        border-radius: 8px;
         padding: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
     }
-    [data-testid="stMetric"] label {
-        color: var(--text-color-dark-bg) !important;
-    }
-    [data-testid="stMetric"] [data-testid="stMetricValue"] {
-        color: var(--metric-value-color) !important;
-        font-weight: 700;
-    }
-    [data-testid="stMetric"] [data-testid="stMetricDelta"] {
-        color: var(--text-color-dark-bg) !important;
-    }
+    [data-testid="stMetric"] label { color: var(--text-muted-color) !important; }
+    [data-testid="stMetric"] [data-testid="stMetricValue"] { color: var(--text-color) !important; }
+    [data-testid="stMetric"] [data-testid="stMetricDelta"] svg { display: none; } /* Opcional: Esconde setas padrão */
     
-    /* Alertas */
-    [data-testid="stAlert"] {
-        background-color: #1E293B !important;
-        border: 1px solid var(--secondary-color) !important;
+    /* Botões */
+    .stButton>button {
         border-radius: 8px !important;
-    }
-    [data-testid="stAlert"] * { color: var(--text-color-dark-bg) !important; }
-    
-    .stDataFrame {
-        color: var(--text-color-dark-bg) !important;
-        background-color: var(--card-background-color) !important;
+        font-weight: 600;
     }
 
-    .pandas-df-card {
-        width: 100%;
-        border-collapse: collapse;
-        color: var(--text-color-dark-bg);
-        font-size: 0.85rem;
-    }
-    .pandas-df-card th {
-        background-color: var(--sidebar-background);
-        color: var(--text-color-dark-bg);
-        border: 1px solid var(--border-color);
-        padding: 8px;
-        text-align: left;
-    }
-    .pandas-df-card td {
-        background-color: var(--card-background-color);
-        color: var(--text-color-dark-bg);
-        border: 1px solid var(--border-color);
-        padding: 8px;
-    }
-    .pandas-df-card tr:nth-child(even) td {
-        background-color: #2F394B;
-    }
-    
-    .stTextInput>div>div>input, .stTextInput>div>div>textarea, .stNumberInput>div>div>input {
-        background-color: var(--sidebar-background) !important;
-        color: var(--text-color-dark-bg) !important;
-        border: 1px solid var(--border-color) !important;
-    }
-    /* Estilos para os subtítulos dos parâmetros de RL */
-    .stExpander div[data-testid="stMarkdownContainer"] p {
-        font-weight: 600 !important;
-        color: var(--text-color-dark-bg) !important;
+    /* Botão de Análise (cor de destaque) */
+    .iniciar-analise-button .stButton>button {
+        background-color: var(--warning-color) !important;
+        color: var(--text-color) !important;
+        border: 2px solid var(--warning-color) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -205,17 +142,24 @@ st.markdown("""
 # --- FUNÇÕES AUXILIARES ---
 def convert_fig_to_bytes(fig, format='png'):
     buf = io.BytesIO()
-    fig.patch.set_facecolor('#1E293B')
+    # Cor de fundo do gráfico (branco, igual ao card)
+    fig.patch.set_facecolor('#ffffff') 
     for ax in fig.get_axes():
-        ax.set_facecolor('#1E293B')
-        ax.tick_params(colors='#E5E7EB', which='both')
-        ax.xaxis.label.set_color('#E5E7EB')
-        ax.yaxis.label.set_color('#E5E7EB')
-        ax.title.set_color('#E5E7EB')
+        # Cor de fundo da área de plotagem
+        ax.set_facecolor('#ffffff') 
+        
+        # Cores do texto e eixos (quase preto)
+        ax.tick_params(colors='#212529', which='both') 
+        ax.xaxis.label.set_color('#212529')
+        ax.yaxis.label.set_color('#212529')
+        ax.title.set_color('#212529')
+        
+        # Cores da legenda
         if ax.get_legend() is not None:
-            plt.setp(ax.get_legend().get_texts(), color='#E5E7EB')
-            ax.get_legend().get_frame().set_facecolor('#1E293B')
-            ax.get_legend().get_frame().set_edgecolor('#374151')
+            plt.setp(ax.get_legend().get_texts(), color='#212529')
+            ax.get_legend().get_frame().set_facecolor('#ffffff')
+            ax.get_legend().get_frame().set_edgecolor('#dee2e6') # Cor da borda
+            
     fig.savefig(buf, format=format, bbox_inches='tight', dpi=150)
     buf.seek(0)
     plt.close(fig)
@@ -224,13 +168,12 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
-def create_card(title, icon, chart_bytes=None, dataframe=None, use_container_width=False):
+def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False): # mudou 'icon' para 'icon_html'
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
         st.markdown(f"""
         <div class="card">
-            <div class="card-header"><h4>{icon} {title}</h4></div>
-            <div class="card-body">
+            <div class="card-header"><h4>{icon_html} {title}</h4></div> <div class="card-body">
                 <img src="data:image/png;base64,{b64_image}" style="width: 100%; height: auto;">
             </div>
         </div>
@@ -239,8 +182,7 @@ def create_card(title, icon, chart_bytes=None, dataframe=None, use_container_wid
         df_html = dataframe.to_html(classes=['pandas-df-card'], index=False)
         st.markdown(f"""
         <div class="card">
-            <div class="card-header"><h4>{icon} {title}</h4></div>
-            <div class="card-body dataframe-card-body">
+            <div class="card-header"><h4>{icon_html} {title}</h4></div> <div class="card-body dataframe-card-body">
                 {df_html}
             </div>
         </div>
@@ -1749,139 +1691,121 @@ def dashboard_page():
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Matriz de Performance (Custo vs Prazo) (PM)", "🎯", chart_bytes=plots_pre.get('performance_matrix'))
-            create_card("Top 5 Processos Mais Caros", "💰", dataframe=tables_pre.get('outlier_cost'))
-            create_card("Séries Temporais de KPIs de Performance", "📈", chart_bytes=plots_post.get('kpi_time_series'))
-            create_card("Distribuição do Status dos Processos", "📊", chart_bytes=plots_eda.get('plot_01'))
-            create_card("Custo Médio dos Processos por Trimestre", "💶", chart_bytes=plots_eda.get('plot_06'))
-            create_card("Alocação de Custos por Orçamento e Recurso", "💰", chart_bytes=plots_eda.get('plot_17'))
+            create_card("Matriz de Performance (Custo vs Prazo) (PM)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_pre.get('performance_matrix'))
+            create_card("Top 5 Processos Mais Caros", '<i class="bi bi-cash-coin"></i>', dataframe=tables_pre.get('outlier_cost'))
+            create_card("Séries Temporais de KPIs de Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('kpi_time_series'))
+            create_card("Distribuição do Status dos Processos", '<i class="bi bi-bar-chart-line-fill"></i>', chart_bytes=plots_eda.get('plot_01'))
+            create_card("Custo Médio dos Processos por Trimestre", '<i class="bi bi-currency-euro"></i>', chart_bytes=plots_eda.get('plot_06'))
+            create_card("Alocação de Custos por Orçamento e Recurso", '<i class="bi bi-pie-chart-fill"></i>', chart_bytes=plots_eda.get('plot_17'))
         with c2:
-            create_card("Custo por Tipo de Recurso", "💶", chart_bytes=plots_pre.get('cost_by_resource_type'))
-            create_card("Top 5 Processos Mais Longos", "⏳", dataframe=tables_pre.get('outlier_duration'))
-            create_card("Custo Médio por Dia ao Longo do Tempo", "💸", chart_bytes=plots_post.get('cost_per_day_time_series'))
-            create_card("Custo Real vs. Orçamento por Processo", "💳", chart_bytes=plots_eda.get('plot_04'))
-            create_card("Distribuição do Custo por Dia (Eficiência)", "💡", chart_bytes=plots_eda.get('plot_16'))
-            create_card("Evolução do Volume e Tamanho dos Processos", "📈", chart_bytes=plots_eda.get('plot_31'))
+            create_card("Custo por Tipo de Recurso", '<i class="bi bi-tags-fill"></i>', chart_bytes=plots_pre.get('cost_by_resource_type'))
+            create_card("Top 5 Processos Mais Longos", '<i class="bi bi-hourglass-split"></i>', dataframe=tables_pre.get('outlier_duration'))
+            create_card("Custo Médio por Dia ao Longo do Tempo", '<i class="bi bi-wallet2"></i>', chart_bytes=plots_post.get('cost_per_day_time_series'))
+            create_card("Custo Real vs. Orçamento por Processo", '<i class="bi bi-credit-card"></i>', chart_bytes=plots_eda.get('plot_04'))
+            create_card("Distribuição do Custo por Dia (Eficiência)", '<i class="bi bi-lightbulb"></i>', chart_bytes=plots_eda.get('plot_16'))
+            create_card("Evolução do Volume e Tamanho dos Processos", '<i class="bi bi-reception-4"></i>', chart_bytes=plots_eda.get('plot_31'))
 
     elif st.session_state.current_section == "performance":
         st.subheader("2. Performance e Prazos")
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Relação Lead Time vs Throughput", "🔗", chart_bytes=plots_pre.get('lead_time_vs_throughput'))
-            create_card("Distribuição do Lead Time", "⏱️", chart_bytes=plots_pre.get('lead_time_hist'))
-            create_card("Distribuição da Duração dos Processos (PM)", "📊", chart_bytes=plots_pre.get('case_durations_boxplot'))
-            create_card("Gráfico Acumulado de Throughput", "📈", chart_bytes=plots_post.get('cumulative_throughput_plot'))
-            create_card("Performance de Prazos por Trimestre", "📉", chart_bytes=plots_eda.get('plot_05'))
+            create_card("Relação Lead Time vs Throughput", '<i class="bi bi-link-45deg"></i>', chart_bytes=plots_pre.get('lead_time_vs_throughput'))
+            create_card("Distribuição do Lead Time", '<i class="bi bi-stopwatch"></i>', chart_bytes=plots_pre.get('lead_time_hist'))
+            create_card("Distribuição da Duração dos Processos (PM)", '<i class="bi bi-distribute-vertical"></i>', chart_bytes=plots_pre.get('case_durations_boxplot'))
+            create_card("Gráfico Acumulado de Throughput", '<i class="bi bi-graph-up"></i>', chart_bytes=plots_post.get('cumulative_throughput_plot'))
+            create_card("Performance de Prazos por Trimestre", '<i class="bi bi-graph-down-arrow"></i>', chart_bytes=plots_eda.get('plot_05'))
         with c2:
-            create_card("Duração Média por Fase do Processo", "🗂️", chart_bytes=plots_pre.get('cycle_time_breakdown'))
-            create_card("Distribuição do Throughput (horas)", "🚀", chart_bytes=plots_pre.get('throughput_hist'))
-            create_card("Boxplot do Throughput (horas)", "📦", chart_bytes=plots_pre.get('throughput_boxplot'))
-            create_card("Atividades por Dia da Semana", "🗓️", chart_bytes=plots_post.get('temporal_heatmap_fixed'))
-            create_card("Evolução da Performance (Prazo e Custo)", "📈", chart_bytes=plots_eda.get('plot_30'))
-        
-        c3, c4 = st.columns(2)
+            create_card("Duração Média por Fase do Processo", '<i class="bi bi-folder2-open"></i>', chart_bytes=plots_pre.get('cycle_time_breakdown'))
+            create_card("Distribuição do Throughput (horas)", '<i class="bi bi-rocket-takeoff"></i>', chart_bytes=plots_pre.get('throughput_hist'))
+            create_card("Boxplot do Throughput (horas)", '<i class="bi bi-box-seam"></i>', chart_bytes=plots_pre.get('throughput_boxplot'))
+            create_card("Atividades por Dia da Semana", '<i class="bi bi-calendar-week"></i>', chart_bytes=plots_post.get('temporal_heatmap_fixed'))
+            create_card("Evolução da Performance (Prazo e Custo)", '<i class="bi bi-activity"></i>', chart_bytes=plots_eda.get('plot_30'))
         with c3:
-                create_card("Diferença entre Data Real e Planeada", "🗓️", chart_bytes=plots_eda.get('plot_03'))
+                create_card("Diferença entre Data Real e Planeada", '<i class="bi bi-calendar-range"></i>', chart_bytes=plots_eda.get('plot_03'))
         with c4:
-            create_card("Estatísticas de Performance", "📈", dataframe=tables_pre.get('perf_stats'))
-            
-        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", "📊", chart_bytes=plots_post.get('gantt_chart_all_projects'))
+            create_card("Estatísticas de Performance", '<i class="bi bi-table"></i>', dataframe=tables_pre.get('perf_stats'))
+        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", '<i class="bi bi-kanban"></i>', chart_bytes=plots_post.get('gantt_chart_all_projects'))
 
     elif st.session_state.current_section == "recursos":
         st.subheader("3. Recursos e Equipa")
         c1, c2 = st.columns(2)
+        
         with c1:
-            create_card("Distribuição de Recursos por Tipo", "🔧", chart_bytes=plots_eda.get('plot_12'))
-            create_card("Recursos por Média de Tarefas/Processo", "🧑‍💻", chart_bytes=plots_pre.get('resource_avg_events'))
-            create_card("Eficiência Semanal (Horas Trabalhadas)", "🗓️", chart_bytes=plots_pre.get('weekly_efficiency'))
-            create_card("Impacto do Tamanho da Equipa no Atraso (PM)", "👨‍👩‍👧‍👦", chart_bytes=plots_pre.get('delay_by_teamsize'))
-            create_card("Benchmark de Throughput por Equipa", "🏆", chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'))
-            create_card("Atraso por Nível de Competência", "🎓", chart_bytes=plots_eda.get('plot_23'))
+            create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'))
+            create_card("Recursos por Média de Tarefas/Processo", '<i class="bi bi-person-workspace"></i>', chart_bytes=plots_pre.get('resource_avg_events'))
+            create_card("Eficiência Semanal (Horas Trabalhadas)", '<i class="bi bi-calendar3-week"></i>', chart_bytes=plots_pre.get('weekly_efficiency'))
+            create_card("Impacto do Tamanho da Equipa no Atraso (PM)", '<i class="bi bi-people"></i>', chart_bytes=plots_pre.get('delay_by_teamsize'))
+            create_card("Benchmark de Throughput por Equipa", '<i class="bi bi-trophy"></i>', chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'))
+            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'))
         with c2:
-            create_card("Top 10 Recursos por Horas Trabalhadas (PM)", "💪", chart_bytes=plots_pre.get('resource_workload'))
-            create_card("Top 10 Handoffs entre Recursos", "🔄", chart_bytes=plots_pre.get('resource_handoffs'))
-            create_card("Métricas de Eficiência Individual por Recurso", "🎯", chart_bytes=plots_post.get('resource_efficiency_plot'))
-            create_card("Duração Mediana por Tamanho da Equipa", "⏱️", chart_bytes=plots_pre.get('median_duration_by_teamsize'))
-            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", "👥", chart_bytes=plots_eda.get('plot_07'))
-            create_card("Atraso Médio por Recurso", "⏳", chart_bytes=plots_eda.get('plot_14'))
-        
-        col_skill, col_bipartite = st.columns(2)
-        with col_skill:
-            if 'skill_vs_performance_adv' in plots_post:
-                create_card("Relação entre Skill e Performance", "🎓", chart_bytes=plots_post.get('skill_vs_performance_adv'))
-        with col_bipartite:
-            if 'resource_network_bipartite' in plots_post:
-                create_card("Rede de Recursos por Função", "🔗", chart_bytes=plots_post.get('resource_network_bipartite'))
-
-        create_card("Rede Social de Recursos (Handovers)", "🌐", chart_bytes=plots_post.get('resource_network_adv'))
-        
-        create_card("Heatmap de Esforço (Recurso vs Atividade)", "🗺️", chart_bytes=plots_pre.get('resource_activity_matrix'))
+            create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'))
+            create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'))
+            create_card("Métricas de Eficiência Individual por Recurso", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'))
+            create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'))
+            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'))
+            create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'))
+        if 'skill_vs_performance_adv' in plots_post:
+            create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+        if 'resource_network_bipartite' in plots_post:
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
+        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'))
+        create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'))
 
     elif st.session_state.current_section == "gargalos":
         st.subheader("4. Handoffs e Espera")
-        create_card("Heatmap de Performance no Processo (Gargalos)", "🔥", chart_bytes=plots_post.get('performance_heatmap'))
+        create_card("Heatmap de Performance no Processo (Gargalos)", '<i class="bi bi-fire"></i>', chart_bytes=plots_post.get('performance_heatmap'))
         
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Atividades Mais Frequentes", "⚡", chart_bytes=plots_pre.get('top_activities_plot'))
-            create_card("Gargalos: Tempo de Serviço vs. Espera", "🚦", chart_bytes=plots_pre.get('service_vs_wait_stacked'))
-            create_card("Top 10 Handoffs por Custo de Espera", "💸", chart_bytes=plots_pre.get('top_handoffs_cost'))
-            create_card("Top Recursos por Tempo de Espera Gerado", "🛑", chart_bytes=plots_pre.get('bottleneck_by_resource'))
-            create_card("Custo Real vs. Atraso", "💰", chart_bytes=plots_eda.get('plot_18'))
-            create_card("Nº de Recursos vs. Custo Total", "👥", chart_bytes=plots_eda.get('plot_20'))
-            create_card("Matriz de Correlação", "🔗", chart_bytes=plots_eda.get('plot_29'))
+            create_card("Atividades Mais Frequentes", '<i class="bi bi-speedometer2"></i>', chart_bytes=plots_pre.get('top_activities_plot'))
+            create_card("Gargalos: Tempo de Serviço vs. Espera", '<i class="bi bi-traffic-light"></i>', chart_bytes=plots_pre.get('service_vs_wait_stacked'))
+            create_card("Top 10 Handoffs por Custo de Espera", '<i class="bi bi-currency-exchange"></i>', chart_bytes=plots_pre.get('top_handoffs_cost'))
+            create_card("Top Recursos por Tempo de Espera Gerado", '<i class="bi bi-sign-stop"></i>', chart_bytes=plots_pre.get('bottleneck_by_resource'))
+            create_card("Custo Real vs. Atraso", '<i class="bi bi-cash-stack"></i>', chart_bytes=plots_eda.get('plot_18'))
+            create_card("Nº de Recursos vs. Custo Total", '<i class="bi bi-people-fill"></i>', chart_bytes=plots_eda.get('plot_20'))
+            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'))
         with c2:
-            create_card("Tempo Médio de Execução por Atividade", "🛠️", chart_bytes=plots_pre.get('activity_service_times'))
-            create_card("Espera vs. Execução (Dispersão)", "🔍", chart_bytes=plots_pre.get('wait_vs_service_scatter'))
-            create_card("Evolução do Tempo Médio de Espera", "📈", chart_bytes=plots_pre.get('wait_time_evolution'))
-            create_card("Top 10 Handoffs por Tempo de Espera", "⏳", chart_bytes=plots_pre.get('top_handoffs'))
-            create_card("Rate Horário Médio vs. Atraso", "⏰", chart_bytes=plots_eda.get('plot_19'))
-            create_card("Atraso por Faixa de Orçamento", "📊", chart_bytes=plots_eda.get('plot_22'))
-
-        c3, c4 = st.columns(2)
-        with c3:
-            if 'milestone_time_analysis_plot' in plots_post:
-                create_card("Análise de Tempo entre Marcos do Processo", "🚩", chart_bytes=plots_post.get('milestone_time_analysis_plot'))
-        with c4:
-                create_card("Tempo Médio de Espera por Atividade", "⏱️", chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
-        
-        create_card("Matriz de Tempo de Espera entre Atividades (horas)", "⏳", chart_bytes=plots_post.get('waiting_time_matrix_plot'))
+            create_card("Tempo Médio de Execução por Atividade", '<i class="bi bi-hammer"></i>', chart_bytes=plots_pre.get('activity_service_times'))
+            create_card("Espera vs. Execução (Dispersão)", '<i class="bi bi-search"></i>', chart_bytes=plots_pre.get('wait_vs_service_scatter'))
+            create_card("Evolução do Tempo Médio de Espera", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_pre.get('wait_time_evolution'))
+            create_card("Top 10 Handoffs por Tempo de Espera", '<i class="bi bi-pause-circle"></i>', chart_bytes=plots_pre.get('top_handoffs'))
+            create_card("Rate Horário Médio vs. Atraso", '<i class="bi bi-alarm"></i>', chart_bytes=plots_eda.get('plot_19'))
+            create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'))
+        if 'milestone_time_analysis_plot' in plots_post:
+            create_card("Análise de Tempo entre Marcos do Processo", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'))
+        create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
+        create_card("Matriz de Tempo de Espera entre Atividades (horas)", '<i class="bi bi-grid-3x3-gap"></i>', chart_bytes=plots_post.get('waiting_time_matrix_plot'))
 
     elif st.session_state.current_section == "fluxo":
         st.subheader("5. Fluxo e Conformidade")
 
-        create_card("Modelo - Inductive Miner", "🧭", chart_bytes=plots_post.get('model_inductive_petrinet'))
-        create_card("Modelo - Heuristics Miner", "🛠️", chart_bytes=plots_post.get('model_heuristic_petrinet'))
+        create_card("Modelo - Inductive Miner", '<i class="bi bi-compass"></i>', chart_bytes=plots_post.get('model_inductive_petrinet'))
+        create_card("Modelo - Heuristics Miner", '<i class="bi bi-gear"></i>', chart_bytes=plots_post.get('model_heuristic_petrinet'))
 
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Métricas (Inductive Miner)", "📊", chart_bytes=plots_post.get('metrics_inductive'))
+            create_card("Métricas (Inductive Miner)", '<i class="bi bi-clipboard-data"></i>', chart_bytes=plots_post.get('metrics_inductive'))
         with c2:
-            create_card("Métricas (Heuristics Miner)", "📈", chart_bytes=plots_post.get('metrics_heuristic'))
-        
-        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", "🎶", chart_bytes=plots_post.get('custom_variants_sequence_plot'))
-        
-        c3, c4 = st.columns(2)
+            create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'))
+        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
         with c3:
-            create_card("Duração Média das Variantes Mais Comuns", "⏳", chart_bytes=plots_post.get('variant_duration_plot'))
-            create_card("Frequência das 10 Principais Variantes", "🎭", dataframe=tables_pre.get('variants_table'))
-            create_card("Distribuição de Tarefas por Tipo", "📋", chart_bytes=plots_eda.get('plot_08'))
-            create_card("Distribuição da Duração das Tarefas", "⏳", chart_bytes=plots_eda.get('plot_10'))
-            create_card("Centralidade dos Tipos de Tarefa", "🎯", chart_bytes=plots_eda.get('plot_25'))
-            create_card("Relação entre Dependências e Desvio de Custo", "💸", chart_bytes=plots_eda.get('plot_28'))
+            create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
+            create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'))
+            create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'))
+            create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'))
+            create_card("Centralidade dos Tipos de Tarefa", '<i class="bi bi-arrows-angle-contract"></i>', chart_bytes=plots_eda.get('plot_25'))
+            create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-journal-minus"></i>', chart_bytes=plots_eda.get('plot_28'))
         with c4:
-            create_card("Score de Conformidade ao Longo do Tempo", "📉", chart_bytes=plots_post.get('conformance_over_time_plot'))
-            create_card("Principais Loops de Rework", "🔁", dataframe=tables_pre.get('rework_loops_table'))
-            create_card("Distribuição de Tarefas por Prioridade", "🥇", chart_bytes=plots_eda.get('plot_09'))
-            create_card("Top 10 Tarefas Específicas Mais Demoradas", "🕒", chart_bytes=plots_eda.get('plot_11'))
-            create_card("Distribuição da Complexidade dos Processos", "🕸️", chart_bytes=plots_eda.get('plot_24'))
-            create_card("Relação entre Complexidade e Atraso", "🔗", chart_bytes=plots_eda.get('plot_27'))
-
-        c5, c6 = st.columns(2)
+            create_card("Score de Conformidade ao Longo do Tempo", '<i class="bi bi-check2-circle"></i>', chart_bytes=plots_post.get('conformance_over_time_plot'))
+            create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'))
+            create_card("Distribuição de Tarefas por Prioridade", '<i class="bi bi-award"></i>', chart_bytes=plots_eda.get('plot_09'))
+            create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'))
+            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
+            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
         with c5:
-                create_card("Top 10 Variantes de Processo por Frequência", "📊", chart_bytes=plots_pre.get('variants_frequency'))
+                create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
         with c6:
-            create_card("Grafo de Dependências: Processo 25", "📈", chart_bytes=plots_eda.get('plot_26'))
+            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
@@ -1994,13 +1918,13 @@ def rl_page():
         tables_rl = st.session_state.tables_rl
         
         st.markdown("<h4>Desempenho Global</h4>", unsafe_allow_html=True)
-        create_card("Performance Global (Conjunto de Teste)", "📊", dataframe=tables_rl.get('global_performance_test'))
+        create_card("Performance Global (Conjunto de Teste)", '<i class="bi bi-clipboard-data-fill"></i>', dataframe=tables_rl.get('global_performance_test'))
 
         st.markdown("<h4>Métricas de Treinamento do Agente</h4>", unsafe_allow_html=True)
-        create_card("Evolução do Treino", "🤖", chart_bytes=plots_rl.get('training_metrics'))
+        create_card("Evolução do Treino", '<i class="bi bi-robot"></i>', chart_bytes=plots_rl.get('training_metrics'))
         
         st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
-        create_card("Comparação do Desempenho (Conjunto de Teste da Amostra)", "🎯", chart_bytes=plots_rl.get('evaluation_comparison_test'))
+        create_card("Comparação do Desempenho (Conjunto de Teste da Amostra)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_rl.get('evaluation_comparison_test'))
         
         st.markdown(f"<h4>Análise Detalhada da Simulação (Processo {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
@@ -2015,7 +1939,7 @@ def rl_page():
                 sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
                 st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real")
 
-        create_card(f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", "🔍", chart_bytes=plots_rl.get('project_detailed_comparison'))
+        create_card(f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", '<i class="bi bi-search"></i>', chart_bytes=plots_rl.get('project_detailed_comparison'))
 
 # --- CONTROLO PRINCIPAL DA APLICAÇÃO ---
 def main():
