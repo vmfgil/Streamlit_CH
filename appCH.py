@@ -109,6 +109,13 @@ st.markdown("""
         color: var(--primary-color);
     }
     .card-body { flex-grow: 1; padding-top: 15px; }
+    /* 👇 ADICIONE O BLOCO DE CÓDIGO ABAIXO AQUI 👇 */
+    .dataframe-card-body {
+        max-height: 300px;
+        overflow-y: auto;
+        overflow-x: auto;
+        padding: 0;
+    }
     
     /* --- CARTÕES DE MÉTRICAS (KPIs) --- */
     [data-testid="stMetric"] {
