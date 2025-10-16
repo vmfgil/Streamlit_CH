@@ -180,8 +180,9 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
         st.markdown(f"""
-        <div class="{card_class}">
+        <div class="card">
             <div class="card-header"><h4>{icon_html} {title}</h4></div>
+            <div class="card-body">
                 <img src="data:image/png;base64,{b64_image}" style="width: 100%; height: auto;">
             </div>
         </div>
@@ -190,12 +191,13 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
         df_html = dataframe.to_html(classes=['pandas-df-card'], index=False)
         st.markdown(f"""
         <div class="card">
-            <div class="card-header"><h4>{icon_html} {title}</h4></div> <div class="card-body dataframe-card-body">
+            <div class="card-header"><h4>{icon_html} {title}</h4></div>
+            <div class="card-body dataframe-card-body">
                 {df_html}
             </div>
         </div>
         """, unsafe_allow_html=True)
-
+    
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 if 'current_page' not in st.session_state: st.session_state.current_page = "Dashboard"
