@@ -1198,7 +1198,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
-            
+            self.resource_capacity_map = pd.Series(self.df_resources.daily_capacity.values, index=self.df_resources.resource_id).to_dict()
             self.TASK_TYPE_RESOURCE_MAP = {
                 'Onboarding': ['Analista Comercial', 'Gerente Comercial'],
                 'Validação KYC e Conformidade': ['Analista de Risco', 'Analista Operações/Legal'],
@@ -1293,55 +1293,54 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             # 6b. Processar ações do agente e alocar recursos
             daily_cost = 0
             reward_from_tasks = 0
-            daily_cost_by_project = defaultdict(float)
-            daily_hours_by_project = defaultdict(float)
-            
-            # Rastreia recursos usados NESTE dia para não alocar mais do que a sua capacidade diária
             resources_hours_today = defaultdict(float)
+            daily_cost_by_project = defaultdict(float) # Necessário para os logs detalhados
+            daily_hours_by_project = defaultdict(float) # Necessário para os logs detalhados
 
             for res_type, task_type, proj_id, task_id in action_list:
                 if task_type == "idle":
                     reward_from_tasks -= self.rewards['idle_penalty']
                     continue
-                
-                # Encontrar um recurso disponível que AINDA NÃO ATINGIU a capacidade diária
-                pool = self.resources_by_type[res_type]
-                available_resources = pool[~pool['resource_id'].isin([rid for rid, hours in resources_hours_today.items() if hours >= pool.loc[pool['resource_id'] == rid, 'daily_capacity'].iloc[0]])]
 
-                if available_resources.empty: continue
+                # CÓDIGO CORRIGIDO E OTIMIZADO
+                pool = self.resources_by_type[res_type]
                 
-                res_info = available_resources.sample(1).iloc[0]
-                res_id = res_info['resource_id']
+                # Identificar recursos do pool que ainda têm capacidade hoje
+                ids_in_pool = pool['resource_id'].tolist()
+                available_ids = [rid for rid in ids_in_pool if resources_hours_today[rid] < self.resource_capacity_map.get(rid, 8)]
+
+                if not available_ids: continue
+                
+                # Escolher um recurso aleatório dos que estão disponíveis
+                chosen_res_id = random.choice(available_ids)
+                res_info = pool[pool['resource_id'] == chosen_res_id].iloc[0]
 
                 # Avançar o trabalho na tarefa escolhida
                 task_data = self.active_projects[proj_id]['tasks'][task_id]
                 if task_data['status'] == 'Concluída': continue
-
                 if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
                 
                 remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                daily_capacity = float(res_info['daily_capacity'])
-                
-                # Horas que o recurso ainda pode trabalhar hoje
-                workable_hours_today = daily_capacity - resources_hours_today[res_id]
+                capacity_today = self.resource_capacity_map.get(chosen_res_id, 8)
+                workable_hours_today = capacity_today - resources_hours_today[chosen_res_id]
                 
                 hours_to_work = min(workable_hours_today, remaining_effort)
                 if hours_to_work <= 0: continue
 
                 cost_today = hours_to_work * float(res_info['cost_per_hour'])
                 self.active_projects[proj_id]['current_cost'] += cost_today
+                task_data['progress'] += hours_to_work
+                resources_hours_today[chosen_res_id] += hours_to_work
+
+                # Para os logs detalhados
                 daily_cost_by_project[proj_id] += cost_today
                 daily_hours_by_project[proj_id] += hours_to_work
-                daily_cost += cost_today
-                
-                task_data['progress'] += hours_to_work
-                resources_hours_today[res_id] += hours_to_work
 
                 if task_data['progress'] >= task_data['estimated_effort']:
                     task_data['status'] = 'Concluída'
                     task_data['completion_date'] = self.current_date
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-
+                    
             # NOVO BLOCO PARA LOGGING DETALHADO
             for proj_id, proj_state in self.active_projects.items():
                 if proj_id not in self.detailed_logs:
