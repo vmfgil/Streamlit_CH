@@ -1945,7 +1945,7 @@ def rl_page():
             index=0  # Garante que o primeiro item da lista é sempre o default
         )
         with c2:
-            num_episodes = st.number_input("Número de Episódios de Treino", min_value=20, max_value=10000, value=1000, step=100)
+            num_episodes = st.number_input("Número de Episódios de Treino", min_value=5, max_value=10000, value=1000, step=100)
 
         st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
         rc1, rc2, rc3 = st.columns(3)
