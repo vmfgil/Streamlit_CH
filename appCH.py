@@ -1273,10 +1273,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
         def step(self, action_list):
             # 6. O 'step' agora representa um DIA de trabalho para a empresa inteira
-            if self.current_date.weekday() >= 5: # Pular fim de semana
-                self.current_date += timedelta(days=1)
-                return self.get_state(), 0, False 
-
+            
             # 6a. Ativar novos projetos que começam hoje
             projects_to_activate = [p for p in self.future_projects if p['start_date'] == self.current_date]
             for proj_data in projects_to_activate:
@@ -1448,6 +1445,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         episode_reward, done = 0, False
         
         while not done:
+            # Se for fim de semana, apenas avança o dia e continua para a próxima iteração do loop
+            if env.current_date.weekday() >= 5:
+                env.current_date += timedelta(days=1)
+                continue
             # --- INÍCIO DO BLOCO DE DEBUG --
             print(f"\n--- SIMULANDO DIA | Data: {env.current_date.date()} | Projetos Ativos: {len(env.active_projects)} ---")
             # --- FIM DO BLOCO DE DEBUG ---
@@ -1456,29 +1457,41 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             print(f"DEBUG: Encontradas {len(possible_actions_full)} ações possíveis.")
             # --- FIM DO BLOCO DE DEBUG ---
             action_list_for_step = []
+            
+            # Obter todas as tarefas de trabalho possíveis para hoje
+            work_actions = [a for a in possible_actions_full if a[1] != 'idle']
+            
+            # Agrupar tarefas por tipo de recurso necessário
+            tasks_by_res_type = defaultdict(list)
+            for action in work_actions:
+                tasks_by_res_type[action[0]].append(action)
 
-            # Para cada tipo de recurso, o agente decide qual o tipo de tarefa a priorizar.
-            for res_type in env.resource_types:
-                simplified_options = list(set([(a[0], a[1]) for a in possible_actions_full if a[0] == res_type]))
-                if not simplified_options: continue
+            # Para cada tipo de recurso, usar o agente para priorizar e atribuir trabalho
+            for res_type, available_tasks in tasks_by_res_type.items():
+                num_resources = len(env.resources_by_type.get(res_type, []))
+                
+                # Priorizar as tarefas usando o agente
+                simplified_options = list(set([(a[0], a[1]) for a in available_tasks]))
+                
+                # Atribuir trabalho até ao limite de recursos disponíveis ou de tarefas
+                for _ in range(num_resources):
+                    if not available_tasks: break # Não há mais tarefas para este tipo de recurso
 
-                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-
-                # Tomar uma decisão para cada recurso disponível daquele tipo.
-                for _ in range(num_resources_of_type):
+                    # Pedir ao agente para escolher o MELHOR TIPO de tarefa a fazer
                     chosen_simplified_action = agent.choose_action(state, simplified_options)
-                    if not chosen_simplified_action or chosen_simplified_action[1] == 'idle':
-                        continue
-                    
-                    # Encontrar a tarefa real mais prioritária que corresponde à decisão do agente.
-                    candidate_tasks = [a for a in possible_actions_full if (a[0], a[1]) == chosen_simplified_action]
+                    if not chosen_simplified_action: continue
+                        
+                    # Filtrar as tarefas reais que correspondem à escolha do agente
+                    candidate_tasks = [t for t in available_tasks if (t[0], t[1]) == chosen_simplified_action]
                     if not candidate_tasks: continue
 
+                    # Escolher a de maior prioridade entre as candidatas
                     best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
                     
                     action_list_for_step.append(best_task_action)
-                    # Remover a tarefa escolhida da lista de possibilidades para não ser alocada duas vezes no mesmo dia.
-                    possible_actions_full = [a for a in possible_actions_full if a[3] != best_task_action[3]]
+                    
+                    # Remover a tarefa escolhida da lista de disponíveis para não ser atribuída duas vezes
+                    available_tasks.remove(best_task_action)
             
             # --- INÍCIO DO BLOCO DE DEBUG --
             print(f"DEBUG: Agente decidiu executar {len(action_list_for_step)} ações neste dia.")
