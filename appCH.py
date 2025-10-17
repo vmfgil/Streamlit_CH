@@ -1543,23 +1543,61 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     state = env.reset()
     done = False
     while not done:
+        # Pular fim de semana
+        if env.current_date.weekday() >= 5:
+            env.current_date += timedelta(days=1)
+            continue
+            
         possible_actions_full = env.get_possible_actions_for_state()
         action_list_for_step = []
-        for res_type in env.resource_types:
-            simplified_options = list(set([(a[0], a[1]) for a in possible_actions_full if a[0] == res_type]))
-            if not simplified_options: continue
-            num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-            for _ in range(num_resources_of_type):
-                chosen_simplified_action = agent.choose_action(state, simplified_options)
-                if not chosen_simplified_action or chosen_simplified_action[1] == 'idle': continue
-                candidate_tasks = [a for a in possible_actions_full if (a[0], a[1]) == chosen_simplified_action]
-                if not candidate_tasks: continue
-                best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
-                action_list_for_step.append(best_task_action)
-                possible_actions_full = [a for a in possible_actions_full if a[3] != best_task_action[3]]
+        
+        # --- Lógica de Alocação Diária (idêntica ao treino) ---
+        work_actions = [a for a in possible_actions_full if a[1] != 'idle']
+        simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
+
+        available_hours_per_resource = {res_id: cap for res_id, cap in env.resource_capacity_map.items()}
+
+        while any(h > 0 for h in available_hours_per_resource.values()) and work_actions:
+            chosen_simplified_action = agent.choose_action(state, simplified_options)
+            if not chosen_simplified_action:
+                break 
+
+            candidate_tasks = [t for t in work_actions if (t[0], t[1]) == chosen_simplified_action]
+            if not candidate_tasks:
+                simplified_options.remove(chosen_simplified_action)
+                continue
+
+            best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
+            res_type, task_type, proj_id, task_id = best_task_action
+            
+            pool = env.resources_by_type[res_type]
+            available_resources = [rid for rid in pool['resource_id'] if available_hours_per_resource.get(rid, 0) > 0]
+            
+            if not available_resources:
+                simplified_options = [opt for opt in simplified_options if opt[0] != res_type]
+                continue
+
+            chosen_res_id = random.choice(available_resources)
+            
+            work_chunk_hours = 1.0
+            hours_to_assign = min(work_chunk_hours, available_hours_per_resource[chosen_res_id])
+            
+            action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
+            
+            available_hours_per_resource[chosen_res_id] -= hours_to_assign
+            
+            # Se a tarefa ficar sem esforço restante, removemo-la das opções para o resto do dia
+            # (Pequena otimização para não continuar a tentar atribuir uma tarefa "quase completa")
+            task_state = env.active_projects[proj_id]['tasks'][task_id]
+            if (task_state['estimated_effort'] - task_state['progress']) < 1:
+                 work_actions = [a for a in work_actions if a[3] != task_id]
+                 simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
+
+
         next_state, _, done = env.step(action_list_for_step)
         state = next_state
-        if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000): break
+        if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000): 
+            break
 
     simulated_results = env.completed_projects
     results_list = []
