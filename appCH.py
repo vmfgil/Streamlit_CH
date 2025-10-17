@@ -1748,12 +1748,26 @@ def settings_page():
     st.markdown("---")
     st.subheader("Upload dos Ficheiros de Dados (.csv)")
     st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
+    # Dicionário com os textos para as tooltips
+    tooltips = {
+        'projects': "Ficheiro mestre que define cada processo. Colunas: project_id (ID único do processo), project_name (Nome descritivo), path_name (Tipo de processo, ex: CH_Jovem), start_date (Início real), end_date (Fim real), planned_end_date (Fim planeado), total_duration_days (Duração real em dias úteis), project_status (Estado final), loan_amount_eur (Valor do crédito), risk_rating (Nível de risco A-D), budget_impact (Orçamento total estimado).",
+        'tasks': "O log de eventos, onde cada linha é uma tarefa executada. Colunas: task_id (ID único da tarefa), project_id (ID do processo-pai), task_name (Nome da atividade, ex: Análise Documental), task_type (Categoria da atividade), estimated_effort (Duração planeada em dias), actual_effort (Duração real em dias), task_status (Estado final, ex: Concluída), priority (Prioridade 1-5), start_date (Início real), end_date (Fim real).",
+        'resources': "Define quem executa o trabalho. Colunas: resource_id (ID único do recurso), resource_name (Nome do colaborador/equipa), resource_type (Função, ex: Analista de Risco), skill_level (Nível de competência), daily_capacity (Horas de trabalho por dia), cost_per_hour (Custo por hora).",
+        'resource_allocations': "Registo detalhado do trabalho diário, ligando recursos a tarefas. Colunas: allocation_id (ID único do registo de trabalho), task_id (ID da tarefa executada), resource_id (ID de quem executou), allocation_date (Data do trabalho), hours_worked (Horas trabalhadas nesse dia), project_id (ID do processo global).",
+        'dependencies': "Mapeia a sequência e as regras do fluxo de trabalho. Colunas: dependency_id (ID único da regra de sequência), project_id (ID do processo), task_id_predecessor (ID da tarefa que deve ser concluída primeiro), task_id_successor (ID da tarefa que depende da anterior)."
+    }
     file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
     
     upload_cols = st.columns(5)
     for i, name in enumerate(file_names):
         with upload_cols[i]:
-            uploaded_file = st.file_uploader(f"Carregar `{name}.csv`", type="csv", key=f"upload_{name}")
+            # A alteração está na linha seguinte, com a adição do parâmetro 'help'
+            uploaded_file = st.file_uploader(
+                f"Carregar `{name}.csv`", 
+                type="csv", 
+                key=f"upload_{name}",
+                help=tooltips[name]  # <-- LINHA ADICIONADA
+            )
             if uploaded_file:
                 # normalização mínima após upload
                 df = pd.read_csv(uploaded_file)
