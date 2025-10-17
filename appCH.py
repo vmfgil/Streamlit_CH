@@ -131,6 +131,22 @@ st.markdown("""
     [data-testid="stMetric"] [data-testid="stMetricValue"] { color: var(--text-color) !important; }
     [data-testid="stMetric"] [data-testid="stMetricDelta"] svg { display: none; } /* Opcional: Esconde setas padrão */
     
+    /* --- ÍCONE DE TOOLTIP PARA OS CARTÕES --- */
+    .card-header {
+        position: relative; /* Necessário para posicionar o ícone */
+    }
+    .tooltip-icon {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        font-size: 1rem;
+        color: var(--secondary-color);
+        cursor: help; /* Muda o cursor para indicar que é clicável/informativo */
+    }
+    .tooltip-icon:hover {
+        color: var(--primary-color);
+    }
+
     /* Botões */
     .stButton>button {
         border-radius: 8px !important;
@@ -177,12 +193,21 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
-def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False):
+def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, tooltip=None):
+    # Gera o HTML do ícone da tooltip, se um texto for fornecido
+    tooltip_html = ""
+    if tooltip:
+        # Usamos o atributo 'title' do HTML, que cria uma tooltip nativa do browser
+        tooltip_html = f'<i class="bi bi-question-circle-fill tooltip-icon" title="{tooltip}"></i>'
+
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
         st.markdown(f"""
         <div class="card">
-            <div class="card-header"><h4>{icon_html} {title}</h4></div>
+            <div class="card-header">
+                <h4>{icon_html} {title}</h4>
+                {tooltip_html}
+            </div>
             <div class="card-body">
                 <img src="data:image/png;base64,{b64_image}" style="width: 100%; height: auto;">
             </div>
@@ -192,7 +217,10 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
         df_html = dataframe.to_html(classes=['pandas-df-card'], index=False)
         st.markdown(f"""
         <div class="card">
-            <div class="card-header"><h4>{icon_html} {title}</h4></div>
+            <div class="card-header">
+                <h4>{icon_html} {title}</h4>
+                {tooltip_html}
+            </div>
             <div class="card-body dataframe-card-body">
                 {df_html}
             </div>
@@ -1785,7 +1813,6 @@ def settings_page():
 
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
-    # (O código desta função permanece exatamente o mesmo do ficheiro que forneceu)
     st.title("🏠 Process Mining")
 
     if st.session_state.get('show_welcome_message', False):
@@ -1844,41 +1871,41 @@ def dashboard_page():
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Matriz de Performance (Custo vs Prazo) (PM)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_pre.get('performance_matrix'))
-            create_card("Top 5 Processos Mais Caros", '<i class="bi bi-cash-coin"></i>', dataframe=tables_pre.get('outlier_cost'))
-            create_card("Séries Temporais de KPIs de Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('kpi_time_series'))
-            create_card("Distribuição do Status dos Processos", '<i class="bi bi-bar-chart-line-fill"></i>', chart_bytes=plots_eda.get('plot_01'))
-            create_card("Custo Médio dos Processos por Trimestre", '<i class="bi bi-currency-euro"></i>', chart_bytes=plots_eda.get('plot_06'))
-            create_card("Alocação de Custos por Orçamento e Recurso", '<i class="bi bi-pie-chart-fill"></i>', chart_bytes=plots_eda.get('plot_17'))
+            create_card("Matriz de Performance (Custo vs Prazo) (PM)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_pre.get('performance_matrix'), tooltip="Este gráfico cruza o desvio de custo (eixo Y) com o desvio de prazo (eixo X). O objetivo é identificar rapidamente processos problemáticos. Quadrante Superior Direito: Processos que custaram mais e demoraram mais que o planeado. Quadrante Inferior Esquerdo: Processos eficientes, que terminaram abaixo do custo e antes do prazo.")
+            create_card("Top 5 Processos Mais Caros", '<i class="bi bi-cash-coin"></i>', dataframe=tables_pre.get('outlier_cost'), tooltip="Lista os cinco processos individuais que tiveram o maior custo real. Útil para focar a análise em outliers de custo significativo.")
+            create_card("Séries Temporais de KPIs de Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('kpi_time_series'), tooltip="Apresenta a evolução do Lead Time (tempo médio do processo, em azul) e do Throughput (nº de processos concluídos, em cinza) ao longo do tempo. Permite analisar se a performance geral está a melhorar ou a piorar.")
+            create_card("Distribuição do Status dos Processos", '<i class="bi bi-bar-chart-line-fill"></i>', chart_bytes=plots_eda.get('plot_01'), tooltip="Mostra a contagem de processos por estado (ex: 'Concluído', 'Em Andamento'). Oferece uma visão rápida do volume de trabalho atual e do histórico.")
+            create_card("Custo Médio dos Processos por Trimestre", '<i class="bi bi-currency-euro"></i>', chart_bytes=plots_eda.get('plot_06'), tooltip="Agrega o custo médio de todos os processos concluídos em cada trimestre. Ajuda a identificar tendências sazonais ou mudanças de custo ao longo do ano.")
+            create_card("Alocação de Custos por Orçamento e Recurso", '<i class="bi bi-pie-chart-fill"></i>', chart_bytes=plots_eda.get('plot_17'), tooltip="Gráfico de barras empilhadas que mostra como o custo total, segmentado por tipo de recurso, se distribui por diferentes faixas de orçamento dos processos. Ajuda a perceber se processos mais caros consomem tipos de recursos diferentes.")
         with c2:
-            create_card("Custo por Tipo de Recurso", '<i class="bi bi-tags-fill"></i>', chart_bytes=plots_pre.get('cost_by_resource_type'))
-            create_card("Top 5 Processos Mais Longos", '<i class="bi bi-hourglass-split"></i>', dataframe=tables_pre.get('outlier_duration'))
-            create_card("Custo Médio por Dia ao Longo do Tempo", '<i class="bi bi-wallet2"></i>', chart_bytes=plots_post.get('cost_per_day_time_series'))
-            create_card("Custo Real vs. Orçamento por Processo", '<i class="bi bi-credit-card"></i>', chart_bytes=plots_eda.get('plot_04'))
-            create_card("Distribuição do Custo por Dia (Eficiência)", '<i class="bi bi-lightbulb"></i>', chart_bytes=plots_eda.get('plot_16'))
-            create_card("Evolução do Volume e Tamanho dos Processos", '<i class="bi bi-reception-4"></i>', chart_bytes=plots_eda.get('plot_31'))
+            create_card("Custo por Tipo de Recurso", '<i class="bi bi-tags-fill"></i>', chart_bytes=plots_pre.get('cost_by_resource_type'), tooltip="Mostra o custo total acumulado para cada função ou tipo de recurso envolvido nos processos. Ajuda a identificar quais são as funções mais dispendiosas para a operação.")
+            create_card("Top 5 Processos Mais Longos", '<i class="bi bi-hourglass-split"></i>', dataframe=tables_pre.get('outlier_duration'), tooltip="Lista os cinco processos individuais que tiveram a maior duração real (em dias). Útil para focar a análise em outliers de tempo e identificar possíveis gargalos crónicos.")
+            create_card("Custo Médio por Dia ao Longo do Tempo", '<i class="bi bi-wallet2"></i>', chart_bytes=plots_post.get('cost_per_day_time_series'), tooltip="Analisa a evolução do custo médio diário dos processos. Picos neste gráfico podem indicar períodos de menor eficiência ou a execução de processos mais caros.")
+            create_card("Custo Real vs. Orçamento por Processo", '<i class="bi bi-credit-card"></i>', chart_bytes=plots_eda.get('plot_04'), tooltip="Compara o custo planeado (orçamento) com o custo real para cada processo. Ideal para detetar desvios de orçamento e analisar a precisão das estimativas.")
+            create_card("Distribuição do Custo por Dia (Eficiência)", '<i class="bi bi-lightbulb"></i>', chart_bytes=plots_eda.get('plot_16'), tooltip="Este histograma mostra a frequência de diferentes níveis de 'custo por dia'. Uma concentração em valores mais baixos indica maior eficiência de custos na execução dos processos.")
+            create_card("Evolução do Volume e Tamanho dos Processos", '<i class="bi bi-reception-4"></i>', chart_bytes=plots_eda.get('plot_31'), tooltip="Apresenta o número de processos concluídos por mês (barras) e a evolução da sua duração média (linha). Permite correlacionar o volume de trabalho com a eficiência.")
 
     elif st.session_state.current_section == "performance":
         st.subheader("2. Performance e Prazos")
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Relação Lead Time vs Throughput", '<i class="bi bi-link-45deg"></i>', chart_bytes=plots_pre.get('lead_time_vs_throughput'))
-            create_card("Distribuição do Lead Time", '<i class="bi bi-stopwatch"></i>', chart_bytes=plots_pre.get('lead_time_hist'))
-            create_card("Distribuição da Duração dos Processos (PM)", '<i class="bi bi-distribute-vertical"></i>', chart_bytes=plots_pre.get('case_durations_boxplot'))
-            create_card("Gráfico Acumulado de Throughput", '<i class="bi bi-graph-up"></i>', chart_bytes=plots_post.get('cumulative_throughput_plot'))
-            create_card("Performance de Prazos por Trimestre", '<i class="bi bi-graph-down-arrow"></i>', chart_bytes=plots_eda.get('plot_05'))
+            create_card("Relação Lead Time vs Throughput", '<i class="bi bi-link-45deg"></i>', chart_bytes=plots_pre.get('lead_time_vs_throughput'), tooltip="Este gráfico de dispersão explora a relação entre o tempo médio para concluir uma tarefa (Throughput) e o tempo total do processo (Lead Time). Idealmente, um throughput mais rápido deveria levar a um lead time menor.")
+            create_card("Distribuição do Lead Time", '<i class="bi bi-stopwatch"></i>', chart_bytes=plots_pre.get('lead_time_hist'), tooltip="Mostra a frequência das diferentes durações totais dos processos (do início ao fim). Permite perceber se a maioria dos processos termina dentro de um prazo esperado ou se existem muitos outliers.")
+            create_card("Distribuição da Duração dos Processos (PM)", '<i class="bi bi-distribute-vertical"></i>', chart_bytes=plots_pre.get('case_durations_boxplot'), tooltip="Um boxplot que resume estatisticamente a duração dos processos, mostrando a mediana, os quartis e os outliers. Oferece uma visão rápida da consistência dos prazos.")
+            create_card("Gráfico Acumulado de Throughput", '<i class="bi bi-graph-up"></i>', chart_bytes=plots_post.get('cumulative_throughput_plot'), tooltip="Mostra o número total de processos concluídos ao longo do tempo. A inclinação da linha indica a velocidade de conclusão: quanto mais íngreme, maior o ritmo de entrega.")
+            create_card("Performance de Prazos por Trimestre", '<i class="bi bi-graph-down-arrow"></i>', chart_bytes=plots_eda.get('plot_05'), tooltip="Analisa o desvio de prazo (dias de atraso ou adiantamento) por trimestre. Permite ver se a pontualidade tem vindo a melhorar ou piorar ao longo do tempo.")
         with c2:
-            create_card("Duração Média por Fase do Processo", '<i class="bi bi-folder2-open"></i>', chart_bytes=plots_pre.get('cycle_time_breakdown'))
-            create_card("Distribuição do Throughput (horas)", '<i class="bi bi-rocket-takeoff"></i>', chart_bytes=plots_pre.get('throughput_hist'))
-            create_card("Boxplot do Throughput (horas)", '<i class="bi bi-box-seam"></i>', chart_bytes=plots_pre.get('throughput_boxplot'))
-            create_card("Atividades por Dia da Semana", '<i class="bi bi-calendar-week"></i>', chart_bytes=plots_post.get('temporal_heatmap_fixed'))
-            create_card("Evolução da Performance (Prazo e Custo)", '<i class="bi bi-activity"></i>', chart_bytes=plots_eda.get('plot_30'))
+            create_card("Duração Média por Fase do Processo", '<i class="bi bi-folder2-open"></i>', chart_bytes=plots_pre.get('cycle_time_breakdown'), tooltip="Decompõe a duração total do processo, mostrando o tempo médio gasto em cada fase principal (ex: Onboarding, Análise de Risco, etc.). Essencial para identificar as fases mais demoradas.")
+            create_card("Distribuição do Throughput (horas)", '<i class="bi bi-rocket-takeoff"></i>', chart_bytes=plots_pre.get('throughput_hist'), tooltip="Apresenta a distribuição do tempo médio entre a conclusão de tarefas consecutivas dentro de um mesmo processo. Valores mais baixos indicam maior velocidade e fluidez.")
+            create_card("Boxplot do Throughput (horas)", '<i class="bi bi-box-seam"></i>', chart_bytes=plots_pre.get('throughput_boxplot'), tooltip="Um boxplot que resume estatisticamente o tempo de throughput. Ajuda a visualizar a variabilidade e a identificar casos com tempos de espera anormais entre tarefas.")
+            create_card("Atividades por Dia da Semana", '<i class="bi bi-calendar-week"></i>', chart_bytes=plots_post.get('temporal_heatmap_fixed'), tooltip="Conta o número de eventos (início/fim de tarefas) que ocorrem em cada dia da semana. Útil para identificar padrões de trabalho e possíveis sobrecargas ou ociosidades.")
+            create_card("Evolução da Performance (Prazo e Custo)", '<i class="bi bi-activity"></i>', chart_bytes=plots_eda.get('plot_30'), tooltip="Apresenta a evolução mensal do desvio médio de prazo e do desvio médio de custo. Permite uma análise de alto nível sobre a saúde e eficiência do processo ao longo do tempo.")
         c3, c4 = st.columns(2)
         with c3:
-                create_card("Diferença entre Data Real e Planeada", '<i class="bi bi-calendar-range"></i>', chart_bytes=plots_eda.get('plot_03'))
+                create_card("Diferença entre Data Real e Planeada", '<i class="bi bi-calendar-range"></i>', chart_bytes=plots_eda.get('plot_03'), tooltip="Histograma que mostra a distribuição dos desvios de prazo. Uma concentração em torno do zero indica boa previsibilidade. Valores à direita indicam atrasos; à esquerda, adiantamentos.")
         with c4:
-            create_card("Estatísticas de Performance", '<i class="bi bi-table"></i>', dataframe=tables_pre.get('perf_stats'))
-        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", '<i class="bi bi-kanban"></i>', chart_bytes=plots_post.get('gantt_chart_all_projects'))
+            create_card("Estatísticas de Performance", '<i class="bi bi-table"></i>', dataframe=tables_pre.get('perf_stats'), tooltip="Tabela com um resumo descritivo do Lead Time (duração total do processo) e do Throughput (tempo entre tarefas), incluindo média, mediana, desvio padrão, etc.")
+        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", '<i class="bi bi-kanban"></i>', chart_bytes=plots_post.get('gantt_chart_all_projects'), tooltip="Visualiza a duração e o sequenciamento das tarefas para cada processo. É uma ferramenta poderosa para entender a sobreposição de trabalho e a linha do tempo de projetos específicos.")
 
     elif st.session_state.current_section == "recursos":
         st.subheader("3. Recursos e Equipa")
@@ -1886,114 +1913,102 @@ def dashboard_page():
         # Primeira linha de cartões
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'))
-            create_card("Recursos por Média de Tarefas/Processo", '<i class="bi bi-person-workspace"></i>', chart_bytes=plots_pre.get('resource_avg_events'))
-            create_card("Eficiência Semanal (Horas Trabalhadas)", '<i class="bi bi-calendar3-week"></i>', chart_bytes=plots_pre.get('weekly_efficiency'))
-            create_card("Impacto do Tamanho da Equipa no Atraso (PM)", '<i class="bi bi-people"></i>', chart_bytes=plots_pre.get('delay_by_teamsize'))
-            create_card("Benchmark de Throughput por Equipa", '<i class="bi bi-trophy"></i>', chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'))
+            create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'), tooltip="Mostra quantos colaboradores existem em cada função. Ajuda a entender a composição da equipa.")
+            create_card("Recursos por Média de Tarefas/Processo", '<i class="bi bi-person-workspace"></i>', chart_bytes=plots_pre.get('resource_avg_events'), tooltip="Classifica os recursos pela quantidade média de tarefas que executam por cada processo em que participam. Pode revelar especialistas ou recursos que são envolvidos em muitas etapas.")
+            create_card("Eficiência Semanal (Horas Trabalhadas)", '<i class="bi bi-calendar3-week"></i>', chart_bytes=plots_pre.get('weekly_efficiency'), tooltip="Soma das horas de trabalho registadas em cada dia da semana. Permite identificar os dias de maior e menor produtividade ou esforço.")
+            create_card("Impacto do Tamanho da Equipa no Atraso (PM)", '<i class="bi bi-people"></i>', chart_bytes=plots_pre.get('delay_by_teamsize'), tooltip="Analisa como o número de pessoas alocadas a um processo impacta o desvio de prazo. Ajuda a responder se equipas maiores são, de facto, mais rápidas ou se geram mais custos de coordenação.")
+            create_card("Benchmark de Throughput por Equipa", '<i class="bi bi-trophy"></i>', chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'), tooltip="Compara a velocidade de execução (throughput) entre equipas de diferentes tamanhos. Permite identificar o 'tamanho ideal' de equipa para máxima eficiência.")
         with c2:
-            create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'))
-            create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'))
-            create_card("Métricas de Eficiência: Top 10 Melhores e Piores Recursos", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'))
-            create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'))
-            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'))
-            create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'))
+            create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'), tooltip="Lista os 10 colaboradores que registaram o maior número de horas de trabalho. Pode indicar tanto os mais produtivos como os mais sobrecarregados.")
+            create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'), tooltip="Mostra as transições de trabalho mais frequentes entre dois colaboradores diferentes. Ajuda a visualizar as principais interações e dependências na equipa.")
+            create_card("Métricas de Eficiência: Top 10 Melhores e Piores Recursos", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'), tooltip="Compara os recursos com base na média de horas que demoram a completar uma tarefa. 'Melhores' são os mais rápidos (menos horas/tarefa), e 'Piores' são os mais lentos.")
+            create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'), tooltip="Mostra a duração mediana dos processos com base no tamanho da equipa. Complementa o gráfico de atraso, focando na duração total e não no desvio.")
+            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'), tooltip="Analisa a evolução do tamanho médio das equipas alocadas aos processos ao longo do tempo.")
+            create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'), tooltip="Lista os 20 recursos associados ao maior atraso médio nos processos em que participaram.")
 
         # Segunda linha de cartões, para os gráficos de análise de Skill
         c3, c4 = st.columns(2)
         with c3:
             if 'skill_vs_performance_adv' in plots_post:
-                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'))
+                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'), tooltip="Explora se existe uma correlação entre o nível de competência (skill level) de um recurso e a sua performance (medida em horas médias por tarefa).")
         with c4:
-            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'))
+            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'), tooltip="Analisa a distribuição dos atrasos dos processos com base no nível de competência dos recursos envolvidos.")
 
         # Gráficos complexos que ocupam a largura total
         if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'))
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Grafo que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
 
-        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'))
+        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Grafo onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
         
-        create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'))
+        create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'), tooltip="Matriz que cruza recursos com atividades, mostrando as horas totais trabalhadas. Permite identificar rapidamente quem são os especialistas em cada tipo de tarefa.")
     
     elif st.session_state.current_section == "gargalos":
         st.subheader("4. Handoffs e Espera")
-        create_card("Heatmap de Performance no Processo (Gargalos)", '<i class="bi bi-fire"></i>', chart_bytes=plots_post.get('performance_heatmap'))
+        create_card("Heatmap de Performance no Processo (Gargalos)", '<i class="bi bi-fire"></i>', chart_bytes=plots_post.get('performance_heatmap'), tooltip="Este é um mapa visual do seu processo, focado em identificar os tempos de espera, que são os verdadeiros gargalos. Como ler o gráfico: ● Caixas (Nós): Representam as atividades. ● Setas (Transições): Mostram o fluxo de trabalho. ● Números e Cores nas Setas: Este é o ponto mais importante. O valor (ex: 2d 4h 15m) e a cor da seta representam o tempo médio de espera entre a conclusão da atividade de origem e o início da atividade de destino. Análise Prática: Procure as setas com as cores mais quentes (ex: laranja, vermelho) e os valores de tempo mais altos. Estes são os seus maiores gargalos.")
         
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Atividades Mais Frequentes", '<i class="bi bi-speedometer2"></i>', chart_bytes=plots_pre.get('top_activities_plot'))
-            create_card("Gargalos: Tempo de Serviço vs. Espera", '<i class="bi bi-traffic-light"></i>', chart_bytes=plots_pre.get('service_vs_wait_stacked'))
-            create_card("Top 10 Handoffs por Custo de Espera", '<i class="bi bi-currency-exchange"></i>', chart_bytes=plots_pre.get('top_handoffs_cost'))
-            create_card("Top Recursos por Tempo de Espera Gerado", '<i class="bi bi-sign-stop"></i>', chart_bytes=plots_pre.get('bottleneck_by_resource'))
-            create_card("Custo Real vs. Atraso", '<i class="bi bi-cash-stack"></i>', chart_bytes=plots_eda.get('plot_18'))
-            create_card("Nº de Recursos vs. Custo Total", '<i class="bi bi-people-fill"></i>', chart_bytes=plots_eda.get('plot_20'))
+            create_card("Atividades Mais Frequentes", '<i class="bi bi-speedometer2"></i>', chart_bytes=plots_pre.get('top_activities_plot'), tooltip="Gráfico de barras que mostra as atividades que ocorrem com maior frequência em todos os processos. Ajuda a identificar os passos mais comuns e centrais do fluxo de trabalho.")
+            create_card("Gargalos: Tempo de Serviço vs. Espera", '<i class="bi bi-traffic-light"></i>', chart_bytes=plots_pre.get('service_vs_wait_stacked'), tooltip="Compara o tempo em que uma tarefa está a ser ativamente trabalhada (Tempo de Serviço) com o tempo em que fica parada à espera (Tempo de Espera). Atividades com alto tempo de espera são os principais gargalos.")
+            create_card("Top 10 Handoffs por Custo de Espera", '<i class="bi bi-currency-exchange"></i>', chart_bytes=plots_pre.get('top_handoffs_cost'), tooltip="Estima o custo financeiro do tempo de espera entre as 10 transições mais lentas. Quantifica o impacto dos gargalos, traduzindo tempo perdido em perdas financeiras.")
+            create_card("Top Recursos por Tempo de Espera Gerado", '<i class="bi bi-sign-stop"></i>', chart_bytes=plots_pre.get('bottleneck_by_resource'), tooltip="Identifica os recursos que, em média, geram o maior tempo de espera para a tarefa seguinte após concluírem o seu trabalho. Pode indicar sobrecarga ou necessidade de otimização no trabalho desse recurso.")
+            create_card("Custo Real vs. Atraso", '<i class="bi bi-cash-stack"></i>', chart_bytes=plots_eda.get('plot_18'), tooltip="Analisa a correlação entre o custo total de um processo e o seu atraso em dias.")
+            create_card("Nº de Recursos vs. Custo Total", '<i class="bi bi-people-fill"></i>', chart_bytes=plots_eda.get('plot_20'), tooltip="Analisa a correlação entre o número de recursos alocados a um processo e o seu custo final.")
             
         with c2:
-            create_card("Tempo Médio de Execução por Atividade", '<i class="bi bi-hammer"></i>', chart_bytes=plots_pre.get('activity_service_times'))
-            create_card("Espera vs. Execução (Dispersão)", '<i class="bi bi-search"></i>', chart_bytes=plots_pre.get('wait_vs_service_scatter'))
-            create_card("Evolução do Tempo Médio de Espera", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_pre.get('wait_time_evolution'))
-            create_card("Top 10 Handoffs por Tempo de Espera", '<i class="bi bi-pause-circle"></i>', chart_bytes=plots_pre.get('top_handoffs'))
-            create_card("Rate Horário Médio vs. Atraso", '<i class="bi bi-alarm"></i>', chart_bytes=plots_eda.get('plot_19'))
-            create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'))
+            create_card("Tempo Médio de Execução por Atividade", '<i class="bi bi-hammer"></i>', chart_bytes=plots_pre.get('activity_service_times'), tooltip="Mostra o tempo médio que cada tipo de atividade leva para ser concluída (tempo de serviço). Permite identificar as tarefas que, isoladamente, são as mais demoradas.")
+            create_card("Espera vs. Execução (Dispersão)", '<i class="bi bi-search"></i>', chart_bytes=plots_pre.get('wait_vs_service_scatter'), tooltip="Analisa a correlação entre o tempo de execução de uma tarefa e o tempo de espera que a sucede. Pode revelar se tarefas longas tendem a gerar mais espera a jusante.")
+            create_card("Evolução do Tempo Médio de Espera", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_pre.get('wait_time_evolution'), tooltip="Mostra como o tempo médio de espera entre tarefas tem evoluído ao longo dos meses. Permite avaliar o impacto de melhorias ou a degradação da eficiência do processo.")
+            create_card("Top 10 Handoffs por Tempo de Espera", '<i class="bi bi-pause-circle"></i>', chart_bytes=plots_pre.get('top_handoffs'), tooltip="Lista as 10 transições entre atividades que têm o maior tempo médio de espera. Aponta diretamente para os maiores gargalos do processo em termos de tempo.")
+            create_card("Rate Horário Médio vs. Atraso", '<i class="bi bi-alarm"></i>', chart_bytes=plots_eda.get('plot_19'), tooltip="Analisa a correlação entre o custo médio por hora dos recursos de um processo e o seu atraso final.")
+            create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'), tooltip="Mostra a distribuição dos atrasos para processos agrupados por diferentes faixas de orçamento.")
 
-        # --- INÍCIO DA ALTERAÇÃO ---
-        # O cartão "Análise de Tempo entre Marcos" passa a ocupar uma linha inteira para melhor visualização
         if 'milestone_time_analysis_plot' in plots_post:
-            create_card("Análise de Tempo entre Marcos do Processo", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'))
+            create_card("Análise de Tempo entre Marcos do Processo", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'), tooltip="Mede o tempo de espera entre as fases mais importantes do processo (marcos). Dá uma visão de alto nível sobre onde o processo fica parado por mais tempo entre etapas críticas.")
         
-        # Nova linha de colunas para colocar os cartões lado a lado, como pedido
         c3, c4 = st.columns(2)
         with c3:
-            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'))
+            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'), tooltip="Heatmap que mostra a correlação estatística entre diferentes variáveis numéricas (custo, duração, prioridade, etc.). Ajuda a descobrir relações inesperadas, como 'custo por hora' e 'atraso'.")
         with c4:
-            create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'))
-        # --- FIM DA ALTERAÇÃO ---
+            create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'), tooltip="Mostra o tempo médio que cada atividade fica em espera *antes* de ser iniciada. Complementa a análise de gargalos, focando no tempo de fila de cada tarefa.")
             
-        create_card("Matriz de Tempo de Espera entre Atividades (horas)", '<i class="bi bi-grid-3x3-gap"></i>', chart_bytes=plots_post.get('waiting_time_matrix_plot'))
+        create_card("Matriz de Tempo de Espera entre Atividades (horas)", '<i class="bi bi-grid-3x3-gap"></i>', chart_bytes=plots_post.get('waiting_time_matrix_plot'), tooltip="Uma matriz detalhada que mostra o tempo médio de espera (em horas) para cada transição possível entre duas atividades. Permite uma análise granular de todos os handoffs.")
 
     elif st.session_state.current_section == "fluxo":
         st.subheader("5. Fluxo e Conformidade")
 
-        # Gráficos de Modelo (largura total)
-        create_card("Modelo - Inductive Miner", '<i class="bi bi-compass"></i>', chart_bytes=plots_post.get('model_inductive_petrinet'))
-        create_card("Modelo - Heuristics Miner", '<i class="bi bi-gear"></i>', chart_bytes=plots_post.get('model_heuristic_petrinet'))
+        create_card("Modelo - Inductive Miner", '<i class="bi bi-compass"></i>', chart_bytes=plots_post.get('model_inductive_petrinet'), tooltip="Este é um modelo do processo descoberto automaticamente a partir dos dados. O Inductive Miner gera modelos estruturados e fáceis de ler, que representam o fluxo de trabalho 'ideal' ou mais comum.")
+        create_card("Modelo - Heuristics Miner", '<i class="bi bi-gear"></i>', chart_bytes=plots_post.get('model_heuristic_petrinet'), tooltip="Este é outro modelo do processo, focado em mostrar as conexões mais frequentes, mesmo que isso resulte num modelo menos estruturado. É útil para explorar os caminhos mais comuns e ignorar os raros.")
 
-        # Métricas lado a lado
         c1, c2 = st.columns(2)
         with c1:
-            create_card("Métricas (Inductive Miner)", '<i class="bi bi-clipboard-data"></i>', chart_bytes=plots_post.get('metrics_inductive'))
+            create_card("Métricas (Inductive Miner)", '<i class="bi bi-clipboard-data"></i>', chart_bytes=plots_post.get('metrics_inductive'), tooltip="Avalia a qualidade do modelo Inductive Miner. Fitness: Quão bem o modelo representa a realidade. Precisão: Quão bem o modelo evita comportamentos não existentes. Generalização: Capacidade de representar comportamentos não vistos. Simplicidade: Facilidade de leitura do modelo.")
         with c2:
-            create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'))
+            create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'), tooltip="Avalia a qualidade do modelo Heuristics Miner, usando os mesmos critérios: Fitness, Precisão, Generalização e Simplicidade.")
         
-        # Gráficos de Variantes em largura total para legibilidade
-        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'))
-        create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'))
-        create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'))
+        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'), tooltip="Este gráfico mostra o fluxo de atividades, passo a passo, para cada uma das 10 variações de processo mais frequentes. Permite comparar visualmente os diferentes caminhos que os processos seguem.")
+        create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'), tooltip="Apresenta a duração média de cada uma das 10 variantes de processo mais comuns. Ajuda a identificar quais são os fluxos de trabalho mais rápidos e os mais lentos.")
+        create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'), tooltip="Mostra, em barras, a frequência das 10 variações de processo mais comuns. Permite entender qual é o 'caminho feliz' e quais são as exceções mais recorrentes.")
 
-        # Restantes cartões na estrutura de duas colunas
         c3, c4 = st.columns(2)
         with c3:
-            create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'))
-            create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'))
-            create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'))
-            create_card("Centralidade dos Tipos de Tarefa", '<i class="bi bi-arrows-angle-contract"></i>', chart_bytes=plots_eda.get('plot_25'))
+            create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'), tooltip="Tabela com os dados detalhados das variantes de processo mais comuns, incluindo a sua frequência absoluta e o seu peso percentual em relação ao total.")
+            create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'), tooltip="Mostra a contagem de todas as tarefas executadas, agrupadas pelo seu tipo. Dá uma visão geral do volume de trabalho para cada categoria de atividade.")
+            create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'), tooltip="Histograma que mostra a distribuição dos tempos de execução de todas as tarefas. Ajuda a entender a variabilidade e a previsibilidade do esforço necessário para cada atividade.")
+            create_card("Centralidade dos Tipos de Tarefa", '<i class="bi bi-arrows-angle-contract"></i>', chart_bytes=plots_eda.get('plot_25'), tooltip="Analisa quais tipos de tarefas são mais frequentemente 'predecessoras' (ocorrem antes de outras) e quais são mais 'sucessoras' (ocorrem depois de outras). Ajuda a entender as dependências centrais no fluxo.")
         with c4:
-            create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'))
-            create_card("Score de Conformidade ao Longo do Tempo", '<i class="bi bi-check2-circle"></i>', chart_bytes=plots_post.get('conformance_over_time_plot'))
-            create_card("Distribuição de Tarefas por Prioridade", '<i class="bi bi-award"></i>', chart_bytes=plots_eda.get('plot_09'))
-            create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'))
+            create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'), tooltip="Identifica e conta as sequências de atividades que representam retrabalho (ex: A -> B -> C -> A). Essencial para encontrar ineficiências e ciclos de correção.")
+            create_card("Score de Conformidade ao Longo do Tempo", '<i class="bi bi-check2-circle"></i>', chart_bytes=plots_post.get('conformance_over_time_plot'), tooltip="Mede a aderência dos processos ao modelo descoberto (Fitness) ao longo do tempo. Uma linha ascendente indica que os processos estão a tornar-se mais padronizados e conformes.")
+            create_card("Distribuição de Tarefas por Prioridade", '<i class="bi bi-award"></i>', chart_bytes=plots_eda.get('plot_09'), tooltip="Conta o número de tarefas para cada nível de prioridade definido. Permite analisar se a atribuição de prioridades está bem distribuída ou concentrada.")
+            create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'), tooltip="Lista as 10 tarefas individuais (não o tipo, mas a instância específica) que mais tempo demoraram a ser concluídas.")
 
-        # --- CORREÇÃO DE LAYOUT PARA OS GRÁFICOS DE COMPLEXIDADE E DEPENDÊNCIAS ---
         c5, c6 = st.columns(2)
         with c5:
-            # Gráfico 1 de complexidade, agora na coluna da esquerda
-            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'))
-            # Gráfico de dependências volta para uma coluna de meia largura
-            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'))
+            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'), tooltip="Mostra a distribuição do 'índice de complexidade' calculado para os processos. Este índice combina o risco do projeto com o número de funções diferentes envolvidas.")
+            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'), tooltip="Exemplo visual da rede de dependências entre as tarefas de um único processo. Ajuda a entender o caminho crítico e a estrutura de um projeto específico.")
         with c6:
-            # Gráfico 2 de complexidade, agora na coluna da direita
-            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'))
-        # --- FIM DA CORREÇÃO ---
+            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'), tooltip="Analisa se processos considerados mais 'complexos' (maior score de complexidade) tendem a ter maiores atrasos.")
+            create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-arrows-expand"></i>', chart_bytes=plots_eda.get('plot_28'), tooltip="Analisa se processos com maior número de dependências entre tarefas tendem a ter maiores desvios de custo.")
 
 # --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
 def rl_page():
