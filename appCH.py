@@ -1448,7 +1448,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         episode_reward, done = 0, False
         
         while not done:
+            # --- INÍCIO DO BLOCO DE DEBUG ---
+            print(f"\n--- SIMULANDO DIA | Data: {env.current_date.date()} | Projetos Ativos: {len(env.active_projects)} ---")
+            # --- FIM DO BLOCO DE DEBUG ---
             possible_actions_full = env.get_possible_actions_for_state()
+            # --- INÍCIO DO BLOCO DE DEBUG ---
+            print(f"DEBUG: Encontradas {len(possible_actions_full)} ações possíveis.")
+            # --- FIM DO BLOCO DE DEBUG ---
             action_list_for_step = []
 
             # Para cada tipo de recurso, o agente decide qual o tipo de tarefa a priorizar.
@@ -1473,6 +1479,11 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     action_list_for_step.append(best_task_action)
                     # Remover a tarefa escolhida da lista de possibilidades para não ser alocada duas vezes no mesmo dia.
                     possible_actions_full = [a for a in possible_actions_full if a[3] != best_task_action[3]]
+            
+            # --- INÍCIO DO BLOCO DE DEBUG ---
+            print(f"DEBUG: Agente decidiu executar {len(action_list_for_step)} ações neste dia.")
+            print(f"DEBUG: O estado da simulação antes do 'step' é: done = {done}")
+            # --- FIM DO BLOCO DE DEBUG ---
 
             next_state, reward, done = env.step(action_list_for_step)
             
