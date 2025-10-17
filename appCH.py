@@ -228,7 +228,7 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
             </div>
         </div>
         """, unsafe_allow_html=True)
-
+        
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 if 'current_page' not in st.session_state: st.session_state.current_page = "Dashboard"
@@ -2123,13 +2123,28 @@ def rl_page():
         tables_rl = st.session_state.tables_rl
         
         st.markdown("<h4>Desempenho Global</h4>", unsafe_allow_html=True)
-        create_card("Performance Global (Conjunto de Teste)", '<i class="bi bi-clipboard-data-fill"></i>', dataframe=tables_rl.get('global_performance_test'))
+        create_card(
+            "Performance Global (Conjunto de Teste)", 
+            '<i class="bi bi-clipboard-data-fill"></i>', 
+            dataframe=tables_rl.get('global_performance_test'),
+            tooltip="Esta tabela resume o desempenho agregado do agente de IA no conjunto de teste. Compara a soma total de dias e custos dos processos simulados com os valores históricos reais, calculando a melhoria percentual."
+        )
 
-        st.markdown("<h4>Métricas de Treinamento do Agente</h4>", unsafe_allow_html=True)
-        create_card("Evolução do Treino", '<i class="bi bi-robot"></i>', chart_bytes=plots_rl.get('training_metrics'))
+        st.markdown("<h4>Métricas de Treino do Agente</h4>", unsafe_allow_html=True)
+        create_card(
+            "Evolução do Treino", 
+            '<i class="bi bi-robot"></i>', 
+            chart_bytes=plots_rl.get('training_metrics'),
+            tooltip="Estes gráficos mostram as curvas de aprendizagem do agente. Recompensa: Deve ter uma tendência crescente. Duração/Custo: Devem ter uma tendência decrescente. Epsilon: Mostra a taxa de exploração, que diminui à medida que o agente fica mais confiante."
+        )
         
         st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
-        create_card("Comparação do Desempenho (Conjunto de Teste da Amostra)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_rl.get('evaluation_comparison_test'))
+        create_card(
+            "Comparação do Desempenho (Conjunto de Teste da Amostra)", 
+            '<i class="bi bi-bullseye"></i>', 
+            chart_bytes=plots_rl.get('evaluation_comparison_test'),
+            tooltip="Estes gráficos comparam, processo a processo, a performance do agente (barras azuis) com os dados históricos (barras vermelhas) para o conjunto de teste. Permite uma análise visual de onde o agente teve melhor ou pior desempenho."
+        )
         
         st.markdown(f"<h4>Análise Detalhada da Simulação (Processo {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
@@ -2144,7 +2159,12 @@ def rl_page():
                 sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
                 st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real")
 
-        create_card(f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", '<i class="bi bi-search"></i>', chart_bytes=plots_rl.get('project_detailed_comparison'))
+        create_card(
+        f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", 
+        '<i class="bi bi-search"></i>', 
+        chart_bytes=plots_rl.get('project_detailed_comparison'),
+        tooltip="Análise detalhada de um único processo. O gráfico da esquerda compara o custo acumulado (Real vs. Simulado). O da direita compara o progresso acumulado (em horas trabalhadas). Ideal para entender a estratégia do agente no dia a dia."
+    )
 
 # --- CONTROLO PRINCIPAL DA APLICAÇÃO ---
 def main():
