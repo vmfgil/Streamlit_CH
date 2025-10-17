@@ -1294,52 +1294,38 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             daily_cost_by_project = defaultdict(float) # Necessário para os logs detalhados
             daily_hours_by_project = defaultdict(float) # Necessário para os logs detalhados
 
-            for res_type, task_type, proj_id, task_id in action_list:
-                if task_type == "idle":
-                    reward_from_tasks -= self.rewards['idle_penalty']
+            # O loop agora processa a lista de ações detalhada
+            for res_type, task_type, proj_id, task_id, res_id, hours_to_work in action_list:
+                
+                task_data = self.active_projects[proj_id]['tasks'][task_id]
+                if task_data['status'] == 'Concluída':
+                    continue
+                if task_data['status'] == 'Pendente':
+                    task_data['status'] = 'Em Andamento'
+
+                # O esforço e progresso são medidos em HORAS.
+                remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                
+                # As horas a trabalhar já foram calculadas, mas não podem exceder o que falta
+                actual_hours_worked = min(hours_to_work, remaining_effort)
+                if actual_hours_worked <= 0:
                     continue
 
-                # CÓDIGO CORRIGIDO E OTIMIZADO
-                pool = self.resources_by_type[res_type]
-                
-                # Identificar recursos do pool que ainda têm capacidade hoje
-                ids_in_pool = pool['resource_id'].tolist()
-                available_ids = [rid for rid in ids_in_pool if resources_hours_today[rid] < self.resource_capacity_map.get(rid, 8)]
-
-                if not available_ids: continue
-                
-                # Escolher um recurso aleatório dos que estão disponíveis
-                chosen_res_id = random.choice(available_ids)
-                res_info = pool[pool['resource_id'] == chosen_res_id].iloc[0]
-
-                # Avançar o trabalho na tarefa escolhida
-                task_data = self.active_projects[proj_id]['tasks'][task_id]
-                if task_data['status'] == 'Concluída': continue
-                if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-
-                # O esforço está em dias, o progresso também será em dias.
-                remaining_effort_days = task_data['estimated_effort'] - task_data['progress']
-                capacity_today_hours = self.resource_capacity_map.get(chosen_res_id, 8)
-                workable_hours_today = capacity_today_hours - resources_hours_today[chosen_res_id]
-                
-                # Um recurso pode trabalhar no máximo as suas horas disponíveis hoje.
-                hours_to_work = min(workable_hours_today, capacity_today_hours)
-                if hours_to_work <= 0: continue
-                
-                # O progresso adicionado é a fração de um dia de trabalho (assumindo 8h/dia).
-                progress_in_days = hours_to_work / 8.0
-                
-                # Não pode progredir mais do que o esforço que falta.
-                progress_in_days = min(progress_in_days, remaining_effort_days)
-                
-                # As horas realmente trabalhadas podem ser menos se a tarefa estiver a acabar.
-                actual_hours_worked = progress_in_days * 8.0
-                
+                res_info = self.df_resources[self.df_resources['resource_id'] == res_id].iloc[0]
                 cost_today = actual_hours_worked * float(res_info['cost_per_hour'])
-                self.active_projects[proj_id]['current_cost'] += cost_today
-                task_data['progress'] += progress_in_days
-                resources_hours_today[chosen_res_id] += actual_hours_worked
 
+                self.active_projects[proj_id]['current_cost'] += cost_today
+                task_data['progress'] += actual_hours_worked
+                
+                # Para os logs detalhados
+                daily_cost_by_project[proj_id] += cost_today
+                daily_hours_by_project[proj_id] += actual_hours_worked
+
+                if task_data['progress'] >= task_data['estimated_effort']:
+                    task_data['status'] = 'Concluída'
+                    task_data['completion_date'] = self.current_date
+                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
+            
                 # Para os logs detalhados
                 daily_cost_by_project[proj_id] += cost_today
                 daily_hours_by_project[proj_id] += hours_to_work
@@ -1454,40 +1440,55 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             
             action_list_for_step = []
             
-            # Obter todas as tarefas de trabalho possíveis para hoje
+            # --- NOVA LÓGICA DE ALOCAÇÃO DIÁRIA ---
+            # 1. Obter todas as tarefas de trabalho possíveis para hoje
             work_actions = [a for a in possible_actions_full if a[1] != 'idle']
-            
-            # Agrupar tarefas por tipo de recurso necessário
-            tasks_by_res_type = defaultdict(list)
-            for action in work_actions:
-                tasks_by_res_type[action[0]].append(action)
+            simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
 
-            # Para cada tipo de recurso, usar o agente para priorizar e atribuir trabalho
-            for res_type, available_tasks in tasks_by_res_type.items():
-                num_resources = len(env.resources_by_type.get(res_type, []))
+            # 2. Criar um pool de horas disponíveis para todos os recursos hoje
+            available_hours_per_resource = {res_id: cap for res_id, cap in env.resource_capacity_map.items()}
+
+            # 3. Enquanto houver trabalho a fazer e recursos com horas disponíveis
+            while any(h > 0 for h in available_hours_per_resource.values()) and work_actions:
                 
-                # Priorizar as tarefas usando o agente
-                simplified_options = list(set([(a[0], a[1]) for a in available_tasks]))
+                # Pergunta ao agente qual o melhor TIPO de tarefa a fazer AGORA
+                chosen_simplified_action = agent.choose_action(state, simplified_options)
+                if not chosen_simplified_action:
+                    break # Se o agente não escolher nada, paramos por hoje
+
+                # Encontrar a tarefa real de maior prioridade que corresponde à escolha
+                candidate_tasks = [t for t in work_actions if (t[0], t[1]) == chosen_simplified_action]
+                if not candidate_tasks:
+                    # Se não houver mais tarefas deste tipo, remove a opção e tenta de novo
+                    simplified_options.remove(chosen_simplified_action)
+                    continue
+
+                best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
+                res_type, task_type, proj_id, task_id = best_task_action
                 
-                # Atribuir trabalho até ao limite de recursos disponíveis ou de tarefas
-                for _ in range(num_resources):
-                    if not available_tasks: break # Não há mais tarefas para este tipo de recurso
+                # Encontrar um recurso DESOCUPADO para esta tarefa
+                pool = env.resources_by_type[res_type]
+                available_resources = [rid for rid in pool['resource_id'] if available_hours_per_resource.get(rid, 0) > 0]
+                
+                if not available_resources:
+                    # Não há mais recursos deste tipo disponíveis, remove a opção e tenta de novo
+                    simplified_options = [opt for opt in simplified_options if opt[0] != res_type]
+                    continue
 
-                    # Pedir ao agente para escolher o MELHOR TIPO de tarefa a fazer
-                    chosen_simplified_action = agent.choose_action(state, simplified_options)
-                    if not chosen_simplified_action: continue
-                        
-                    # Filtrar as tarefas reais que correspondem à escolha do agente
-                    candidate_tasks = [t for t in available_tasks if (t[0], t[1]) == chosen_simplified_action]
-                    if not candidate_tasks: continue
-
-                    # Escolher a de maior prioridade entre as candidatas
-                    best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
-                    
-                    action_list_for_step.append(best_task_action)
-                    
-                    # Remover a tarefa escolhida da lista de disponíveis para não ser atribuída duas vezes
-                    available_tasks.remove(best_task_action)
+                # Atribui a tarefa a um recurso disponível
+                chosen_res_id = random.choice(available_resources)
+                
+                # Define um "bloco" de trabalho (ex: 1 hora)
+                work_chunk_hours = 1.0
+                
+                # Garante que não excede a capacidade do recurso
+                hours_to_assign = min(work_chunk_hours, available_hours_per_resource[chosen_res_id])
+                
+                # Adiciona a atribuição à lista de ações (agora com resource_id)
+                action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
+                
+                # Atualiza as horas disponíveis do recurso
+                available_hours_per_resource[chosen_res_id] -= hours_to_assign
             
             
             next_state, reward, done = env.step(action_list_for_step)
