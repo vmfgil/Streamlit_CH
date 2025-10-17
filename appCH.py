@@ -632,12 +632,12 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
     handover_edges = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
     
-    # 1. CRIAÇÃO DO GRAFO (G) e FIGURA: Estas linhas têm de estar sempre aqui
+    # 1. CRIAÇÃO DO Gráfico (G) e FIGURA: Estas linhas têm de estar sempre aqui
     fig_net, ax_net = plt.subplots(figsize=(18, 12)); 
     G = nx.DiGraph();
     for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
 
-        # Filtrar o grafo para mostrar apenas os nós mais relevantes
+        # Filtrar o Gráfico para mostrar apenas os nós mais relevantes
     recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
     node_degrees = dict(G.degree())
     recursos_ordenados = sorted(node_degrees, key=node_degrees.get, reverse=True)
@@ -645,7 +645,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     nos_para_manter = top_recursos.union(recursos_importantes)
     G_filtrado = G.subgraph(nos_para_manter).copy()
     
-    # Desenhar o grafo filtrado
+    # Desenhar o Gráfico filtrado
     if G_filtrado.nodes():
         pos = nx.spring_layout(G_filtrado, k=0.8, iterations=50, seed=42)
         weights = [G_filtrado[u][v]['weight'] for u, v in G_filtrado.edges()]
@@ -674,14 +674,14 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         resource_role_counts = _df_full_context.groupby(['resource_name', 'skill_level']).size().reset_index(name='count')
 
-        # Filtrar o dataframe antes de construir o grafo
+        # Filtrar o dataframe antes de construir o Gráfico
         recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
         recursos_ordenados_df = resource_role_counts.sort_values('count', ascending=False)
         top_30_recursos = set(recursos_ordenados_df['resource_name'].head(30))
         recursos_para_manter = top_30_recursos.union(recursos_importantes)
         df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(recursos_para_manter)]
         
-        # Construir o grafo bipartido a partir dos dados JÁ FILTRADOS
+        # Construir o Gráfico bipartido a partir dos dados JÁ FILTRADOS
         G_bipartite = nx.Graph()
         resources_nodes = df_filtrado['resource_name'].unique()
         roles_nodes = df_filtrado['skill_level'].unique()
@@ -691,7 +691,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         for _, row in df_filtrado.iterrows():
             G_bipartite.add_edge(row['resource_name'], row['skill_level'], weight=row['count'])
         
-        # Desenhar o grafo filtrado
+        # Desenhar o Gráfico filtrado
         fig, ax = plt.subplots(figsize=(12, max(8, len(resources_nodes) * 0.3))) # Altura dinâmica
         pos = nx.bipartite_layout(G_bipartite, resources_nodes)
         
@@ -1936,9 +1936,9 @@ def dashboard_page():
 
         # Gráficos complexos que ocupam a largura total
         if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Grafo que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Gráfico que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
 
-        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Grafo onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
+        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Gráfico onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
         
         create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'), tooltip="Matriz que cruza recursos com atividades, mostrando as horas totais trabalhadas. Permite identificar rapidamente quem são os especialistas em cada tipo de tarefa.")
     
