@@ -1258,7 +1258,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             possible_actions = set()
             for proj_id, proj_state in self.active_projects.items():
                 for task_id, task_data in proj_state['tasks'].items():
-                    if task_data['status'] == 'Pendente':
+                    if task_data['status'] in ['Pendente', 'Em Andamento']:
                         # Verifica para cada tipo de recurso se a tarefa é elegível
                         for res_type in self.resource_types:
                              if self._is_task_eligible(task_data, proj_state['risk_rating'], proj_state['tasks'], proj_state['dependencies'], check_resource_type=res_type):
