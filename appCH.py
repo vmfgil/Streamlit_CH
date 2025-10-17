@@ -1373,7 +1373,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     
                     # Calcular métricas finais e recompensa de conclusão
                     original_proj_info = self.df_projects[self.df_projects['project_id'] == proj_id].iloc[0]
-                    final_duration = (self.current_date - proj_state['start_date']).days
+                    final_duration = np.busday_count(proj_state['start_date'].date(), self.current_date.date())
                     real_duration = original_proj_info['total_duration_days']
                     
                     time_diff = real_duration - final_duration
@@ -1449,13 +1449,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             if env.current_date.weekday() >= 5:
                 env.current_date += timedelta(days=1)
                 continue
-            # --- INÍCIO DO BLOCO DE DEBUG --
-            print(f"\n--- SIMULANDO DIA | Data: {env.current_date.date()} | Projetos Ativos: {len(env.active_projects)} ---")
-            # --- FIM DO BLOCO DE DEBUG ---
+            
             possible_actions_full = env.get_possible_actions_for_state()
-            # --- INÍCIO DO BLOCO DE DEBUG ---
-            print(f"DEBUG: Encontradas {len(possible_actions_full)} ações possíveis.")
-            # --- FIM DO BLOCO DE DEBUG ---
+            
             action_list_for_step = []
             
             # Obter todas as tarefas de trabalho possíveis para hoje
@@ -1493,11 +1489,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     # Remover a tarefa escolhida da lista de disponíveis para não ser atribuída duas vezes
                     available_tasks.remove(best_task_action)
             
-            # --- INÍCIO DO BLOCO DE DEBUG --
-            print(f"DEBUG: Agente decidiu executar {len(action_list_for_step)} ações neste dia.")
-            print(f"DEBUG: O estado da simulação antes do 'step' é: done = {done}")
-            # --- FIM DO BLOCO DE DEBUG ---
-
+            
             next_state, reward, done = env.step(action_list_for_step)
             
             # Atualizar a Q-table com base nas ações simplificadas que foram tomadas.
@@ -1602,7 +1594,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     project_info_sim = test_results_df.loc[test_results_df['project_id'] == project_id_to_simulate].iloc[0]
     
     tables['project_summary'] = pd.DataFrame({
-        'Métrica': ['Duração (dias)', 'Custo (€)'],
+        'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
         'Real (Histórico)': [project_info_real['total_duration_days'], project_info_real['total_actual_cost']],
         'Simulado (RL)': [project_info_sim['simulated_duration'], project_info_sim['simulated_cost']]
     })
@@ -2084,11 +2076,11 @@ def rl_page():
         st.markdown(f"<h4>Análise Detalhada da Simulação (Processo {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
         summary_df = tables_rl.get('project_summary')
         if summary_df is not None:
-            metric_cols = st.columns(2)
-            with metric_cols[0]:
-                real_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Real (Histórico)'].iloc[0]
-                sim_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Simulado (RL)'].iloc[0]
-                st.metric(label="Duração (dias úteis)", value=f"{sim_duration:.0f}", delta=f"{sim_duration - real_duration:.0f} vs Real",delta_color="inverse")
+            metric_cols = st.columns(2)
+            with metric_cols[0]:
+                real_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Real (Histórico)'].iloc[0]
+                sim_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Simulado (RL)'].iloc[0]
+                st.metric(label="Duração (dias úteis)", value=f"{sim_duration:.0f}", delta=f"{sim_duration - real_duration:.0f} vs Real",delta_color="inverse")
             with metric_cols[1]:
                 real_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Real (Histórico)'].iloc[0]
                 sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
