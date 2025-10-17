@@ -1319,26 +1319,25 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 task_data = self.active_projects[proj_id]['tasks'][task_id]
                 if task_data['status'] == 'Concluída': continue
                 if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
-                
+
                 # O esforço está em dias, o progresso também será em dias.
-                # O esforço está em dias, o progresso também será em dias.
                 remaining_effort_days = task_data['estimated_effort'] - task_data['progress']
                 capacity_today_hours = self.resource_capacity_map.get(chosen_res_id, 8)
                 workable_hours_today = capacity_today_hours - resources_hours_today[chosen_res_id]
-
+                
                 # Um recurso pode trabalhar no máximo as suas horas disponíveis hoje.
                 hours_to_work = min(workable_hours_today, capacity_today_hours)
                 if hours_to_work <= 0: continue
-
+                
                 # O progresso adicionado é a fração de um dia de trabalho (assumindo 8h/dia).
                 progress_in_days = hours_to_work / 8.0
-
+                
                 # Não pode progredir mais do que o esforço que falta.
                 progress_in_days = min(progress_in_days, remaining_effort_days)
                 
                 # As horas realmente trabalhadas podem ser menos se a tarefa estiver a acabar.
                 actual_hours_worked = progress_in_days * 8.0
-
+                
                 cost_today = actual_hours_worked * float(res_info['cost_per_hour'])
                 self.active_projects[proj_id]['current_cost'] += cost_today
                 task_data['progress'] += progress_in_days
