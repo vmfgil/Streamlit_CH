@@ -1182,246 +1182,211 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects['planned_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['planned_end_date']), axis=1)
     df_projects['total_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['end_date']), axis=1)
     
-    # --- AMBIENTE E AGENTE (CLASSES) --- (Com alterações para maior realismo)
-    class ProjectManagementEnv:
-        def __init__(self, df_tasks, df_resources, df_dependencies, df_projects_info, df_resource_allocations=None, reward_config=None, min_progress_for_next_phase=0.7):
+    # --- AMBIENTE E AGENTE (CLASSES) --- (VERSÃO PORTFÓLIO)
+    class PortfolioManagementEnv:
+        def __init__(self, dfs, reward_config):
             self.rewards = reward_config
-            self.df_tasks = df_tasks
-            self.df_resources = df_resources
-            self.df_dependencies = df_dependencies
-            self.df_projects_info = df_projects_info
-            self.df_resource_allocations = df_resource_allocations if df_resource_allocations is not None else pd.DataFrame()
+
+            # 1. Carregar e pré-processar TODOS os dados de uma vez
+            self.df_projects = dfs['projects'].sort_values('start_date').reset_index(drop=True)
+            self.df_resources = dfs['resources']
+            self.df_dependencies = dfs['dependencies']
+            
+            # 2. Criar dicionários para acesso rápido (MUITO mais rápido que filtrar DataFrames em loop)
+            self.tasks_by_project = {pid: df_group.to_dict('records') for pid, df_group in dfs['tasks'].groupby('project_id')}
+            self.dependencies_by_project = {pid: {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in df_group.iterrows()} for pid, df_group in self.df_dependencies.groupby('project_id')}
+            
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist())
-            self.task_types = sorted(self.df_tasks['task_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
-            self.all_actions = self._generate_all_actions()
-            self.min_progress_for_next_phase = min_progress_for_next_phase
+            
             self.TASK_TYPE_RESOURCE_MAP = {
-            'Onboarding': ['Analista Comercial', 'Gerente Comercial'],
-            'Validação KYC e Conformidade': ['Analista de Risco', 'Analista Operações/Legal'],
-            'Análise Documental': ['Analista Comercial', 'Gerente Comercial'],
-            'Análise de Risco e Proposta': ['Analista de Risco'],
-            'Avaliação da Imóvel': ['Avaliador Externo'],
-            # A tarefa 'Decisão de Crédito e Condições' é tratada pelo RISK_ESCALATION_MAP, 
-            # por isso não precisa de estar aqui. Deixei-a comentada para referência.
-            # 'Decisão de Crédito e Condições': [], 
-            'Preparação Legal': ['Analista Operações/Legal'],
-            'Fecho': ['Analista Operações/Legal']
-        }
+                'Onboarding': ['Analista Comercial', 'Gerente Comercial'],
+                'Validação KYC e Conformidade': ['Analista de Risco', 'Analista Operações/Legal'],
+                'Análise Documental': ['Analista Comercial', 'Gerente Comercial'],
+                'Análise de Risco e Proposta': ['Analista de Risco'],
+                'Avaliação da Imóvel': ['Avaliador Externo'],
+                'Preparação Legal': ['Analista Operações/Legal'],
+                'Fecho': ['Analista Operações/Legal']
+            }
             self.RISK_ESCALATION_MAP = {'A': ['Analista de Risco'], 'B': ['Analista de Risco', 'Diretor de Risco'],'C': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito'],'D': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo']}
-        def _generate_all_actions(self):
-            actions = set();
-            for res_type in self.resource_types:
-                actions.add((res_type, 'idle'));
-                for task_type in self.task_types: actions.add((res_type, task_type))
-            return tuple(sorted(list(actions)))
-
-
-        # [VERSÃO DE CORREÇÃO FINAL E DEFINITIVA]
-        def reset(self, project_id):
-            # Reinicialização completa de todas as variáveis de estado da simulação
-            self.day_count = 0
-            self.current_cost = 0.0
-            self.total_estimated_effort = 0.0
-            self.tasks_state = {}
-            self.resources_used_today = set()
-            self.daily_history = []
+        
+        def reset(self):
+            # 3. Reset GERAL da simulação
+            self.current_date = self.df_projects['start_date'].min()
+            self.resource_calendar = {} # Calendário de ocupação de recursos (essencial para a contenção)
+            
+            self.future_projects = self.df_projects.to_dict('records')
+            self.active_projects = {} # Dicionário para guardar o estado de cada projeto ativo
+            self.completed_projects = {} # Para guardar os resultados finais
             self.episode_logs = []
-            
-            # Garantir project_id com tipo consistente (string) e guardar contexto do projecto
-            proj_id_str = str(project_id)
-            self.current_project_id = proj_id_str
-            
-            # Carregar info do projecto (filtro seguro por string)
-            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'].astype(str) == proj_id_str].iloc[0]
-            self.current_risk_rating = project_info.get('risk_rating', None)
-            self.current_date = project_info.get('start_date', None)
-            
-            # Carregar tasks do projecto usando comparação por string para evitar mismatch de tipos
-            project_tasks = self.df_tasks[self.df_tasks['project_id'].astype(str) == proj_id_str].sort_values('task_id')
-            self.tasks_to_do_count = len(project_tasks)
-            
-            # Tornar leitura de budget/custo robusta
-            self.total_estimated_budget = project_info.get('total_actual_cost', None)
-            
-            # Filtrar dependências por project_id usando comparação por string e garantir chaves string
-            project_dependencies = self.df_dependencies[self.df_dependencies['project_id'].astype(str) == proj_id_str]
-            self.task_dependencies = {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in project_dependencies.iterrows()}
-            
-            # --- LÓGICA DE CÁLCULO DE ESFORÇO SIMPLIFICADA E À PROVA DE FALHAS ---
-            # Usaremos a única fonte de verdade que é garantida pelo seu script gerador:
-            # a coluna 'estimated_effort' que contém o esforço em DIAS.
-            
-            HOURS_PER_DAY_STANDARD = 8
-
-            self.tasks_state = {}
-            for _, task in project_tasks.iterrows():
-                tid = str(task.get('task_id'))
-                
-                try:
-                    # Lê o 'estimated_effort', que sabemos que o seu gerador criou em DIAS.
-                    planned_days = float(task.get('estimated_effort', 0) or 0)
-                except (ValueError, TypeError):
-                    planned_days = 0.0
-                
-                # Converte os dias planeados para horas de trabalho. Esta é a única lógica.
-                est_hours = planned_days * HOURS_PER_DAY_STANDARD
-
-                # Garante que cada tarefa tem um esforço mínimo para evitar divisões por zero.
-                if est_hours <= 0:
-                    est_hours = 1.0
-
-                self.tasks_state[tid] = {
-                    'status': 'Pendente',
-                    'progress': 0.0,
-                    'estimated_effort': float(est_hours),
-                    'priority': int(task.get('priority', 0) or 0),
-                    'task_type': task.get('task_type')
-                }
-
-            # O esforço total estimado do projeto é agora a soma correta dos esforços em horas.
-            self.total_estimated_effort = sum(t['estimated_effort'] for t in self.tasks_state.values())
+            self.detailed_logs = {} # Para guardar o progresso diário de cada projeto
             
             return self.get_state()
-            
+
         def get_state(self):
-            progress_total = sum(d.get('progress', 0) for d in self.tasks_state.values()); progress_ratio = progress_total / self.total_estimated_effort if self.total_estimated_effort > 0 else 1.0
-            budget_ratio = self.current_cost / self.total_estimated_budget if self.total_estimated_budget > 0 else 0.0
-            project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-            time_ratio = self.day_count / project_info['total_duration_days'] if project_info['total_duration_days'] > 0 else 0.0
-            pending_tasks = sum(1 for t in self.tasks_state.values() if t['status'] != 'Concluída'); return (int(progress_ratio * 100), int(budget_ratio * 100), int(time_ratio * 100), pending_tasks)
-        def get_possible_actions_for_state(self):
-            possible_actions = set()
-            for res_type in self.resource_types:
-                has_eligible_task_for_type = False
-                for task_type in self.task_types:
-                    if any(t_data['task_type'] == task_type and self._is_task_eligible(t_id, res_type) for t_id, t_data in self.tasks_state.items()):
-                        possible_actions.add((res_type, task_type)); has_eligible_task_for_type = True
-                if not has_eligible_task_for_type: possible_actions.add((res_type, 'idle'))
-            return list(possible_actions)
-        def _is_task_eligible(self, task_id, res_type):
-            task_key = str(task_id)
-            task_data = self.tasks_state.get(task_key)
-            if task_data is None:
+            # 4. O estado agora descreve o PORTFÓLIO, não um projeto
+            num_active = len(self.active_projects)
+            pending_tasks = sum(1 for proj in self.active_projects.values() for task in proj['tasks'].values() if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
+            high_prio_tasks = sum(1 for proj in self.active_projects.values() for task in proj['tasks'].values() if task['status'] == 'Pendente' and task['priority'] >= 4 and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
+            
+            # O dia da semana é um bom indicador para o agente
+            day_of_week = self.current_date.weekday()
+            
+            return (num_active, pending_tasks, high_prio_tasks, day_of_week)
+
+        def _is_task_eligible(self, task, risk_rating, all_project_tasks, project_dependencies, check_resource_type=None):
+            if task['status'] == 'Concluída': return False
+
+            pred_id = project_dependencies.get(str(task['task_id']))
+            if pred_id and all_project_tasks.get(pred_id, {}).get('status') != 'Concluída':
                 return False
-            if task_data['status'] == 'Concluída': return False
-            pred_id = self.task_dependencies.get(task_id)
-            if pred_id:
-                predecessor_data = self.tasks_state.get(pred_id, {})
-                # Verifica se a tarefa anterior já foi concluída
-                if predecessor_data.get('status') != 'Concluída':
-                    return False
             
-                # <<< INÍCIO DA NOVA LÓGICA DE ESPERA >>>
-                completion_date = predecessor_data.get('completion_date')
-                if completion_date:
-                    # Calcula quantos dias úteis passaram desde a conclusão
-                    days_passed = np.busday_count(completion_date.date(), self.current_date.date())
+            # Se a verificação for para um tipo de recurso específico
+            if check_resource_type:
+                task_type = task['task_type']
+                if task_type == 'Decisão de Crédito e Condições':
+                    required_resources = self.RISK_ESCALATION_MAP.get(risk_rating, [])
+                    return check_resource_type in required_resources
+                else:
+                    allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
+                    return check_resource_type in allowed_resources
             
-                    # Define um tempo de espera mínimo (ex: 2 dias úteis)
-                    required_wait_days = 2
+            return True # Retorna True se não estiver a verificar um recurso específico (elegibilidade geral)
+
+        def get_possible_actions_for_state(self):
+            # 5. Procura tarefas elegíveis em TODOS os projetos ativos
+            possible_actions = set()
+            for proj_id, proj_state in self.active_projects.items():
+                for task_id, task_data in proj_state['tasks'].items():
+                    if task_data['status'] == 'Pendente':
+                        # Verifica para cada tipo de recurso se a tarefa é elegível
+                        for res_type in self.resource_types:
+                             if self._is_task_eligible(task_data, proj_state['risk_rating'], proj_state['tasks'], proj_state['dependencies'], check_resource_type=res_type):
+                                 # A ação agora inclui o ID do projeto e da tarefa para ser única
+                                 possible_actions.add((res_type, task_data['task_type'], proj_id, task_id))
             
-                    # Se ainda não passou tempo suficiente, a tarefa não é elegível
-                    if days_passed < required_wait_days:
-                        return False
-                # <<< FIM DA NOVA LÓGICA DE ESPERA >>>
-            task_type = task_data['task_type']
-            if task_type == 'Decisão de Crédito e Condições':
-                required_resources = self.RISK_ESCALATION_MAP.get(self.current_risk_rating, []); return res_type in required_resources
-            else:
-                allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, []); return res_type in allowed_resources
-        
-        # [CORREÇÕES PONTOS 1, 2, 3, 6, 9, 10, 11, 13] - Método step reescrito
+            # Adicionar sempre a opção 'idle' para cada tipo de recurso
+            for res_type in self.resource_types:
+                possible_actions.add((res_type, 'idle', None, None))
+                
+            return list(possible_actions)
+
         def step(self, action_list):
-            self.resources_used_today = set() # Limpa recursos no início do dia
-            
-            if self.current_date.weekday() >= 5:
+            # 6. O 'step' agora representa um DIA de trabalho para a empresa inteira
+            if self.current_date.weekday() >= 5: # Pular fim de semana
                 self.current_date += timedelta(days=1)
-                return 0, False # Dia não útil, sem recompensa, sem custo
-            
+                return self.get_state(), 0, False 
+
+            # 6a. Ativar novos projetos que começam hoje
+            projects_to_activate = [p for p in self.future_projects if p['start_date'] == self.current_date]
+            for proj_data in projects_to_activate:
+                proj_id = proj_data['project_id']
+                self.active_projects[proj_id] = {
+                    'tasks': {str(t['task_id']): {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': t['estimated_effort'] * 8, 'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id'])} for t in self.tasks_by_project.get(proj_id, [])},
+                    'dependencies': self.dependencies_by_project.get(proj_id, {}),
+                    'risk_rating': proj_data['risk_rating'],
+                    'current_cost': 0.0,
+                    'start_date': self.current_date
+                }
+            self.future_projects = [p for p in self.future_projects if p['start_date'] != self.current_date]
+
+            # 6b. Processar ações do agente e alocar recursos
             daily_cost = 0
             reward_from_tasks = 0
+            daily_cost_by_project = defaultdict(float)
+            daily_hours_by_project = defaultdict(float)
             
-            # Itera sobre a lista de ações (mantém duplicados e ordem)
-            for res_type, task_type in action_list:
+            # Rastreia recursos usados NESTE dia para não alocar mais do que a sua capacidade diária
+            resources_hours_today = defaultdict(float)
+
+            for res_type, task_type, proj_id, task_id in action_list:
                 if task_type == "idle":
                     reward_from_tasks -= self.rewards['idle_penalty']
                     continue
                 
-                # Encontra um recurso disponível DESTE TIPO que ainda não trabalhou hoje
-                available_resources = self.resources_by_type[res_type][~self.resources_by_type[res_type]['resource_id'].isin(self.resources_used_today)]
-                if available_resources.empty:
-                    continue # Não há mais recursos deste tipo disponíveis hoje
+                # Encontrar um recurso disponível que AINDA NÃO ATINGIU a capacidade diária
+                pool = self.resources_by_type[res_type]
+                available_resources = pool[~pool['resource_id'].isin([rid for rid, hours in resources_hours_today.items() if hours >= pool.loc[pool['resource_id'] == rid, 'daily_capacity'].iloc[0]])]
+
+                if available_resources.empty: continue
                 
-                # [CORREÇÃO PONTO 6] - Prioritiza a tarefa mais importante
-                eligible_tasks = [
-                    (tid, tdata) for tid, tdata in self.tasks_state.items() 
-                    if tdata['task_type'] == task_type and self._is_task_eligible(tid, res_type)
-                ]
-                if not eligible_tasks:
-                    continue
-                
-                # Ordena as tarefas elegíveis pela sua prioridade (valor mais alto primeiro)
-                eligible_tasks.sort(key=lambda item: item[1]['priority'], reverse=True)
-                task_id_to_work, task_data = eligible_tasks[0] # Escolhe a de maior prioridade
-                
-                # Escolhe um recurso específico aleatoriamente do pool disponível
                 res_info = available_resources.sample(1).iloc[0]
-                self.resources_used_today.add(res_info['resource_id'])
+                res_id = res_info['resource_id']
 
-                # [CORREÇÃO PONTO 11] - Adiciona variabilidade no esforço ao iniciar a tarefa
-                if task_data['status'] == 'Pendente':
-                    task_data['status'] = 'Em Andamento'
-                    # Simula incerteza: o esforço real só é "conhecido" quando se começa a trabalhar
-                    uncertainty_factor = random.uniform(0.95, 1.10)
-                    task_data['estimated_effort'] *= uncertainty_factor
+                # Avançar o trabalho na tarefa escolhida
+                task_data = self.active_projects[proj_id]['tasks'][task_id]
+                if task_data['status'] == 'Concluída': continue
 
+                if task_data['status'] == 'Pendente': task_data['status'] = 'Em Andamento'
+                
                 remaining_effort = task_data['estimated_effort'] - task_data['progress']
+                daily_capacity = float(res_info['daily_capacity'])
                 
-                daily_capacity = float(pd.to_numeric(res_info.get('daily_capacity', 0), errors='coerce') or 0.0)
-                cost_per_hour = float(pd.to_numeric(res_info.get('cost_per_hour', 0), errors='coerce') or 0.0)
-                # [CORREÇÃO PONTO 10] - Usa o fator de performance do recurso individual
-                performance_factor = float(res_info.get('performance_factor', 1.0))
+                # Horas que o recurso ainda pode trabalhar hoje
+                workable_hours_today = daily_capacity - resources_hours_today[res_id]
+                
+                hours_to_work = min(workable_hours_today, remaining_effort)
+                if hours_to_work <= 0: continue
 
-                # [CORREÇÃO PONTO 2 & 9] - Usa floats, sem arredondamentos forçados (int())
-                hours_to_work = min(daily_capacity, max(0.0, remaining_effort / performance_factor))
-                
-                if hours_to_work <= 1e-9:
-                    continue
-                
-                cost_today = hours_to_work * cost_per_hour
+                cost_today = hours_to_work * float(res_info['cost_per_hour'])
+                self.active_projects[proj_id]['current_cost'] += cost_today
+                daily_cost_by_project[proj_id] += cost_today
+                daily_hours_by_project[proj_id] += hours_to_work
                 daily_cost += cost_today
                 
-                progress_added = hours_to_work * performance_factor
-                task_data['progress'] += progress_added
+                task_data['progress'] += hours_to_work
+                resources_hours_today[res_id] += hours_to_work
 
-                self.episode_logs.append({
-                    'day': self.day_count, 'resource_id': res_info['resource_id'], 'resource_type': res_type,
-                    'task_id': task_id_to_work, 'hours_worked': hours_to_work, 'daily_cost': cost_today,
-                    'action': f'Work on {task_type}'
-                })
-                
-                # [CORREÇÃO PONTO 9] - Comparação robusta de floats para conclusão
-                if task_data['progress'] >= task_data['estimated_effort'] - 1e-9:
+                if task_data['progress'] >= task_data['estimated_effort']:
                     task_data['status'] = 'Concluída'
-                    task_data['completion_date'] = self.current_date  # <<< ADICIONAR ESTA LINHA
+                    task_data['completion_date'] = self.current_date
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-            
-            self.current_cost += daily_cost
+
+            # NOVO BLOCO PARA LOGGING DETALHADO
+            for proj_id, proj_state in self.active_projects.items():
+                if proj_id not in self.detailed_logs:
+                    self.detailed_logs[proj_id] = []
+                
+                # Obter o último estado de progresso ou começar do zero
+                last_log = self.detailed_logs[proj_id][-1] if self.detailed_logs[proj_id] else {'cumulative_cost': 0.0, 'cumulative_hours': 0.0}
+                
+                self.detailed_logs[proj_id].append({
+                    'date': self.current_date,
+                    'day': (self.current_date - proj_state['start_date']).days,
+                    'cumulative_cost': last_log['cumulative_cost'] + daily_cost_by_project[proj_id],
+                    'cumulative_hours': last_log['cumulative_hours'] + daily_hours_by_project[proj_id]
+                })
+
+
+            # 6c. Atualizar estados dos projetos e calcular recompensas de conclusão
+            projects_to_remove = []
+            for proj_id, proj_state in self.active_projects.items():
+                if all(t['status'] == 'Concluída' for t in proj_state['tasks'].values()):
+                    projects_to_remove.append(proj_id)
+                    
+                    # Calcular métricas finais e recompensa de conclusão
+                    original_proj_info = self.df_projects[self.df_projects['project_id'] == proj_id].iloc[0]
+                    final_duration = (self.current_date - proj_state['start_date']).days
+                    real_duration = original_proj_info['total_duration_days']
+                    
+                    time_diff = real_duration - final_duration
+                    reward_from_tasks += self.rewards['completion_base']
+                    reward_from_tasks += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
+                    
+                    # Guardar resultados
+                    self.completed_projects[proj_id] = {'simulated_duration': final_duration, 'simulated_cost': proj_state['current_cost']}
+
+            for proj_id in projects_to_remove:
+                del self.active_projects[proj_id]
+
+            # 6d. Finalizar o dia
             self.current_date += timedelta(days=1)
-            self.day_count += 1 # Incrementa o contador de dias úteis trabalhados
-
-            project_is_done = all(t['status'] == 'Concluída' for t in self.tasks_state.values())
             total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
-            if project_is_done:
-                project_info = self.df_projects_info.loc[self.df_projects_info['project_id'] == self.current_project_id].iloc[0]
-                time_diff = project_info['total_duration_days'] - self.day_count
-                total_reward += self.rewards['completion_base']
-                total_reward += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
-                total_reward -= self.current_cost * self.rewards['cost_impact_factor']
             
-            return total_reward, project_is_done
-
+            done = not self.active_projects and not self.future_projects
+            
+            return self.get_state(), total_reward, done
+            
     class QLearningAgent:
         def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
             self.actions = actions; self.action_to_index = {action: i for i, action in enumerate(actions)}; self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
@@ -1441,283 +1406,205 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
-    # --- O resto da função continua igual, usando as variáveis já preparadas ---
-    #SEED = 123; random.seed(SEED); np.random.seed(SEED)
-    df_projects_train = df_projects.sample(frac=0.8); df_projects_test = df_projects.drop(df_projects_train.index)
-    env = ProjectManagementEnv(df_tasks, df_resources, df_dependencies, df_projects, df_resource_allocations=df_resource_allocations, reward_config=reward_config)
-    env.reset(str(project_id_to_simulate))
     
-    # --- Extrair parâmetros do agente (com defaults) ---
-    lr = float(agent_params.get('lr', 0.1))
-    gamma = float(agent_params.get('gamma', 0.9))
-    epsilon = float(agent_params.get('epsilon', 1.0))
-    epsilon_decay = float(agent_params.get('epsilon_decay', 0.9995))
+    # --- INÍCIO DO NOVO BLOCO ---
+
+    # --- Lógica de Simulação de Portfólio ---
+    
+    # 1. Instanciar o novo ambiente de portfólio.
+    # Usamos a amostra completa de projetos para simular o portfólio.
+    env = PortfolioManagementEnv(dfs={'projects': df_projects, 'tasks': df_tasks, 'resources': df_resources, 'dependencies': df_dependencies}, reward_config=reward_config)
+
+    # 2. Simplificar as ações para o agente.
+    # O agente aprende uma política geral (ex: 'para um Analista de Risco, é melhor focar em Análise de Risco').
+    # Isto mantém a Q-Table com um tamanho gerenciável.
+    simplified_actions = set()
+    for res_type in env.resource_types:
+        simplified_actions.add((res_type, 'idle'))
+        for task_type in df_tasks['task_type'].unique():
+            simplified_actions.add((res_type, task_type))
+    
+    # 3. Extrair parâmetros e instanciar o Agente.
+    lr = float(agent_params.get('lr', 0.1)); gamma = float(agent_params.get('gamma', 0.9))
+    epsilon = float(agent_params.get('epsilon', 1.0)); epsilon_decay = float(agent_params.get('epsilon_decay', 0.9995))
     min_epsilon = float(agent_params.get('min_epsilon', 0.01))
 
-    agent = QLearningAgent(actions=env.all_actions, lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
-    time_per_episode = 0.01
-
-        
+    agent = QLearningAgent(actions=tuple(sorted(list(simplified_actions))), lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
+    
+    # 4. NOVO CICLO DE TREINO
+    # Cada episódio é uma simulação completa de TODO o portfólio de projetos.
     for episode in range(num_episodes):
-        project_id = str(df_projects_train.sample(1).iloc[0]['project_id'])
-        state = env.reset(project_id)
-        episode_reward, done = 0, False; calendar_day = 0
-        while not done and calendar_day < 1000:
-            possible_actions = env.get_possible_actions_for_state()
-            # [CORREÇÃO PONTO 1] - Usa uma lista para permitir múltiplas ações do mesmo tipo
-            action_list = []
-            for res_type in env.resource_types:
-                actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                if not actions_for_res:
-                    continue
-                # Permitir uma decisão por cada recurso disponível daquele tipo
-                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-                for _ in range(num_resources_of_type):
-                    chosen_action = agent.choose_action(state, actions_for_res)
-                    if chosen_action:
-                        action_list.append(chosen_action)
+        state = env.reset()
+        episode_reward, done = 0, False
+        
+        while not done:
+            possible_actions_full = env.get_possible_actions_for_state()
+            action_list_for_step = []
 
-            reward, done = env.step(action_list)
-            next_state = env.get_state()
-            # A atualização da Q-table continua a ser feita ação a ação para um aprendizado granular
-            for action in action_list:
-                agent.update_q_table(state, action, reward, next_state)
+            # Para cada tipo de recurso, o agente decide qual o tipo de tarefa a priorizar.
+            for res_type in env.resource_types:
+                simplified_options = list(set([(a[0], a[1]) for a in possible_actions_full if a[0] == res_type]))
+                if not simplified_options: continue
+
+                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+
+                # Tomar uma decisão para cada recurso disponível daquele tipo.
+                for _ in range(num_resources_of_type):
+                    chosen_simplified_action = agent.choose_action(state, simplified_options)
+                    if not chosen_simplified_action or chosen_simplified_action[1] == 'idle':
+                        continue
+                    
+                    # Encontrar a tarefa real mais prioritária que corresponde à decisão do agente.
+                    candidate_tasks = [a for a in possible_actions_full if (a[0], a[1]) == chosen_simplified_action]
+                    if not candidate_tasks: continue
+
+                    best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
+                    
+                    action_list_for_step.append(best_task_action)
+                    # Remover a tarefa escolhida da lista de possibilidades para não ser alocada duas vezes no mesmo dia.
+                    possible_actions_full = [a for a in possible_actions_full if a[3] != best_task_action[3]]
+
+            next_state, reward, done = env.step(action_list_for_step)
             
+            # Atualizar a Q-table com base nas ações simplificadas que foram tomadas.
+            for action in action_list_for_step:
+                simplified_action = (action[0], action[1])
+                # A recompensa é distribuída pelas ações que a geraram.
+                reward_per_action = reward / len(action_list_for_step) if action_list_for_step else reward
+                agent.update_q_table(state, simplified_action, reward_per_action, next_state)
+
             state = next_state
             episode_reward += reward
-            calendar_day += 1
-            if env.day_count > 730: break # Limite de segurança de dias úteis
-        agent.decay_epsilon(); agent.episode_rewards.append(episode_reward); agent.episode_durations.append(env.day_count); agent.episode_costs.append(env.current_cost)
-        progress = (episode + 1) / num_episodes; progress_bar.progress(progress)
-        remaining_time = (num_episodes - (episode + 1)) * time_per_episode
-        status_text.info(f"A treinar... Episódio {episode + 1}/{num_episodes}. Tempo estimado restante: {remaining_time:.0f} segundos.")
+
+            # Safety break para evitar loops infinitos.
+            if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000):
+                print("Safety break: Simulação excedeu o tempo limite.")
+                break
+
+        agent.decay_epsilon()
+        # As métricas de duração e custo agora referem-se ao desempenho do portfólio inteiro.
+        total_duration = sum(p['simulated_duration'] for p in env.completed_projects.values())
+        total_cost = sum(p['simulated_cost'] for p in env.completed_projects.values())
+        agent.episode_rewards.append(episode_reward)
+        agent.episode_durations.append(total_duration)
+        agent.episode_costs.append(total_cost)
+        
+        progress = (episode + 1) / num_episodes
+        progress_bar.progress(progress)
+        status_text.info(f"A treinar... Episódio {episode + 1}/{num_episodes}. Data final da simulação: {env.current_date.strftime('%Y-%m-%d')}")
+
+    status_text.success("Treino concluído!")
+    status_text.info("A preparar os gráficos e análises finais...")
     
-    status_text.success("Treino e simulação concluídos!")
-    status_text.info("A preparar os gráficos e análises finais. Por favor, aguarde...")
-    
-    # CÓDIGO CORRIGIDO (com média móvel corrigida e cor laranja)
+    # --- INÍCIO DO BLOCO DE CÓDIGO FINAL ---
+
+    # 5. Geração de Gráficos de Treino
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    # ... (O código para gerar os 4 gráficos de treino permanece o mesmo, por isso não o vou repetir aqui, apenas a sua continuação)
     rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
     rolling_avg_window = 50
-    
-    # Gráfico de Recompensa
-    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio')
-    # A alteração está aqui: .rolling(..., min_periods=1) e color='orange'
-    axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
-    axes[0, 0].set_title('Recompensa por Episódio')
-    axes[0, 0].set_xlabel('Episódio')
-    axes[0, 0].set_ylabel('Recompensa Total')
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, linestyle='--', alpha=0.6)
-    
-    # Gráfico de Duração
-    axes[0, 1].plot(durations, alpha=0.3, label='Duração do Episódio')
-    axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
-    axes[0, 1].set_title('Duração por Episódio')
-    axes[0, 1].set_xlabel('Episódio')
-    axes[0, 1].set_ylabel('Duração (dias úteis)')
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, linestyle='--', alpha=0.6)
-    
-    # Gráfico de Epsilon
-    axes[1, 0].plot(epsilon_history, color='green')
-    axes[1, 0].set_title('Decaimento do Epsilon (Exploração)')
-    axes[1, 0].set_xlabel('Episódio')
-    axes[1, 0].set_ylabel('Valor de Epsilon')
-    axes[1, 0].grid(True, linestyle='--', alpha=0.6)
-    
-    # Gráfico de Custo
-    axes[1, 1].plot(costs, alpha=0.3, label='Custo do Episódio')
-    axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)')
-    axes[1, 1].set_title('Custo por Episódio')
-    axes[1, 1].set_xlabel('Episódio')
-    axes[1, 1].set_ylabel('Custo (€)')
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, linestyle='--', alpha=0.6)
-    
+    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio'); axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[0, 0].set_title('Recompensa por Episódio'); axes[0, 0].set_xlabel('Episódio'); axes[0, 0].set_ylabel('Recompensa Total'); axes[0, 0].legend(); axes[0, 0].grid(True, linestyle='--', alpha=0.6)
+    axes[0, 1].plot(durations, alpha=0.3, label='Duração do Portfólio'); axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[0, 1].set_title('Duração Total do Portfólio'); axes[0, 1].set_xlabel('Episódio'); axes[0, 1].set_ylabel('Soma das Durações (dias)'); axes[0, 1].legend(); axes[0, 1].grid(True, linestyle='--', alpha=0.6)
+    axes[1, 0].plot(epsilon_history, color='green'); axes[1, 0].set_title('Decaimento do Epsilon (Exploração)'); axes[1, 0].set_xlabel('Episódio'); axes[1, 0].set_ylabel('Valor de Epsilon'); axes[1, 0].grid(True, linestyle='--', alpha=0.6)
+    axes[1, 1].plot(costs, alpha=0.3, label='Custo do Portfólio'); axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[1, 1].set_title('Custo Total do Portfólio'); axes[1, 1].set_xlabel('Episódio'); axes[1, 1].set_ylabel('Custo Total (€)'); axes[1, 1].legend(); axes[1, 1].grid(True, linestyle='--', alpha=0.6)
     fig.tight_layout()
     plots['training_metrics'] = convert_fig_to_bytes(fig)
 
-    def evaluate_agent(agent, env, df_projects_to_evaluate):
-        agent.epsilon = 0; results = []
-        for _, prj_info in df_projects_to_evaluate.iterrows():
-            proj_id_str = str(prj_info['project_id'])
-            # [CORREÇÃO PONTO 7] - Confia-se exclusivamente no env.reset para limpar o estado
-            state = env.reset(proj_id_str)
-            
-            done = False; 
-            calendar_day = 0
-            while not done and calendar_day < 1000:
-                possible_actions = env.get_possible_actions_for_state()
-                # [CORREÇÃO PONTO 1] - Usa lista também na avaliação
-                action_list = []
-                for res_type in env.resource_types:
-                    actions_for_res = [a for a in possible_actions if a[0] == res_type]
-                    if actions_for_res:
-                        num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-                        for _ in range(num_resources_of_type):
-                            chosen_action = agent.choose_action(state, actions_for_res)
-                            if chosen_action: action_list.append(chosen_action)
-                
-                _, done = env.step(action_list)
-                state = env.get_state()
-                calendar_day += 1
-                
-                if done:
-                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=done"
-                    print(dbg_msg)
-                    break
+    # 6. AVALIAÇÃO OTIMIZADA FINAL
+    status_text.info("A correr a simulação final otimizada para avaliação...")
+    agent.epsilon = 0
+    state = env.reset()
+    done = False
+    while not done:
+        possible_actions_full = env.get_possible_actions_for_state()
+        action_list_for_step = []
+        for res_type in env.resource_types:
+            simplified_options = list(set([(a[0], a[1]) for a in possible_actions_full if a[0] == res_type]))
+            if not simplified_options: continue
+            num_resources_of_type = len(env.resources_by_type.get(res_type, []))
+            for _ in range(num_resources_of_type):
+                chosen_simplified_action = agent.choose_action(state, simplified_options)
+                if not chosen_simplified_action or chosen_simplified_action[1] == 'idle': continue
+                candidate_tasks = [a for a in possible_actions_full if (a[0], a[1]) == chosen_simplified_action]
+                if not candidate_tasks: continue
+                best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
+                action_list_for_step.append(best_task_action)
+                possible_actions_full = [a for a in possible_actions_full if a[3] != best_task_action[3]]
+        next_state, _, done = env.step(action_list_for_step)
+        state = next_state
+        if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000): break
 
-                if env.day_count >= 730:
-                    dbg_msg = f"EVAL_STEP_INTERNAL project_id={proj_id_str} ended_on_step={calendar_day} cause=calendar_limit"
-                    print(dbg_msg)
-                    break
+    simulated_results = env.completed_projects
+    results_list = []
+    for proj_id, sim_data in simulated_results.items():
+        real_data = df_projects[df_projects['project_id'] == proj_id].iloc[0]
+        results_list.append({
+            'project_id': proj_id, 'simulated_duration': sim_data['simulated_duration'], 'simulated_cost': sim_data['simulated_cost'],
+            'real_duration': real_data['total_duration_days'], 'real_cost': real_data['total_actual_cost']
+        })
+    test_results_df = pd.DataFrame(results_list)
 
-            proj_dbg_msg = (
-                f"EVAL_DEBUG project_id={prj_info['project_id']} "
-                f"simulated_day_count={getattr(env,'day_count',None)} "
-                f"simulated_cost={getattr(env,'current_cost',None)} "
-                f"total_est_hours={getattr(env,'total_estimated_effort',None)} "
-                f"tasks_loaded={len(getattr(env,'tasks_state',{}))}"
-            )
-            print(proj_dbg_msg)
+    if test_results_df.empty:
+        st.error("A simulação não concluiu nenhum projeto. Verifique os parâmetros.")
+        return plots, tables, logs
 
-            results.append({
-                'project_id': prj_info['project_id'],
-                'simulated_duration': env.day_count, # Usa o contador de dias úteis do ambiente
-                'simulated_cost': getattr(env, 'current_cost', None),
-                'real_duration': prj_info.get('total_duration_days'),
-                'real_cost': prj_info.get('total_actual_cost'),
-            })           
-        return pd.DataFrame(results)
-
-    test_results_df = evaluate_agent(agent, env, df_projects_test)
-    df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True)
-    # CÓDIGO CORRIGIDO
+    # 7. Geração de Gráficos de COMPARAÇÃO DE PORTFÓLIO
+    df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True).head(50)
     fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
-
-    # Gráfico da Esquerda (Duração)
-    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered')
-    axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[0].set_title('Duração do Processo (Conjunto de Teste da Amostra)')
-    axes[0].set_xlabel('ID do Processo')
-    axes[0].set_ylabel('Duração (dias úteis)')
-    axes[0].set_xticks(index_test)
-    axes[0].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-    axes[0].legend()
-    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-
-    # Gráfico da Direita (Custo)
-    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered')
-    axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue')
-    axes[1].set_title('Custo do Processo (Conjunto de Teste da Amostra)')
-    axes[1].set_xlabel('ID do Processo')
-    axes[1].set_ylabel('Custo (€)')
-    axes[1].set_xticks(index_test)
-    axes[1].set_xticklabels(df_plot_test['project_id'], rotation=45, ha="right")
-    axes[1].legend()
-    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-
+    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered'); axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue'); axes[0].set_title('Duração do Processo (Amostra de Teste)'); axes[0].set_xlabel('ID do Processo'); axes[0].set_ylabel('Duração (dias)'); axes[0].set_xticks(index_test); axes[0].set_xticklabels(df_plot_test['project_id'], rotation=90, ha="right"); axes[0].legend(); axes[0].grid(axis='y', linestyle='--', alpha=0.7)
+    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered'); axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue'); axes[1].set_title('Custo do Processo (Amostra de Teste)'); axes[1].set_xlabel('ID do Processo'); axes[1].set_ylabel('Custo (€)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=90, ha="right"); axes[1].legend(); axes[1].grid(axis='y', linestyle='--', alpha=0.7)
     plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
 
     def get_global_performance_df(results_df):
         real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
         dur_improv = real_duration - sim_duration; cost_improv = real_cost - sim_cost
         dur_improv_perc = (dur_improv / real_duration) * 100 if real_duration > 0 else 0; cost_improv_perc = (cost_improv / real_cost) * 100 if real_cost > 0 else 0
-        perf_data = {'Métrica': ['Duração Total (dias úteis)', 'Custo Total (€)'], 'Real (Histórico)': [f"{real_duration:.0f}", f"€{real_cost:,.2f}"], 'Simulado (RL)': [f"{sim_duration:.0f}", f"€{sim_cost:,.2f}"], 'Melhoria': [f"{dur_improv:.0f} ({dur_improv_perc:.1f}%)", f"€{cost_improv:,.2f} ({cost_improv_perc:.1f}%)"]}
+        perf_data = {'Métrica': ['Duração Total (dias)', 'Custo Total (€)'], 'Real (Histórico)': [f"{real_duration:.0f}", f"€{real_cost:,.2f}"], 'Simulado (RL)': [f"{sim_duration:.0f}", f"€{sim_cost:,.2f}"], 'Melhoria': [f"{dur_improv:.0f} ({dur_improv_perc:.1f}%)", f"€{cost_improv:,.2f} ({cost_improv_perc:.1f}%)"]}
         return pd.DataFrame(perf_data)
-        
     tables['global_performance_test'] = get_global_performance_df(test_results_df)
-    
-    agent.epsilon = 0; state = env.reset(project_id_to_simulate)
-    done = False; calendar_day = 0
-    while not done and calendar_day < 1000:
-        possible_actions = env.get_possible_actions_for_state()
-        action_list = []
-        for res_type in env.resource_types:
-            actions_for_res = [a for a in possible_actions if a[0] == res_type]
-            if actions_for_res:
-                num_resources_of_type = len(env.resources_by_type.get(res_type, []))
-                for _ in range(num_resources_of_type):
-                    action = agent.choose_action(state, actions_for_res);
-                    if action: action_list.append(action)
-        _, done = env.step(action_list); state = env.get_state(); calendar_day += 1
-        if env.day_count > 730: break
-    simulated_log = pd.DataFrame(env.episode_logs); sim_duration, sim_cost = env.day_count, env.current_cost
-    
-    # Usar os dataframes AMOSTRADOS (df_projects, df_resource_allocations, df_resources)
 
-    project_info_full = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
-    real_duration, real_cost = project_info_full.get('total_duration_days'), project_info_full.get('total_actual_cost')
+    # 8. REINTRODUÇÃO DA ANÁLISE DETALHADA
+    project_info_real = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
+    project_info_sim = test_results_df.loc[test_results_df['project_id'] == project_id_to_simulate].iloc[0]
     
-    # Guardar o resumo do projeto usando valores reais da amostra
     tables['project_summary'] = pd.DataFrame({
-        'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
-        'Real (Histórico)': [real_duration, real_cost],
-        'Simulado (RL)': [sim_duration, sim_cost]
+        'Métrica': ['Duração (dias)', 'Custo (€)'],
+        'Real (Histórico)': [project_info_real['total_duration_days'], project_info_real['total_actual_cost']],
+        'Simulado (RL)': [project_info_sim['simulated_duration'], project_info_sim['simulated_cost']]
     })
-    
-    # Usar start_date e alocações da amostra
-    project_start_date = df_projects.loc[df_projects['project_id'] == project_id_to_simulate, 'start_date'].iloc[0]
+
+    # Preparar dados para o gráfico detalhado
+    sim_log_df = pd.DataFrame(env.detailed_logs.get(project_id_to_simulate, []))
     real_allocations = df_resource_allocations[df_resource_allocations['project_id'] == project_id_to_simulate].copy()
-    
-    # garantir que allocation_date é datetime antes de calcular dias úteis
-    if 'allocation_date' in real_allocations.columns:
-        real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'], errors='coerce')
-    
-    real_allocations['day'] = real_allocations.apply(
-        lambda row: np.busday_count(project_start_date.date(), row['allocation_date'].date())
-        if pd.notna(row.get('allocation_date')) else 0,
-        axis=1
-    )
-
-    # Prepara os dados de custo e progresso (horas) para o projeto simulado
-    total_estimated_effort = env.total_estimated_effort
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-    max_day_sim = simulated_log['day'].max() if not simulated_log.empty else 0
-    max_day_plot = int(max(max_day_sim, real_duration))
-    day_range = pd.RangeIndex(start=0, stop=max_day_plot + 1, name='day')
-
-    # Dados para o Gráfico de Custo Acumulado (à esquerda)
-    sim_daily_cost = simulated_log.groupby('day')['daily_cost'].sum()
-    sim_cumulative_cost = sim_daily_cost.reindex(day_range, fill_value=0).cumsum()
-    real_log_merged = real_allocations.merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
+    real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'])
+    real_log_merged = real_allocations.merge(df_resources[['resource_id', 'cost_per_hour']], on='resource_id', how='left')
     real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum()
-    real_cumulative_cost = real_daily_cost.reindex(day_range, fill_value=0).cumsum()
+    
+    project_start_date = pd.to_datetime(project_info_real['start_date'])
+    real_log_merged['day'] = (real_log_merged['allocation_date'] - project_start_date).dt.days
 
-    # --- Gráfico de Custo Acumulado (Esquerda) ---
-    axes[0].plot(sim_cumulative_cost.index, sim_cumulative_cost.values, label='Custo Simulado', marker='o', linestyle='--', color='b')
-    axes[0].plot(real_cumulative_cost.index, real_cumulative_cost.values, label='Custo Real', marker='x', linestyle='-', color='r')
-    axes[0].axvline(x=real_duration, color='k', linestyle=':', label=f'Fim Real ({real_duration} dias úteis)')
-    axes[0].set_title('Custo Acumulado')
-    axes[0].set_xlabel('Dias úteis')
-    axes[0].set_ylabel('Custo Acumulado (€)')
-    axes[0].legend()
-    axes[0].grid(True)
-
-    # Dados para o Gráfico de Horas Acumuladas (à direita)
-    sim_daily_progress = simulated_log.groupby('day')['hours_worked'].sum()
-    sim_cumulative_progress = sim_daily_progress.reindex(day_range, fill_value=0).cumsum()
-    real_daily_progress = real_log_merged.groupby('day')['hours_worked'].sum()
-    real_cumulative_progress = real_daily_progress.reindex(day_range, fill_value=0).cumsum()
-
-    # --- Gráfico de Progresso Acumulado (Direita) ---
-    axes[1].plot(sim_cumulative_progress.index, sim_cumulative_progress.values, label='Progresso Simulado', marker='o', linestyle='--', color='b')
-    axes[1].plot(real_cumulative_progress.index, real_cumulative_progress.values, label='Progresso Real', marker='x', linestyle='-', color='r')
-    axes[1].axhline(y=total_estimated_effort, color='g', linestyle='-.', label='Esforço Total Estimado (horas)')
-    axes[1].set_title('Progresso Acumulado (Horas)')
-    axes[1].set_xlabel('Dias úteis')
-    axes[1].set_ylabel('Horas Acumuladas')
-    axes[1].legend()
-    axes[1].grid(True)
-
-    # Finaliza e guarda a figura
+    # Calcular cumulativos para os dados reais
+    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum().cumsum().reset_index().rename(columns={'daily_cost': 'cumulative_cost'})
+    real_daily_hours = real_log_merged.groupby('day')['hours_worked'].sum().cumsum().reset_index().rename(columns={'hours_worked': 'cumulative_hours'})
+    
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+    # Gráfico de Custo Acumulado
+    axes[0].plot(sim_log_df['day'], sim_log_df['cumulative_cost'], label='Custo Simulado', marker='o', linestyle='--', color='b')
+    axes[0].plot(real_daily_cost['day'], real_daily_cost['cumulative_cost'], label='Custo Real', marker='x', linestyle='-', color='r')
+    axes[0].axvline(x=project_info_real['total_duration_days'], color='k', linestyle=':', label=f"Fim Real ({project_info_real['total_duration_days']} dias)")
+    axes[0].set_title('Custo Acumulado'); axes[0].set_xlabel('Dias desde o início'); axes[0].set_ylabel('Custo Acumulado (€)'); axes[0].legend(); axes[0].grid(True)
+    # Gráfico de Progresso Acumulado
+    axes[1].plot(sim_log_df['day'], sim_log_df['cumulative_hours'], label='Progresso Simulado', marker='o', linestyle='--', color='b')
+    axes[1].plot(real_daily_hours['day'], real_daily_hours['cumulative_hours'], label='Progresso Real', marker='x', linestyle='-', color='r')
+    axes[1].set_title('Progresso Acumulado (Horas)'); axes[1].set_xlabel('Dias desde o início'); axes[1].set_ylabel('Horas Acumuladas'); axes[1].legend(); axes[1].grid(True)
     fig.tight_layout()
     plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
     
     return plots, tables, logs
-
+    
+    # --- FIM DO BLOCO DE CÓDIGO FINAL ---
+    
+    # --- FIM DO NOVO BLOCO ---
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
