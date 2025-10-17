@@ -195,9 +195,10 @@ def convert_gviz_to_bytes(gviz, format='png'):
 
 # --- FUNÇÃO CORRIGIDA ---
 def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, tooltip=None):
+    # Gera o HTML do ícone da tooltip, se um texto for fornecido
     tooltip_html = ""
     if tooltip:
-        # Usa html.escape para garantir que o texto da tooltip é seguro para HTML
+        # Usa html.escape para garantir que o texto da tooltip é seguro para HTML e não quebra a string
         safe_tooltip = html.escape(tooltip, quote=True)
         tooltip_html = f'<i class="bi bi-question-circle-fill tooltip-icon" title="{safe_tooltip}"></i>'
 
