@@ -13,6 +13,7 @@ import time
 import random
 from datetime import timedelta
 import textwrap
+import html # <--- ADICIONADO PARA CORRIGIR O ERRO
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -110,7 +111,6 @@ st.markdown("""
         color: var(--primary-color);
     }
     .card-body { flex-grow: 1; padding-top: 15px; }
-    /* 👇 ADICIONE O BLOCO DE CÓDIGO ABAIXO AQUI 👇 */
     .dataframe-card-body {
         max-height: 300px;
         overflow-y: auto;
@@ -130,7 +130,7 @@ st.markdown("""
     [data-testid="stMetric"] label { color: var(--text-muted-color) !important; }
     [data-testid="stMetric"] [data-testid="stMetricValue"] { color: var(--text-color) !important; }
     [data-testid="stMetric"] [data-testid="stMetricDelta"] svg { display: none; } /* Opcional: Esconde setas padrão */
-    
+
     /* --- ÍCONE DE TOOLTIP PARA OS CARTÕES --- */
     .card-header {
         position: relative; /* Necessário para posicionar o ícone */
@@ -146,7 +146,7 @@ st.markdown("""
     .tooltip-icon:hover {
         color: var(--primary-color);
     }
-
+    
     /* Botões */
     .stButton>button {
         border-radius: 8px !important;
@@ -193,12 +193,13 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
+# --- FUNÇÃO CORRIGIDA ---
 def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, tooltip=None):
-    # Gera o HTML do ícone da tooltip, se um texto for fornecido
     tooltip_html = ""
     if tooltip:
-        # Usamos o atributo 'title' do HTML, que cria uma tooltip nativa do browser
-        tooltip_html = f'<i class="bi bi-question-circle-fill tooltip-icon" title="{tooltip}"></i>'
+        # Usa html.escape para garantir que o texto da tooltip é seguro para HTML
+        safe_tooltip = html.escape(tooltip, quote=True)
+        tooltip_html = f'<i class="bi bi-question-circle-fill tooltip-icon" title="{safe_tooltip}"></i>'
 
     if chart_bytes:
         b64_image = base64.b64encode(chart_bytes.getvalue()).decode()
@@ -226,7 +227,7 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
+
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 if 'current_page' not in st.session_state: st.session_state.current_page = "Dashboard"
@@ -632,12 +633,12 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
     handover_edges = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
     
-    # 1. CRIAÇÃO DO Gráfico (G) e FIGURA: Estas linhas têm de estar sempre aqui
+    # 1. CRIAÇÃO DO GRAFO (G) e FIGURA: Estas linhas têm de estar sempre aqui
     fig_net, ax_net = plt.subplots(figsize=(18, 12)); 
     G = nx.DiGraph();
     for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
 
-        # Filtrar o Gráfico para mostrar apenas os nós mais relevantes
+        # Filtrar o grafo para mostrar apenas os nós mais relevantes
     recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
     node_degrees = dict(G.degree())
     recursos_ordenados = sorted(node_degrees, key=node_degrees.get, reverse=True)
@@ -645,7 +646,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     nos_para_manter = top_recursos.union(recursos_importantes)
     G_filtrado = G.subgraph(nos_para_manter).copy()
     
-    # Desenhar o Gráfico filtrado
+    # Desenhar o grafo filtrado
     if G_filtrado.nodes():
         pos = nx.spring_layout(G_filtrado, k=0.8, iterations=50, seed=42)
         weights = [G_filtrado[u][v]['weight'] for u, v in G_filtrado.edges()]
@@ -674,14 +675,14 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         resource_role_counts = _df_full_context.groupby(['resource_name', 'skill_level']).size().reset_index(name='count')
 
-        # Filtrar o dataframe antes de construir o Gráfico
+        # Filtrar o dataframe antes de construir o grafo
         recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
         recursos_ordenados_df = resource_role_counts.sort_values('count', ascending=False)
         top_30_recursos = set(recursos_ordenados_df['resource_name'].head(30))
         recursos_para_manter = top_30_recursos.union(recursos_importantes)
         df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(recursos_para_manter)]
         
-        # Construir o Gráfico bipartido a partir dos dados JÁ FILTRADOS
+        # Construir o grafo bipartido a partir dos dados JÁ FILTRADOS
         G_bipartite = nx.Graph()
         resources_nodes = df_filtrado['resource_name'].unique()
         roles_nodes = df_filtrado['skill_level'].unique()
@@ -691,7 +692,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         for _, row in df_filtrado.iterrows():
             G_bipartite.add_edge(row['resource_name'], row['skill_level'], weight=row['count'])
         
-        # Desenhar o Gráfico filtrado
+        # Desenhar o grafo filtrado
         fig, ax = plt.subplots(figsize=(12, max(8, len(resources_nodes) * 0.3))) # Altura dinâmica
         pos = nx.bipartite_layout(G_bipartite, resources_nodes)
         
@@ -1936,9 +1937,9 @@ def dashboard_page():
 
         # Gráficos complexos que ocupam a largura total
         if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Gráfico que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Grafo que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
 
-        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Gráfico onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
+        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Grafo onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
         
         create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'), tooltip="Matriz que cruza recursos com atividades, mostrando as horas totais trabalhadas. Permite identificar rapidamente quem são os especialistas em cada tipo de tarefa.")
     
