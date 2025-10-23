@@ -1478,11 +1478,12 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 # Atribui a tarefa a um recurso disponível
                 chosen_res_id = random.choice(available_resources)
                 
-                # Define um "bloco" de trabalho (ex: 1 hora)
-                work_chunk_hours = 1.0
-                
-                # Garante que não excede a capacidade do recurso
-                hours_to_assign = min(work_chunk_hours, available_hours_per_resource[chosen_res_id])
+                # Calcula as horas que o recurso ainda pode trabalhar hoje
+                hours_resource_can_work = available_hours_per_resource[chosen_res_id]
+                # Calcula as horas que a tarefa ainda precisa (total)
+                hours_task_needs = env.active_projects[proj_id]['tasks'][task_id]['estimated_effort'] - env.active_projects[proj_id]['tasks'][task_id]['progress']
+                # Atribui o mínimo entre o que o recurso pode dar e o que a tarefa precisa
+                hours_to_assign = min(hours_resource_can_work, hours_task_needs)
                 
                 # Adiciona a atribuição à lista de ações (agora com resource_id)
                 action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
@@ -1582,8 +1583,12 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
             chosen_res_id = random.choice(available_resources)
             
-            work_chunk_hours = 1.0
-            hours_to_assign = min(work_chunk_hours, available_hours_per_resource[chosen_res_id])
+            # Calcula as horas que o recurso ainda pode trabalhar hoje
+            hours_resource_can_work = available_hours_per_resource[chosen_res_id]
+            # Calcula as horas que a tarefa ainda precisa (total)
+            hours_task_needs = env.active_projects[proj_id]['tasks'][task_id]['estimated_effort'] - env.active_projects[proj_id]['tasks'][task_id]['progress']
+            # Atribui o mínimo entre o que o recurso pode dar e o que a tarefa precisa
+            hours_to_assign = min(hours_resource_can_work, hours_task_needs)
             
             action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
             
@@ -2130,7 +2135,7 @@ def rl_page():
             with metric_cols[1]:
                 real_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Real (Histórico)'].iloc[0]
                 sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
-                st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real",delta_color="inverse")
+                st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real")
 
         create_card(
         f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", 
