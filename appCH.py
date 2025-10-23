@@ -2034,15 +2034,15 @@ def rl_page():
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
             cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=0.01)
-            daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=200.0)
-            idle_penalty = st.number_input("Penalização por Inatividade", value=20.0)
+            daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=400.0)
+            idle_penalty = st.number_input("Penalização por Inatividade", value=50.0)
         with rc2:
             per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=2000.0)
             completion_base = st.number_input("Recompensa Base por Conclusão", value=10000.0)
             per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=7500.0)
         with rc3:
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
-            pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
+            pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=100)
         
         st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
         c_ag1, c_ag2, c_ag3 = st.columns(3)
