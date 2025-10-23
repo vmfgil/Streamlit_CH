@@ -1154,7 +1154,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     
     # --- PASSO 3: CRIAR A AMOSTRA ---
-    st.info("A componente de RL irá correr numa amostra de 500 processos para garantir a performance.")
+    st.info("A componente de RL irá correr numa amostra de 100 processos para garantir a performance.")
     ids_amostra = st.session_state['rl_sample_ids']
     dfs_rl = {}
     ids_amostra = [str(i) for i in ids_amostra]  # garante tipo string
@@ -1220,19 +1220,63 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.completed_projects = {} # Para guardar os resultados finais
             self.episode_logs = []
             self.detailed_logs = {} # Para guardar o progresso diário de cada projeto
-            
+            self.last_day_hours_worked_per_resource = defaultdict(float)
+            self.current_day_hours_worked_per_resource = defaultdict(float)
             return self.get_state()
 
         def get_state(self):
-            # 4. O estado agora descreve o PORTFÓLIO, não um projeto
-            num_active = len(self.active_projects)
-            pending_tasks = sum(1 for proj in self.active_projects.values() for task in proj['tasks'].values() if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
-            high_prio_tasks = sum(1 for proj in self.active_projects.values() for task in proj['tasks'].values() if task['status'] == 'Pendente' and task['priority'] >= 4 and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
+        # 4. O estado agora descreve o PORTFÓLIO, não um projeto
+        num_active = len(self.active_projects)
+        pending_tasks_count = 0
+        high_prio_tasks_count = 0
+        
+        # Calcular tarefas pendentes e de alta prioridade elegíveis
+        for proj in self.active_projects.values():
+            for task in proj['tasks'].values():
+                 # Usamos _is_task_eligible sem check_resource_type para elegibilidade geral
+                 if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
+                      pending_tasks_count += 1
+                      if task['priority'] >= 4:
+                           high_prio_tasks_count += 1
+
+        day_of_week = self.current_date.weekday()
+
+        # --- INÍCIO DA NOVA LÓGICA: Calcular Utilização de Recursos ---
+        
+        # Precisamos das horas trabalhadas HOJE. O ideal é calcular isto no final do 'step' anterior
+        # e guardar como um atributo do ambiente, ou recalcular aqui se necessário.
+        # Vamos assumir que 'step' guarda 'self.last_day_hours_worked_per_resource' (um defaultdict(float))
+        
+        utilization_rates = []
+        for res_type in self.resource_types: # Usa a ordem definida no __init__
+            total_capacity_today = 0
+            # Soma a capacidade de todos os recursos deste tipo (assumindo que trabalham em dias úteis)
+            if self.current_date.weekday() < 5:
+                 pool = self.resources_by_type.get(res_type, pd.DataFrame())
+                 if not pool.empty:
+                      total_capacity_today = pool['daily_capacity'].sum()
+
+            hours_worked_today = 0
+            # Soma as horas trabalhadas pelos recursos deste tipo no dia anterior (ou hoje, se calculado no step)
+            # Assumindo que temos self.last_day_hours_worked_per_resource (resource_id -> hours)
+            if hasattr(self, 'last_day_hours_worked_per_resource'):
+                pool_ids = self.resources_by_type.get(res_type, pd.DataFrame())['resource_id'].tolist()
+                hours_worked_today = sum(self.last_day_hours_worked_per_resource.get(res_id, 0) for res_id in pool_ids)
+
+            if total_capacity_today > 0:
+                utilization = hours_worked_today / total_capacity_today
+            else:
+                utilization = 0.0
             
-            # O dia da semana é um bom indicador para o agente
-            day_of_week = self.current_date.weekday()
+            # Arredondar para simplificar o estado (ex: 0.0, 0.1, ..., 1.0)
+            utilization_rates.append(round(utilization, 1)) 
             
-            return (num_active, pending_tasks, high_prio_tasks, day_of_week)
+        # --- FIM DA NOVA LÓGICA ---
+
+        # O novo estado inclui as taxas de utilização no final
+        new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week) + tuple(utilization_rates)
+        
+        return new_state_tuple
 
         def _is_task_eligible(self, task, risk_rating, all_project_tasks, project_dependencies, check_resource_type=None):
             if task['status'] == 'Concluída': return False
@@ -1273,7 +1317,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
         def step(self, action_list):
             # 6. O 'step' agora representa um DIA de trabalho para a empresa inteira
-            
+            # Guarda as horas do dia ANTERIOR antes de calcular as de hoje
+            self.last_day_hours_worked_per_resource = getattr(self, 'current_day_hours_worked_per_resource', defaultdict(float))
             # 6a. Ativar novos projetos que começam hoje
             projects_to_activate = [p for p in self.future_projects if p['start_date'] == self.current_date]
             for proj_data in projects_to_activate:
@@ -1385,6 +1430,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - pending_penalty # Modificado para incluir a nova penalização
             
             done = not self.active_projects and not self.future_projects
+
+            self.current_day_hours_worked_per_resource = resources_hours_today
             
             return self.get_state(), total_reward, done
             
