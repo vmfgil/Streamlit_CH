@@ -1225,19 +1225,19 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return self.get_state()
 
         def get_state(self):
-        # 4. O estado agora descreve o PORTFÓLIO, não um projeto
-        num_active = len(self.active_projects)
-        pending_tasks_count = 0
-        high_prio_tasks_count = 0
-        
-        # Calcular tarefas pendentes e de alta prioridade elegíveis
-        for proj in self.active_projects.values():
-            for task in proj['tasks'].values():
-                 # Usamos _is_task_eligible sem check_resource_type para elegibilidade geral
-                 if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
-                      pending_tasks_count += 1
-                      if task['priority'] >= 4:
-                           high_prio_tasks_count += 1
+            # 4. O estado agora descreve o PORTFÓLIO, não um projeto
+            num_active = len(self.active_projects)
+            pending_tasks_count = 0
+            high_prio_tasks_count = 0
+            
+            # Calcular tarefas pendentes e de alta prioridade elegíveis
+            for proj in self.active_projects.values():
+                for task in proj['tasks'].values():
+                     # Usamos _is_task_eligible sem check_resource_type para elegibilidade geral
+                     if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
+                          pending_tasks_count += 1
+                          if task['priority'] >= 4:
+                               high_prio_tasks_count += 1
 
         day_of_week = self.current_date.weekday()
 
