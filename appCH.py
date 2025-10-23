@@ -1239,44 +1239,44 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                           if task['priority'] >= 4:
                                high_prio_tasks_count += 1
 
-        day_of_week = self.current_date.weekday()
-
-        # --- INÍCIO DA NOVA LÓGICA: Calcular Utilização de Recursos ---
-        
-        # Precisamos das horas trabalhadas HOJE. O ideal é calcular isto no final do 'step' anterior
-        # e guardar como um atributo do ambiente, ou recalcular aqui se necessário.
-        # Vamos assumir que 'step' guarda 'self.last_day_hours_worked_per_resource' (um defaultdict(float))
-        
-        utilization_rates = []
-        for res_type in self.resource_types: # Usa a ordem definida no __init__
-            total_capacity_today = 0
-            # Soma a capacidade de todos os recursos deste tipo (assumindo que trabalham em dias úteis)
-            if self.current_date.weekday() < 5:
-                 pool = self.resources_by_type.get(res_type, pd.DataFrame())
-                 if not pool.empty:
-                      total_capacity_today = pool['daily_capacity'].sum()
-
-            hours_worked_today = 0
-            # Soma as horas trabalhadas pelos recursos deste tipo no dia anterior (ou hoje, se calculado no step)
-            # Assumindo que temos self.last_day_hours_worked_per_resource (resource_id -> hours)
-            if hasattr(self, 'last_day_hours_worked_per_resource'):
-                pool_ids = self.resources_by_type.get(res_type, pd.DataFrame())['resource_id'].tolist()
-                hours_worked_today = sum(self.last_day_hours_worked_per_resource.get(res_id, 0) for res_id in pool_ids)
-
-            if total_capacity_today > 0:
-                utilization = hours_worked_today / total_capacity_today
-            else:
-                utilization = 0.0
+            day_of_week = self.current_date.weekday()
+    
+            # --- INÍCIO DA NOVA LÓGICA: Calcular Utilização de Recursos ---
             
-            # Arredondar para simplificar o estado (ex: 0.0, 0.1, ..., 1.0)
-            utilization_rates.append(round(utilization, 1)) 
+            # Precisamos das horas trabalhadas HOJE. O ideal é calcular isto no final do 'step' anterior
+            # e guardar como um atributo do ambiente, ou recalcular aqui se necessário.
+            # Vamos assumir que 'step' guarda 'self.last_day_hours_worked_per_resource' (um defaultdict(float))
             
-        # --- FIM DA NOVA LÓGICA ---
-
-        # O novo estado inclui as taxas de utilização no final
-        new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week) + tuple(utilization_rates)
-        
-        return new_state_tuple
+            utilization_rates = []
+            for res_type in self.resource_types: # Usa a ordem definida no __init__
+                total_capacity_today = 0
+                # Soma a capacidade de todos os recursos deste tipo (assumindo que trabalham em dias úteis)
+                if self.current_date.weekday() < 5:
+                     pool = self.resources_by_type.get(res_type, pd.DataFrame())
+                     if not pool.empty:
+                          total_capacity_today = pool['daily_capacity'].sum()
+    
+                hours_worked_today = 0
+                # Soma as horas trabalhadas pelos recursos deste tipo no dia anterior (ou hoje, se calculado no step)
+                # Assumindo que temos self.last_day_hours_worked_per_resource (resource_id -> hours)
+                if hasattr(self, 'last_day_hours_worked_per_resource'):
+                    pool_ids = self.resources_by_type.get(res_type, pd.DataFrame())['resource_id'].tolist()
+                    hours_worked_today = sum(self.last_day_hours_worked_per_resource.get(res_id, 0) for res_id in pool_ids)
+    
+                if total_capacity_today > 0:
+                    utilization = hours_worked_today / total_capacity_today
+                else:
+                    utilization = 0.0
+                
+                # Arredondar para simplificar o estado (ex: 0.0, 0.1, ..., 1.0)
+                utilization_rates.append(round(utilization, 1)) 
+                
+            # --- FIM DA NOVA LÓGICA ---
+    
+            # O novo estado inclui as taxas de utilização no final
+            new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week) + tuple(utilization_rates)
+            
+            return new_state_tuple
 
         def _is_task_eligible(self, task, risk_rating, all_project_tasks, project_dependencies, check_resource_type=None):
             if task['status'] == 'Concluída': return False
