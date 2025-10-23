@@ -1279,7 +1279,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             for proj_data in projects_to_activate:
                 proj_id = proj_data['project_id']
                 self.active_projects[proj_id] = {
-                    'tasks': {str(t['task_id']): {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': t['estimated_effort'], 'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id'])} for t in self.tasks_by_project.get(proj_id, [])},
+                    'tasks': {str(t['task_id']): {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': real_hours_per_task.get(str(t['task_id']), t['estimated_effort'] * 8.0), 'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id'])} for t in self.tasks_by_project.get(proj_id, [])},
                     'dependencies': self.dependencies_by_project.get(proj_id, {}),
                     'risk_rating': proj_data['risk_rating'],
                     'current_cost': 0.0,
@@ -1399,9 +1399,14 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
-    
     # --- INÍCIO DO NOVO BLOCO ---
-
+    # Calcular o total de horas reais trabalhadas por tarefa a partir das alocações
+    # Usamos df_resource_allocations (que já é a cópia filtrada da amostra)
+    real_hours_per_task_series = df_resource_allocations.groupby('task_id')['hours_worked'].sum()
+    real_hours_per_task = real_hours_per_task_series.to_dict()
+    # --- FIM DO NOVO BLOCO ---
+            
+    # --- INÍCIO DO NOVO BLOCO ---
     # --- Lógica de Simulação de Portfólio ---
     
     # 1. Instanciar o novo ambiente de portfólio.
