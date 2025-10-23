@@ -2007,7 +2007,7 @@ def rl_page():
     # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
     if 'rl_sample_ids' not in st.session_state:
         proj_ids = st.session_state.dfs['projects']['project_id'].astype(str)
-        n = min(500, len(proj_ids))
+        n = min(100, len(proj_ids))
         st.session_state['rl_sample_ids'] = proj_ids.sample(n=n, random_state=42).tolist()
 
     # -----------------------------------------------------------------
@@ -2033,13 +2033,13 @@ def rl_page():
         st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
         rc1, rc2, rc3 = st.columns(3)
         with rc1:
-            cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=0.1)
+            cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=0.01)
             daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=200.0)
             idle_penalty = st.number_input("Penalização por Inatividade", value=20.0)
         with rc2:
-            per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=1000.0)
-            completion_base = st.number_input("Recompensa Base por Conclusão", value=5000.0)
-            per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=5000.0)
+            per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=2000.0)
+            completion_base = st.number_input("Recompensa Base por Conclusão", value=10000.0)
+            per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=7500.0)
         with rc3:
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
             pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=20)
