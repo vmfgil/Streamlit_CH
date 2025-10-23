@@ -1786,8 +1786,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
 def run_diagnostic_engine(tables_pre, metrics, data_frames):
     """
-    Motor de Diagnóstico Dinâmico.
+    Motor de Diagnóstico Dinâmico. (VERSÃO RECALIBRADA)
     Analisa todos os dados e gera listas dinâmicas de destaques, problemas e pontos de investigação.
+    Limiares mais sensíveis e mais verificações.
     """
     
     # Dicionários de dados base
@@ -1828,11 +1829,12 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         if df_fase is not None and not df_fase.empty:
             df_fase['perc_total'] = df_fase['cycle_time_days'] / df_fase['cycle_time_days'].sum()
             fase_dominante = df_fase.sort_values('perc_total', ascending=False).iloc[0]
-            if fase_dominante['perc_total'] > 0.4: # Limiar: > 40% do tempo
+            # LIMIAR BAIXO: > 25% (em vez de 40%)
+            if fase_dominante['perc_total'] > 0.25: 
                 diagnostico['destaques'].append({
                     'titulo': "Destaque: Domínio de Fase",
                     'detalhe': f"A fase **'{fase_dominante['phase']}'** é responsável por **{fase_dominante['perc_total']:.0%}** da duração total do processo.",
-                    'investigacao': []
+                    'investigacao': ["(Ver cartão 'Duração Média por Fase do Processo' na secção '2. Performance e Prazos')"]
                 })
     except Exception as e:
         print(f"Erro Verificação 1: {e}")
@@ -1845,11 +1847,12 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         if df_cost_res is not None and not df_cost_res.empty:
             df_cost_res['perc_total'] = df_cost_res['cost_of_work'] / df_cost_res['cost_of_work'].sum()
             custo_dominante = df_cost_res.sort_values('perc_total', ascending=False).iloc[0]
-            if custo_dominante['perc_total'] > 0.4: # Limiar: > 40% do custo
+            # LIMIAR BAIXO: > 25% (em vez de 40%)
+            if custo_dominante['perc_total'] > 0.25: 
                 diagnostico['destaques'].append({
                     'titulo': "Destaque: Domínio de Custo",
                     'detalhe': f"O tipo de recurso **'{custo_dominante['resource_type']}'** é responsável por **{custo_dominante['perc_total']:.0%}** do custo total.",
-                    'investigacao': []
+                    'investigacao': ["(Ver cartão 'Custo por Tipo de Recurso' na secção '1. Visão Geral e Custos')"]
                 })
     except Exception as e:
         print(f"Erro Verificação 2: {e}")
@@ -1861,14 +1864,32 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         df_variants = tables_pre.get('variants_table')
         if df_variants is not None and not df_variants.empty:
             top_variant_perc = df_variants.iloc[0]['percentage']
-            if top_variant_perc > 75: # Limiar: > 75%
+            # LIMIAR BAIXO: > 60% (em vez de 75%)
+            if top_variant_perc > 60: 
                 diagnostico['destaques'].append({
                     'titulo': "Destaque: Alta Padronização",
                     'detalhe': f"O processo é altamente previsível. O 'caminho feliz' é seguido em **{top_variant_perc:.1f}%** dos casos.",
-                    'investigacao': []
+                    'investigacao': ["(Ver cartão 'Top 10 Variantes de Processo por Frequência' na secção '5. Fluxo e Conformidade')"]
                 })
     except Exception as e:
         print(f"Erro Verificação 3: {e}")
+
+    # ---
+    # NOVA VERIFICAÇÃO (DESTAQUE): Custo por Dia Estável
+    # ---
+    try:
+        if df_projects is not None and 'cost_per_day' in df_projects.columns:
+            # Coeficiente de Variação (STDEV / Média)
+            coeff_var = df_projects['cost_per_day'].std() / df_projects['cost_per_day'].mean()
+            if coeff_var < 0.25: # Limiar: < 25% de variabilidade
+                diagnostico['destaques'].append({
+                    'titulo': "Destaque: Custo por Dia Estável",
+                    'detalhe': f"O custo por dia dos processos é muito estável e previsível (baixo desvio padrão).",
+                    'investigacao': ["(Ver cartão 'Distribuição do Custo por Dia (Eficiência)' na secção '1. Visão Geral e Custos')"]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 3.5: {e}")
+
 
     # ---
     # VERIFICAÇÃO 4: Gargalo de Transição (Problema)
@@ -1878,13 +1899,15 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         custo_medio_proc = kpis.get('Custo Médio', 1)
         if df_handoff is not None and not df_handoff.empty:
             pior_handoff = df_handoff.sort_values('estimated_cost_of_wait', ascending=False).iloc[0]
-            if pior_handoff['estimated_cost_of_wait'] > (custo_medio_proc * 0.1): # Limiar: Custo da espera > 10% do custo médio
+            # LIMIAR BAIXO: Custo da espera > 5% do custo médio (em vez de 10%)
+            if pior_handoff['estimated_cost_of_wait'] > (custo_medio_proc * 0.05): 
                 diagnostico['problemas'].append({
-                    'titulo': "Problema: Gargalo de Transição Crítico",
+                    'titulo': "Problema: Gargalo de Transição",
                     'detalhe': f"A transição **{pior_handoff['transition']}** é o maior gargalo, com um custo de espera estimado de **€{pior_handoff['estimated_cost_of_wait']:,.0f}**.",
                     'investigacao': [
-                        f"Analisar o *handoff* entre os recursos que executam '{pior_handoff['previous_activity']}' e '{pior_handoff['concept_name']}'.",
-                        "Verificar se é um problema de notificação, alocação ou falta de capacidade da equipa seguinte."
+                        "Analisar o *handoff* entre os recursos que executam esta sequência.",
+                        "(Ver cartão 'Top 10 Handoffs por Custo de Espera' na secção '4. Handoffs e Espera')",
+                        "(Ver cartão 'Heatmap de Performance no Processo' na secção '4. Handoffs e Espera')"
                     ]
                 })
     except Exception as e:
@@ -1899,13 +1922,14 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
             df_activity_wait['total_time'] = df_activity_wait['service_time_days'] + df_activity_wait['waiting_time_days']
             df_activity_wait['wait_ratio'] = df_activity_wait['waiting_time_days'] / df_activity_wait['total_time'].replace(0, 1)
             pior_atividade = df_activity_wait.sort_values('wait_ratio', ascending=False).iloc[0]
-            if pior_atividade['wait_ratio'] > 0.6: # Limiar: > 60% do tempo é espera
+            # LIMIAR BAIXO: > 40% do tempo é espera (em vez de 60%)
+            if pior_atividade['wait_ratio'] > 0.4: 
                 diagnostico['problemas'].append({
                     'titulo': "Problema: Ineficiência de Fluxo (Fila)",
                     'detalhe': f"A atividade **'{pior_atividade['task_type']}'** passa **{pior_atividade['wait_ratio']:.0%}** do seu tempo em fila de espera (não a ser executada).",
                     'investigacao': [
-                        "Analisar *porque* esta atividade não é iniciada mais cedo.",
-                        f"Verificar a carga de trabalho dos recursos responsáveis por '{pior_atividade['task_type']}' (ver `resource_activity_matrix`)."
+                        f"Analisar *porque* esta atividade não é iniciada mais cedo.",
+                        f"Verificar a carga de trabalho dos recursos responsáveis por '{pior_atividade['task_type']}'. (Ver cartão 'Heatmap de Esforço (Recurso vs Atividade)' na secção '3. Recursos e Equipa')"
                     ]
                 })
     except Exception as e:
@@ -1918,9 +1942,11 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         df_effic = metrics.get('resource_efficiency_data')
         if df_effic is not None and not df_effic.empty and len(df_effic) > 1:
             media_horas_tarefa = df_effic['avg_hours_per_task'].mean()
-            pior_recurso = df_effic.iloc[0] # Já vem ordenado
+            # Pega no Pior Recurso (o que demora MAIS horas)
+            pior_recurso = df_effic.sort_values('avg_hours_per_task', ascending=False).iloc[0] 
             ratio = pior_recurso['avg_hours_per_task'] / media_horas_tarefa
-            if ratio > 2.5: # Limiar: > 2.5x mais lento que a média
+            # LIMIAR BAIXO: > 2.0x mais lento que a média (em vez de 2.5x)
+            if ratio > 2.0: 
                 investigacao = []
                 # Análise Secundária
                 if df_resources is not None:
@@ -1936,7 +1962,7 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
                 diagnostico['problemas'].append({
                     'titulo': "Problema: Performance Atípica (Recurso)",
                     'detalhe': f"O recurso **{pior_recurso['resource_name']}** demora, em média, **{ratio:.1f}x mais horas por tarefa** que a média da equipa.",
-                    'investigacao': investigacao
+                    'investigacao': investigacao + ["(Ver cartão 'Métricas de Eficiência: Top 10 Melhores e Piores Recursos' na secção '3. Recursos e Equipa')"]
                 })
     except Exception as e:
         print(f"Erro Verificação 6: {e}")
@@ -1950,13 +1976,15 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         if df_rework is not None and not df_rework.empty:
             top_rework = df_rework.iloc[0]
             perc_casos = top_rework['frequency'] / total_casos
-            if perc_casos > 0.05: # Limiar: > 5% dos casos têm este rework
+            # LIMIAR BAIXO: > 2% dos casos têm este rework (em vez de 5%)
+            if perc_casos > 0.02: 
                 diagnostico['problemas'].append({
                     'titulo': "Problema: Desperdício (Rework)",
                     'detalhe': f"O loop de retrabalho **'{top_rework['rework_loop']}'** é o mais comum, afetando **{perc_casos:.1%}** dos processos ({top_rework['frequency']} ocorrências).",
                     'investigacao': [
                         f"Analisar a causa-raiz deste loop.",
-                        f"Verificar se a informação de entrada na atividade '{top_rework['rework_loop'].split(' -> ')[0]}' está correta."
+                        f"Verificar se a informação de entrada na atividade '{top_rework['rework_loop'].split(' -> ')[0]}' está correta.",
+                        "(Ver cartão 'Principais Loops de Rework' na secção '5. Fluxo e Conformidade')"
                     ]
                 })
     except Exception as e:
@@ -1969,12 +1997,14 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
         df_variants = tables_pre.get('variants_table')
         if df_variants is not None and not df_variants.empty:
             top_variant_perc = df_variants.iloc[0]['percentage']
-            if top_variant_perc < 30: # Limiar: < 30% (processo caótico)
+             # LIMIAR BAIXO: < 50% (em vez de 30%)
+            if top_variant_perc < 50:
                 diagnostico['problemas'].append({
                     'titulo': "Problema: Falta de Padronização",
-                    'detalhe': f"O processo é muito inconsistente. O 'caminho feliz' representa apenas **{top_variant_perc:.1f}%** dos casos. Existem **{len(df_variants)}** variantes só no Top 10.",
+                    'detalhe': f"O processo é muito inconsistente. O 'caminho feliz' representa apenas **{top_variant_perc:.1f}%** dos casos. Existem **{tables_pre.get('variants_table', {}).shape[0]}** variantes só no Top 10.",
                     'investigacao': [
-                        "Analisar as variantes mais comuns (ver secção 'Fluxo') para perceber as causas das exceções."
+                        "Analisar as variantes mais comuns para perceber as causas das exceções.",
+                        "(Ver cartão 'Frequência das 10 Principais Variantes' na secção '5. Fluxo e Conformidade')"
                     ]
                 })
     except Exception as e:
@@ -1989,25 +2019,81 @@ def run_diagnostic_engine(tables_pre, metrics, data_frames):
             total_horas = df_workload['hours_worked'].sum()
             top_recurso = df_workload.iloc[0]
             perc_carga = top_recurso['hours_worked'] / total_horas
-            if perc_carga > 0.25: # Limiar: > 25% do esforço total num só recurso
+             # LIMIAR BAIXO: > 20% do esforço total (em vez de 25%)
+            if perc_carga > 0.20:
                 diagnostico['problemas'].append({
                     'titulo': "Problema: Risco de Sobrecarga (Recurso)",
                     'detalhe': f"O recurso **{top_recurso['resource_name']}** concentra **{perc_carga:.1%}** de todas as horas de trabalho registadas.",
                     'investigacao': [
-                        "Este recurso é um ponto de falha. Verificar se está a gerar gargalos (ver `bottleneck_by_resource_data`).",
-                        "Analisar se é possível redistribuir parte do seu trabalho ou automatizar tarefas."
+                        "Este recurso é um ponto de falha. Verificar se está a gerar gargalos.",
+                        "(Ver cartão 'Top 10 Recursos por Horas Trabalhadas (PM)' na secção '3. Recursos e Equipa')"
                     ]
                 })
     except Exception as e:
         print(f"Erro Verificação 9: {e}")
+        
+    # ---
+    # NOVA VERIFICAÇÃO (PROBLEMA): Taxa de Atraso
+    # ---
+    try:
+        if df_projects is not None:
+            taxa_atraso = (df_projects['days_diff'] > 0).mean()
+            if taxa_atraso > 0.4: # Limiar: > 40% dos processos atrasam
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Taxa de Atraso Elevada",
+                    'detalhe': f"**{taxa_atraso:.0%}** de todos os processos terminam **após a data planeada** (mesmo que o atraso médio seja baixo).",
+                    'investigacao': [
+                        "Analisar os processos no quadrante direito da 'Matriz de Performance'.",
+                        "(Ver cartão 'Matriz de Performance (Custo vs Prazo) (PM)' na secção '1. Visão Geral e Custos')"
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 10: {e}")
+
+    # ---
+    # NOVA VERIFICAÇÃO (PROBLEMA): Taxa de Estoiro de Orçamento
+    # ---
+    try:
+        if df_projects is not None:
+            taxa_estoiro = (df_projects['cost_diff'] > 0).mean()
+            if taxa_estoiro > 0.4: # Limiar: > 40% dos processos estouram o orçamento
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Taxa de Estoiro de Orçamento Elevada",
+                    'detalhe': f"**{taxa_estoiro:.0%}** de todos os processos **excedem o orçamento planeado** (mesmo que o desvio médio seja negativo).",
+                    'investigacao': [
+                        "Analisar os processos no quadrante superior da 'Matriz de Performance'.",
+                        "(Ver cartão 'Matriz de Performance (Custo vs Prazo) (PM)' na secção '1. Visão Geral e Custos')",
+                        "(Ver cartão 'Custo Real vs. Orçamento por Processo' na secção '1. Visão Geral e Custos')"
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 11: {e}")
+
+    # ---
+    # NOVA VERIFICAÇÃO (DESTAQUE): Tendência de Custo Trimestral
+    # ---
+    try:
+        if df_projects is not None and 'completion_quarter' in df_projects.columns:
+            custo_trimestral = df_projects.dropna(subset=['completion_quarter']).groupby('completion_quarter')['total_actual_cost'].mean()
+            if len(custo_trimestral) > 2:
+                primeiro_custo = custo_trimestral.iloc[0]
+                ultimo_custo = custo_trimestral.iloc[-1]
+                if ultimo_custo > primeiro_custo * 1.1: # Limiar: > 10% de aumento
+                    diagnostico['destaques'].append({
+                        'titulo': "Destaque: Tendência de Aumento de Custo",
+                        'detalhe': f"O custo médio dos processos tem vindo a aumentar, passando de ~€{primeiro_custo:,.0f} para ~€{ultimo_custo:,.0f} por processo.",
+                        'investigacao': ["(Ver cartão 'Custo Médio dos Processos por Trimestre' na secção '1. Visão Geral e Custos')"]
+                    })
+    except Exception as e:
+        print(f"Erro Verificação 12: {e}")
 
     
     return diagnostico
 
-
 def render_diagnostics_page():
     """
     Renderiza a página de Diagnóstico Automático (a 6ª secção).
+    (VERSÃO ATUALIZADA com layout de KPI corrigido e pontos de investigação)
     """
     st.subheader("💡 Diagnóstico Automático e Insights")
     st.markdown("Esta secção varre automaticamente todos os dados da análise e apresenta os KPIs mais importantes, factos notáveis e problemas materiais que requerem investigação.")
@@ -2029,10 +2115,25 @@ def render_diagnostics_page():
     st.markdown("---")
     st.markdown("<h4>1. Saúde Geral (KPIs de Baseline)</h4>", unsafe_allow_html=True)
     kpi_data = report['saude_geral']
-    if kpi_data:
+    
+    # --- CORREÇÃO DE LAYOUT (PROBLEMA A) ---
+    if kpi_data and len(kpi_data) == 6:
+        # Linha 1 de KPIs
+        cols1 = st.columns(3)
+        cols1[0].metric(label=kpi_data[0]['label'], value=kpi_data[0]['value'])
+        cols1[1].metric(label=kpi_data[1]['label'], value=kpi_data[1]['value'])
+        cols1[2].metric(label=kpi_data[2]['label'], value=kpi_data[2]['value'])
+        
+        # Linha 2 de KPIs
+        cols2 = st.columns(3)
+        cols2[0].metric(label=kpi_data[3]['label'], value=kpi_data[3]['value'])
+        cols2[1].metric(label=kpi_data[4]['label'], value=kpi_data[4]['value'])
+        cols2[2].metric(label=kpi_data[5]['label'], value=kpi_data[5]['value'])
+    elif kpi_data: # Fallback caso não sejam 6 KPIs
         cols = st.columns(len(kpi_data))
         for i, kpi in enumerate(kpi_data):
             cols[i].metric(label=kpi['label'], value=kpi['value'])
+    # --- FIM DA CORREÇÃO DE LAYOUT ---
     else:
         st.warning("Não foi possível calcular os KPIs de Saúde Geral.")
 
@@ -2047,16 +2148,18 @@ def render_diagnostics_page():
             with st.container(border=True):
                 st.markdown(f"**{item['titulo']}**")
                 st.markdown(item['detalhe'])
-                # Não mostramos investigação para "destaques"
+                # --- ADIÇÃO DO PONTO DE INVESTIGAÇÃO (LINK) ---
+                if item['investigacao']:
+                    st.markdown(f"<span style='color: #0d6efd; font-size: 0.9em;'>{item['investigacao'][0]}</span>", unsafe_allow_html=True)
 
     # --- Bloco 3 e 4: Diagnóstico de Problemas e Investigação ---
     st.markdown("---")
     st.markdown("<h4>3. Diagnóstico de Problemas e Pontos de Investigação</h4>", unsafe_allow_html=True)
     problemas = report['problemas']
     if not problemas:
-        st.success("Nenhum problema material atingiu os limiares de alerta. O processo parece estar saudável.")
+        st.success("Nenhum problema material atingiu os limiares de alerta recalibrados. O processo parece estar saudável.")
     else:
-        st.warning(f"Foram detetados **{len(problemas)}** problemas materiais que requerem atenção:")
+        st.warning(f"Foram detetados **{len(problemas)}** problemas ou pontos de atenção materiais:")
         
         for item in problemas:
             with st.container(border=True):
@@ -2064,16 +2167,12 @@ def render_diagnostics_page():
                 st.markdown(f"<h5><i class='bi bi-exclamation-triangle-fill' style='color: #ffc107;'></i> {item['titulo']}</h5>", unsafe_allow_html=True)
                 st.markdown(f"> {item['detalhe']}")
                 
-                # Pontos de Investigação (Análise Secundária)
+                # --- CORREÇÃO DOS PONTOS DE INVESTIGAÇÃO (PROBLEMA C) ---
                 if item['investigacao']:
                     st.markdown("**Pontos de Investigação (baseados em dados):**")
                     for ponto in item['investigacao']:
                         st.markdown(f"- {ponto}")
             st.markdown("<br>", unsafe_allow_html=True) # Espaçador
-
-
-
-
 
 # --- PÁGINA DE LOGIN ---
 def login_page():
