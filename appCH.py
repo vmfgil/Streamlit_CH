@@ -248,7 +248,7 @@ if 'tables_eda' not in st.session_state: st.session_state.tables_eda = {}
 if 'plots_rl' not in st.session_state: st.session_state.plots_rl = {}
 if 'tables_rl' not in st.session_state: st.session_state.tables_rl = {}
 if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
-
+if 'data_frames_processed' not in st.session_state: st.session_state.data_frames_processed = {}
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
 #@st.cache_data
@@ -302,6 +302,9 @@ def run_pre_mining_analysis(dfs):
         'Total de Recursos': len(df_resources),
         'Duração Média (dias)': f"{df_projects['actual_duration_days'].mean():.1f}"
     }
+    tables['kpi_data']['Duração Média Num'] = df_projects['actual_duration_days'].mean()
+    tables['kpi_data']['Custo Médio'] = df_projects['total_actual_cost'].mean()
+    tables['kpi_data']['Desvio de Custo Médio'] = df_projects['cost_diff'].mean()
     tables['outlier_duration'] = df_projects.sort_values('actual_duration_days', ascending=False).head(5)
     tables['outlier_cost'] = df_projects.sort_values('total_actual_cost', ascending=False).head(5)
     
@@ -350,7 +353,7 @@ def run_pre_mining_analysis(dfs):
     plots['top_handoffs'] = convert_fig_to_bytes(fig)
     
     handoff_stats['estimated_cost_of_wait'] = handoff_stats['handoff_time_days'] * df_projects['cost_per_day'].mean()
-    
+    tables['handoff_stats_data'] = handoff_stats
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(data=handoff_stats.sort_values('estimated_cost_of_wait', ascending=False).head(10), y='transition', x='estimated_cost_of_wait', ax=ax, hue='transition', legend=False, palette='magma'); ax.set_title("Top 10 Handoffs por Custo de Espera")
     plots['top_handoffs_cost'] = convert_fig_to_bytes(fig)
 
@@ -360,12 +363,13 @@ def run_pre_mining_analysis(dfs):
     plots['top_activities_plot'] = convert_fig_to_bytes(fig)
     
     resource_workload = df_full_context.groupby('resource_name')['hours_worked'].sum().sort_values(ascending=False).reset_index()
-    
+    tables['resource_workload_data'] = resource_workload
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='hours_worked', y='resource_name', data=resource_workload.head(10), ax=ax, hue='resource_name', legend=False, palette='plasma'); ax.set_title("Top 10 Recursos por Horas Trabalhadas (PM)")
     plots['resource_workload'] = convert_fig_to_bytes(fig)
     
     resource_metrics = df_full_context.groupby("resource_name").agg(unique_cases=('project_id', 'nunique'), event_count=('task_id', 'count')).reset_index()
     resource_metrics["avg_events_per_case"] = resource_metrics["event_count"] / resource_metrics["unique_cases"]
+    tables['resource_avg_events_data'] = resource_metrics
     
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='avg_events_per_case', y='resource_name', data=resource_metrics.sort_values('avg_events_per_case', ascending=False).head(10), ax=ax, hue='resource_name', legend=False, palette='coolwarm'); ax.set_title("Recursos por Média de Tarefas por Processo")
     plots['resource_avg_events'] = convert_fig_to_bytes(fig)
@@ -383,7 +387,7 @@ def run_pre_mining_analysis(dfs):
     plots['resource_handoffs'] = convert_fig_to_bytes(fig)
     
     cost_by_resource_type = df_full_context.groupby('resource_type')['cost_of_work'].sum().sort_values(ascending=False).reset_index()
-    
+    tables['cost_by_resource_type_data'] = cost_by_resource_type
     fig, ax = plt.subplots(figsize=(8, 4))
     sns.barplot(data=cost_by_resource_type, x='cost_of_work', y='resource_type', ax=ax, hue='resource_type', legend=False, palette='magma')
     ax.set_title("Custo por Tipo de Recurso")
@@ -500,14 +504,17 @@ def run_pre_mining_analysis(dfs):
     df_tasks_analysis.sort_values(['project_id', 'start_date'], inplace=True); df_tasks_analysis['previous_task_end'] = df_tasks_analysis.groupby('project_id')['end_date'].shift(1)
     df_tasks_analysis['waiting_time_days'] = (df_tasks_analysis['start_date'] - df_tasks_analysis['previous_task_end']).dt.total_seconds() / (24*60*60)
     df_tasks_analysis['waiting_time_days'] = df_tasks_analysis['waiting_time_days'].apply(lambda x: x if x > 0 else 0)
+    tables['kpi_data']['Espera Média (dias)'] = df_tasks_analysis['waiting_time_days'].mean()
+
     df_tasks_with_resources = df_tasks_analysis.merge(df_full_context[['task_id', 'resource_name']], on='task_id', how='left').drop_duplicates()
     bottleneck_by_resource = df_tasks_with_resources.groupby('resource_name')['waiting_time_days'].mean().sort_values(ascending=False).head(15).reset_index()
+    tables['bottleneck_by_resource_data'] = bottleneck_by_resource
     
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(data=bottleneck_by_resource, y='resource_name', x='waiting_time_days', ax=ax, hue='resource_name', legend=False, palette='rocket'); ax.set_title("Top 15 Recursos por Tempo Médio de Espera")
     plots['bottleneck_by_resource'] = convert_fig_to_bytes(fig)
     
     bottleneck_by_activity = df_tasks_analysis.groupby('task_type')[['service_time_days', 'waiting_time_days']].mean()
-    
+    tables['bottleneck_by_activity_data'] = bottleneck_by_activity.reset_index()
     fig, ax = plt.subplots(figsize=(8, 5)); bottleneck_by_activity.plot(kind='bar', stacked=True, color=['#2563EB', '#FBBF24'], ax=ax); ax.set_title("Gargalos: Tempo de Serviço vs. Espera")
     plots['service_vs_wait_stacked'] = convert_fig_to_bytes(fig)
     
@@ -541,7 +548,7 @@ def run_pre_mining_analysis(dfs):
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
     avg_cycle_time_by_phase = phase_times.groupby('phase')['cycle_time_days'].mean()
-    
+    tables['avg_cycle_time_by_phase_data'] = avg_cycle_time_by_phase.reset_index()
     fig, ax = plt.subplots(figsize=(8, 4)); avg_cycle_time_by_phase.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); ax.set_title("Duração Média por Fase do Processo"); plt.xticks(rotation=45,ha='right')
     plots['cycle_time_breakdown'] = convert_fig_to_bytes(fig)
     
@@ -861,6 +868,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ax.set_ylabel("Recurso")
     fig.tight_layout()
     plots['resource_efficiency_plot'] = convert_fig_to_bytes(fig)
+    metrics['resource_efficiency_data'] = data_para_plot
 
     df_tasks_sorted['sojourn_time_hours'] = df_tasks_sorted['waiting_time_days'] * 24
     waiting_time_by_task = df_tasks_sorted.groupby('task_name')['sojourn_time_hours'].mean().reset_index()
@@ -1776,6 +1784,297 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     # --- FIM DO NOVO BLOCO ---
 
+def run_diagnostic_engine(tables_pre, metrics, data_frames):
+    """
+    Motor de Diagnóstico Dinâmico.
+    Analisa todos os dados e gera listas dinâmicas de destaques, problemas e pontos de investigação.
+    """
+    
+    # Dicionários de dados base
+    kpis = tables_pre.get('kpi_data', {})
+    delay_kpis = tables_pre.get('cost_of_delay_kpis', {})
+    df_projects = data_frames.get('projects')
+    df_full_context = data_frames.get('full_context')
+    df_resources = data_frames.get('resources')
+    
+    # Dicionário de resultados
+    diagnostico = {
+        'saude_geral': [],
+        'destaques': [],
+        'problemas': []
+    }
+
+    # --- Bloco 1: Saúde Geral (KPIs Fixos) ---
+    if kpis and delay_kpis:
+        espera_media = kpis.get('Espera Média (dias)', 0)
+        duracao_media = kpis.get('Duração Média Num', 1) # Evitar divisão por zero
+        
+        diagnostico['saude_geral'] = [
+            {'label': 'Duração Média', 'value': f"{duracao_media:.1f} dias"},
+            {'label': 'Custo Médio', 'value': f"€{kpis.get('Custo Médio', 0):,.0f}"},
+            {'label': 'Atraso Médio', 'value': f"{delay_kpis.get('Atraso Médio (dias)', 0):.1f} dias"},
+            {'label': 'Desvio de Custo Médio', 'value': f"€{kpis.get('Desvio de Custo Médio', 0):,.0f}"},
+            {'label': 'Tempo Médio em Espera', 'value': f"{espera_media:.1f} dias"},
+            {'label': '% Tempo em Espera', 'value': f"{((espera_media / duracao_media) * 100):.1f}%"}
+        ]
+
+    # --- Bloco 2 & 3: Repertório de Verificações Dinâmicas ---
+    
+    # ---
+    # VERIFICAÇÃO 1: Domínio de Fase (Destaque)
+    # ---
+    try:
+        df_fase = tables_pre.get('avg_cycle_time_by_phase_data')
+        if df_fase is not None and not df_fase.empty:
+            df_fase['perc_total'] = df_fase['cycle_time_days'] / df_fase['cycle_time_days'].sum()
+            fase_dominante = df_fase.sort_values('perc_total', ascending=False).iloc[0]
+            if fase_dominante['perc_total'] > 0.4: # Limiar: > 40% do tempo
+                diagnostico['destaques'].append({
+                    'titulo': "Destaque: Domínio de Fase",
+                    'detalhe': f"A fase **'{fase_dominante['phase']}'** é responsável por **{fase_dominante['perc_total']:.0%}** da duração total do processo.",
+                    'investigacao': []
+                })
+    except Exception as e:
+        print(f"Erro Verificação 1: {e}")
+
+    # ---
+    # VERIFICAÇÃO 2: Domínio de Custo por Recurso (Destaque)
+    # ---
+    try:
+        df_cost_res = tables_pre.get('cost_by_resource_type_data')
+        if df_cost_res is not None and not df_cost_res.empty:
+            df_cost_res['perc_total'] = df_cost_res['cost_of_work'] / df_cost_res['cost_of_work'].sum()
+            custo_dominante = df_cost_res.sort_values('perc_total', ascending=False).iloc[0]
+            if custo_dominante['perc_total'] > 0.4: # Limiar: > 40% do custo
+                diagnostico['destaques'].append({
+                    'titulo': "Destaque: Domínio de Custo",
+                    'detalhe': f"O tipo de recurso **'{custo_dominante['resource_type']}'** é responsável por **{custo_dominante['perc_total']:.0%}** do custo total.",
+                    'investigacao': []
+                })
+    except Exception as e:
+        print(f"Erro Verificação 2: {e}")
+
+    # ---
+    # VERIFICAÇÃO 3: Alta Padronização (Destaque)
+    # ---
+    try:
+        df_variants = tables_pre.get('variants_table')
+        if df_variants is not None and not df_variants.empty:
+            top_variant_perc = df_variants.iloc[0]['percentage']
+            if top_variant_perc > 75: # Limiar: > 75%
+                diagnostico['destaques'].append({
+                    'titulo': "Destaque: Alta Padronização",
+                    'detalhe': f"O processo é altamente previsível. O 'caminho feliz' é seguido em **{top_variant_perc:.1f}%** dos casos.",
+                    'investigacao': []
+                })
+    except Exception as e:
+        print(f"Erro Verificação 3: {e}")
+
+    # ---
+    # VERIFICAÇÃO 4: Gargalo de Transição (Problema)
+    # ---
+    try:
+        df_handoff = tables_pre.get('handoff_stats_data')
+        custo_medio_proc = kpis.get('Custo Médio', 1)
+        if df_handoff is not None and not df_handoff.empty:
+            pior_handoff = df_handoff.sort_values('estimated_cost_of_wait', ascending=False).iloc[0]
+            if pior_handoff['estimated_cost_of_wait'] > (custo_medio_proc * 0.1): # Limiar: Custo da espera > 10% do custo médio
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Gargalo de Transição Crítico",
+                    'detalhe': f"A transição **{pior_handoff['transition']}** é o maior gargalo, com um custo de espera estimado de **€{pior_handoff['estimated_cost_of_wait']:,.0f}**.",
+                    'investigacao': [
+                        f"Analisar o *handoff* entre os recursos que executam '{pior_handoff['previous_activity']}' e '{pior_handoff['concept_name']}'.",
+                        "Verificar se é um problema de notificação, alocação ou falta de capacidade da equipa seguinte."
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 4: {e}")
+
+    # ---
+    # VERIFICAÇÃO 5: Atividade Ineficiente / Fila (Problema)
+    # ---
+    try:
+        df_activity_wait = tables_pre.get('bottleneck_by_activity_data')
+        if df_activity_wait is not None and not df_activity_wait.empty:
+            df_activity_wait['total_time'] = df_activity_wait['service_time_days'] + df_activity_wait['waiting_time_days']
+            df_activity_wait['wait_ratio'] = df_activity_wait['waiting_time_days'] / df_activity_wait['total_time'].replace(0, 1)
+            pior_atividade = df_activity_wait.sort_values('wait_ratio', ascending=False).iloc[0]
+            if pior_atividade['wait_ratio'] > 0.6: # Limiar: > 60% do tempo é espera
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Ineficiência de Fluxo (Fila)",
+                    'detalhe': f"A atividade **'{pior_atividade['task_type']}'** passa **{pior_atividade['wait_ratio']:.0%}** do seu tempo em fila de espera (não a ser executada).",
+                    'investigacao': [
+                        "Analisar *porque* esta atividade não é iniciada mais cedo.",
+                        f"Verificar a carga de trabalho dos recursos responsáveis por '{pior_atividade['task_type']}' (ver `resource_activity_matrix`)."
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 5: {e}")
+
+    # ---
+    # VERIFICAÇÃO 6: Recurso Lento (Problema)
+    # ---
+    try:
+        df_effic = metrics.get('resource_efficiency_data')
+        if df_effic is not None and not df_effic.empty and len(df_effic) > 1:
+            media_horas_tarefa = df_effic['avg_hours_per_task'].mean()
+            pior_recurso = df_effic.iloc[0] # Já vem ordenado
+            ratio = pior_recurso['avg_hours_per_task'] / media_horas_tarefa
+            if ratio > 2.5: # Limiar: > 2.5x mais lento que a média
+                investigacao = []
+                # Análise Secundária
+                if df_resources is not None:
+                    skill = df_resources[df_resources['resource_name'] == pior_recurso['resource_name']]['skill_level'].values
+                    if len(skill) > 0: investigacao.append(f"O recurso está classificado com Nível de Skill: **{skill[0]}**.")
+                if df_full_context is not None:
+                    tasks_recurso = df_full_context[df_full_context['resource_name'] == pior_recurso['resource_name']]
+                    risk_rating = tasks_recurso['risk_rating'].mode()
+                    if not risk_rating.empty: investigacao.append(f"Trabalha primariamente em projetos com Risco: **{risk_rating[0]}**.")
+                    task_types = tasks_recurso['task_type'].nunique()
+                    investigacao.append(f"Executa **{task_types}** tipos de tarefas diferentes (nível de especialização).")
+
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Performance Atípica (Recurso)",
+                    'detalhe': f"O recurso **{pior_recurso['resource_name']}** demora, em média, **{ratio:.1f}x mais horas por tarefa** que a média da equipa.",
+                    'investigacao': investigacao
+                })
+    except Exception as e:
+        print(f"Erro Verificação 6: {e}")
+
+    # ---
+    # VERIFICAÇÃO 7: Rework (Problema)
+    # ---
+    try:
+        df_rework = tables_pre.get('rework_loops_table')
+        total_casos = kpis.get('Total de Processos', 1)
+        if df_rework is not None and not df_rework.empty:
+            top_rework = df_rework.iloc[0]
+            perc_casos = top_rework['frequency'] / total_casos
+            if perc_casos > 0.05: # Limiar: > 5% dos casos têm este rework
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Desperdício (Rework)",
+                    'detalhe': f"O loop de retrabalho **'{top_rework['rework_loop']}'** é o mais comum, afetando **{perc_casos:.1%}** dos processos ({top_rework['frequency']} ocorrências).",
+                    'investigacao': [
+                        f"Analisar a causa-raiz deste loop.",
+                        f"Verificar se a informação de entrada na atividade '{top_rework['rework_loop'].split(' -> ')[0]}' está correta."
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 7: {e}")
+
+    # ---
+    # VERIFICAÇÃO 8: Variabilidade (Problema)
+    # ---
+    try:
+        df_variants = tables_pre.get('variants_table')
+        if df_variants is not None and not df_variants.empty:
+            top_variant_perc = df_variants.iloc[0]['percentage']
+            if top_variant_perc < 30: # Limiar: < 30% (processo caótico)
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Falta de Padronização",
+                    'detalhe': f"O processo é muito inconsistente. O 'caminho feliz' representa apenas **{top_variant_perc:.1f}%** dos casos. Existem **{len(df_variants)}** variantes só no Top 10.",
+                    'investigacao': [
+                        "Analisar as variantes mais comuns (ver secção 'Fluxo') para perceber as causas das exceções."
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 8: {e}")
+
+    # ---
+    # VERIFICAÇÃO 9: Recurso Sobrecarregado (Problema)
+    # ---
+    try:
+        df_workload = tables_pre.get('resource_workload_data')
+        if df_workload is not None and not df_workload.empty:
+            total_horas = df_workload['hours_worked'].sum()
+            top_recurso = df_workload.iloc[0]
+            perc_carga = top_recurso['hours_worked'] / total_horas
+            if perc_carga > 0.25: # Limiar: > 25% do esforço total num só recurso
+                diagnostico['problemas'].append({
+                    'titulo': "Problema: Risco de Sobrecarga (Recurso)",
+                    'detalhe': f"O recurso **{top_recurso['resource_name']}** concentra **{perc_carga:.1%}** de todas as horas de trabalho registadas.",
+                    'investigacao': [
+                        "Este recurso é um ponto de falha. Verificar se está a gerar gargalos (ver `bottleneck_by_resource_data`).",
+                        "Analisar se é possível redistribuir parte do seu trabalho ou automatizar tarefas."
+                    ]
+                })
+    except Exception as e:
+        print(f"Erro Verificação 9: {e}")
+
+    
+    return diagnostico
+
+
+def render_diagnostics_page():
+    """
+    Renderiza a página de Diagnóstico Automático (a 6ª secção).
+    """
+    st.subheader("💡 Diagnóstico Automático e Insights")
+    st.markdown("Esta secção varre automaticamente todos os dados da análise e apresenta os KPIs mais importantes, factos notáveis e problemas materiais que requerem investigação.")
+    
+    # Obter os dados do session_state
+    tables_pre = st.session_state.tables_pre_mining
+    metrics = st.session_state.metrics
+    data_frames = st.session_state.data_frames_processed
+    
+    # Verificar se a análise já correu
+    if not tables_pre or not metrics or not data_frames:
+        st.error("Os dados da análise não foram encontrados. Por favor, execute a análise na página 'Configurações'.")
+        return
+
+    # Executar o motor de diagnóstico
+    report = run_diagnostic_engine(tables_pre, metrics, data_frames)
+    
+    # --- Bloco 1: Saúde Geral ---
+    st.markdown("---")
+    st.markdown("<h4>1. Saúde Geral (KPIs de Baseline)</h4>", unsafe_allow_html=True)
+    kpi_data = report['saude_geral']
+    if kpi_data:
+        cols = st.columns(len(kpi_data))
+        for i, kpi in enumerate(kpi_data):
+            cols[i].metric(label=kpi['label'], value=kpi['value'])
+    else:
+        st.warning("Não foi possível calcular os KPIs de Saúde Geral.")
+
+    # --- Bloco 2: Destaques Relevantes ---
+    st.markdown("---")
+    st.markdown("<h4>2. Destaques Relevantes (Factos Notáveis)</h4>", unsafe_allow_html=True)
+    destaques = report['destaques']
+    if not destaques:
+        st.info("Nenhum facto notável (ex: domínio de fase, alta padronização) atingiu o limiar de relevância.")
+    else:
+        for item in destaques:
+            with st.container(border=True):
+                st.markdown(f"**{item['titulo']}**")
+                st.markdown(item['detalhe'])
+                # Não mostramos investigação para "destaques"
+
+    # --- Bloco 3 e 4: Diagnóstico de Problemas e Investigação ---
+    st.markdown("---")
+    st.markdown("<h4>3. Diagnóstico de Problemas e Pontos de Investigação</h4>", unsafe_allow_html=True)
+    problemas = report['problemas']
+    if not problemas:
+        st.success("Nenhum problema material atingiu os limiares de alerta. O processo parece estar saudável.")
+    else:
+        st.warning(f"Foram detetados **{len(problemas)}** problemas materiais que requerem atenção:")
+        
+        for item in problemas:
+            with st.container(border=True):
+                # Título e Detalhe do Problema
+                st.markdown(f"<h5><i class='bi bi-exclamation-triangle-fill' style='color: #ffc107;'></i> {item['titulo']}</h5>", unsafe_allow_html=True)
+                st.markdown(f"> {item['detalhe']}")
+                
+                # Pontos de Investigação (Análise Secundária)
+                if item['investigacao']:
+                    st.markdown("**Pontos de Investigação (baseados em dados):**")
+                    for ponto in item['investigacao']:
+                        st.markdown(f"- {ponto}")
+            st.markdown("<br>", unsafe_allow_html=True) # Espaçador
+
+
+
+
+
 # --- PÁGINA DE LOGIN ---
 def login_page():
     st.markdown("<h2>✨ Transformação Inteligente de Processos</h2>", unsafe_allow_html=True)
@@ -1868,6 +2167,12 @@ def settings_page():
                 plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(st.session_state.dfs)
                 st.session_state.plots_pre_mining = plots_pre
                 st.session_state.tables_pre_mining = tables_pre
+                st.session_state.data_frames_processed = {
+                    'projects': df_p,
+                    'tasks': df_t,
+                    'resources': df_r,
+                    'full_context': df_fc
+                }
                 log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
                 plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
                 st.session_state.plots_post_mining = plots_post
@@ -1901,7 +2206,7 @@ def dashboard_page():
         "performance": "2. Performance e Prazos",
         "recursos": "3. Recursos e Equipa",
         "gargalos": "4. Handoffs e Espera",
-        "fluxo": "5. Fluxo e Conformidade"
+        "fluxo": "5. Fluxo e Conformidade", "diagnostico": "💡 Diagnóstico preliminar"
     }
     
     nav_cols = st.columns(len(sections))
@@ -1921,6 +2226,9 @@ def dashboard_page():
     plots_eda = st.session_state.plots_eda
     tables_eda = st.session_state.tables_eda
 
+    if st.session_state.current_section == "diagnostico":
+    render_diagnostics_page()
+    
     if st.session_state.current_section == "visao_geral":
         st.subheader("1. Visão Geral e Custos")
         kpi_data = tables_pre.get('kpi_data', {})
