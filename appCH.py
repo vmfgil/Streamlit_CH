@@ -1365,7 +1365,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     time_diff = real_duration - final_duration
                     reward_from_tasks += self.rewards['completion_base']
                     reward_from_tasks += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
-                    
+                    reward_from_tasks -= proj_state['current_cost'] * self.rewards['cost_impact_factor']
                     # Guardar resultados
                     self.completed_projects[proj_id] = {'simulated_duration': final_duration, 'simulated_cost': proj_state['current_cost']}
 
@@ -1374,7 +1374,15 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
             # 6d. Finalizar o dia
             self.current_date += timedelta(days=1)
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty']
+            # --- Adicionado: Calcular Penalização por Tarefas Pendentes ---
+            num_pending_eligible_tasks = sum(1 for proj in self.active_projects.values() 
+                                             for task in proj['tasks'].values() 
+                                             if task['status'] == 'Pendente' and 
+                                                self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
+            pending_penalty = num_pending_eligible_tasks * self.rewards['pending_task_penalty_factor']
+            # --- Fim Adicionado ---
+        
+            total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - pending_penalty # Modificado para incluir a nova penalização
             
             done = not self.active_projects and not self.future_projects
             
