@@ -1229,53 +1229,59 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             num_active = len(self.active_projects)
             pending_tasks_count = 0
             high_prio_tasks_count = 0
-            
-            # Calcular tarefas pendentes e de alta prioridade elegíveis
+        
+            # --- INÍCIO CÁLCULO max_pending_days ---
+            max_pending_days = 0 
+            # ---------------------------------------
+        
+            # Calcular tarefas pendentes, alta prioridade e idade máxima
             for proj in self.active_projects.values():
                 for task in proj['tasks'].values():
                      # Usamos _is_task_eligible sem check_resource_type para elegibilidade geral
-                     if task['status'] == 'Pendente' and self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
-                          pending_tasks_count += 1
-                          if task['priority'] >= 4:
-                               high_prio_tasks_count += 1
-
+                     if task['status'] in ['Pendente', 'Em Andamento'] and \
+                        self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
+        
+                          # Contar Pendentes (Apenas Status 'Pendente')
+                          if task['status'] == 'Pendente':
+                               pending_tasks_count += 1
+                               if task['priority'] >= 4:
+                                    high_prio_tasks_count += 1
+        
+                          # --- LÓGICA PARA max_pending_days ---
+                          eligibility_date = task.get('eligibility_date')
+                          if eligibility_date:
+                              # Calcula dias de CALENDÁRIO desde que ficou elegível
+                              pending_days_calendar = (self.current_date - eligibility_date).days 
+                              if pending_days_calendar > max_pending_days:
+                                  max_pending_days = pending_days_calendar
+                          # ---------------------------------------
+        
             day_of_week = self.current_date.weekday()
-    
-            # --- INÍCIO DA NOVA LÓGICA: Calcular Utilização de Recursos ---
-            
-            # Precisamos das horas trabalhadas HOJE. O ideal é calcular isto no final do 'step' anterior
-            # e guardar como um atributo do ambiente, ou recalcular aqui se necessário.
-            # Vamos assumir que 'step' guarda 'self.last_day_hours_worked_per_resource' (um defaultdict(float))
-            
+        
+            # --- Lógica existente para Utilização de Recursos ---
             utilization_rates = []
-            for res_type in self.resource_types: # Usa a ordem definida no __init__
+            for res_type in self.resource_types: 
                 total_capacity_today = 0
-                # Soma a capacidade de todos os recursos deste tipo (assumindo que trabalham em dias úteis)
                 if self.current_date.weekday() < 5:
                      pool = self.resources_by_type.get(res_type, pd.DataFrame())
                      if not pool.empty:
                           total_capacity_today = pool['daily_capacity'].sum()
-    
+        
                 hours_worked_today = 0
-                # Soma as horas trabalhadas pelos recursos deste tipo no dia anterior (ou hoje, se calculado no step)
-                # Assumindo que temos self.last_day_hours_worked_per_resource (resource_id -> hours)
                 if hasattr(self, 'last_day_hours_worked_per_resource'):
                     pool_ids = self.resources_by_type.get(res_type, pd.DataFrame())['resource_id'].tolist()
                     hours_worked_today = sum(self.last_day_hours_worked_per_resource.get(res_id, 0) for res_id in pool_ids)
-    
+        
                 if total_capacity_today > 0:
                     utilization = hours_worked_today / total_capacity_today
                 else:
                     utilization = 0.0
-                
-                # Arredondar para simplificar o estado (ex: 0.0, 0.1, ..., 1.0)
                 utilization_rates.append(round(utilization, 1)) 
-                
-            # --- FIM DA NOVA LÓGICA ---
-    
-            # O novo estado inclui as taxas de utilização no final
-            new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week) + tuple(utilization_rates)
-            
+            # --- Fim Lógica Utilização ---
+        
+            # O novo estado inclui max_pending_days ANTES das taxas de utilização
+            new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week, max_pending_days) + tuple(utilization_rates)
+        
             return new_state_tuple
 
         def _is_task_eligible(self, task, risk_rating, all_project_tasks, project_dependencies, check_resource_type=None):
@@ -1324,7 +1330,12 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             for proj_data in projects_to_activate:
                 proj_id = proj_data['project_id']
                 self.active_projects[proj_id] = {
-                    'tasks': {str(t['task_id']): {'status': 'Pendente', 'progress': 0.0, 'estimated_effort': real_hours_per_task.get(str(t['task_id']), t['estimated_effort'] * 8.0), 'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id'])} for t in self.tasks_by_project.get(proj_id, [])},
+                    'tasks': {str(t['task_id']): {
+                    'status': 'Pendente', 'progress': 0.0,
+                    'estimated_effort': real_hours_per_task.get(str(t['task_id']), t['estimated_effort'] * 8.0),
+                    'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id']),
+                    'eligibility_date': self.current_date if not self.dependencies_by_project.get(proj_id, {}).get(str(t['task_id'])) else None
+                } for t in self.tasks_by_project.get(proj_id, [])},
                     'dependencies': self.dependencies_by_project.get(proj_id, {}),
                     'risk_rating': proj_data['risk_rating'],
                     'current_cost': 0.0,
@@ -1370,7 +1381,20 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     task_data['status'] = 'Concluída'
                     task_data['completion_date'] = self.current_date
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-            
+
+                    # --- INÍCIO DO NOVO BLOCO: Atualizar Elegibilidade de Sucessoras ---
+                    completed_task_id = task_id # ID da tarefa que acabou de ser concluída
+                    # Iterar sobre todos os projetos ativos para encontrar sucessoras
+                    for check_proj_id, check_proj_state in self.active_projects.items():
+                        for check_task_id, check_task_data in check_proj_state['tasks'].items():
+                            # Verificar se esta tarefa é sucessora da que acabou de terminar
+                            predecessor_id = check_proj_state['dependencies'].get(check_task_id)
+                            if predecessor_id == completed_task_id:
+                                # Se a tarefa sucessora ainda não tinha data de elegibilidade, define-a para hoje
+                                if check_task_data['eligibility_date'] is None:
+                                    check_task_data['eligibility_date'] = self.current_date
+                    # --- FIM DO NOVO BLOCO ---
+                
                 # Para os logs detalhados
                 daily_cost_by_project[proj_id] += cost_today
                 daily_hours_by_project[proj_id] += hours_to_work
@@ -1419,13 +1443,22 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
             # 6d. Finalizar o dia
             self.current_date += timedelta(days=1)
-            # --- Adicionado: Calcular Penalização por Tarefas Pendentes ---
-            num_pending_eligible_tasks = sum(1 for proj in self.active_projects.values() 
-                                             for task in proj['tasks'].values() 
-                                             if task['status'] == 'Pendente' and 
-                                                self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']))
-            pending_penalty = num_pending_eligible_tasks * self.rewards['pending_task_penalty_factor']
-            # --- Fim Adicionado ---
+            # --- Alterado: Calcular Penalização DINÂMICA por Tarefas Pendentes/Atrasadas ---
+            pending_penalty = 0
+            for proj in self.active_projects.values():
+                for task in proj['tasks'].values():
+                    # Considera tarefas PENDENTES OU EM ANDAMENTO que estão ELEGÍVEIS mas não concluídas
+                    if task['status'] in ['Pendente', 'Em Andamento'] and \
+                       self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
+    
+                        eligibility_date = task.get('eligibility_date')
+                        if eligibility_date: 
+                            # Calcula há quantos dias de CALENDÁRIO está elegível
+                            pending_days_calendar = (self.current_date - eligibility_date).days
+                            # Penalização aumenta linearmente com os dias pendente (mínimo 0)
+                            penalty_for_this_task = self.rewards['pending_task_penalty_factor'] * max(0, pending_days_calendar)
+                            pending_penalty += penalty_for_this_task
+            # --- Fim Alterado ---
         
             total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - pending_penalty # Modificado para incluir a nova penalização
             
@@ -2097,7 +2130,7 @@ def rl_page():
             per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=7500.0)
         with rc3:
             priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
-            pending_task_penalty_factor = st.number_input("Penalização por Tarefa Pendente", value=100)
+            pending_task_penalty_factor = st.number_input("Penalização Base Diária por Tarefa Pendente", value=100)
         
         st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
         c_ag1, c_ag2, c_ag3 = st.columns(3)
