@@ -2227,7 +2227,7 @@ def dashboard_page():
     tables_eda = st.session_state.tables_eda
 
     if st.session_state.current_section == "diagnostico":
-    render_diagnostics_page()
+        render_diagnostics_page()
     
     if st.session_state.current_section == "visao_geral":
         st.subheader("1. Visão Geral e Custos")
