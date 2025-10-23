@@ -2056,7 +2056,7 @@ def run_diagnostic_engine_v4(tables_pre, metrics, data_frames):
     return insights
 
 
-def render_diagnostics_page_v4():
+def render_diagnostics_page():
     """
     Renderiza a página de Diagnóstico Automático V4.
     """
@@ -2281,7 +2281,7 @@ def dashboard_page():
     tables_eda = st.session_state.tables_eda
 
     if st.session_state.current_section == "diagnostico":
-        render_diagnostics_page_V4()
+        render_diagnostics_page()
     
     if st.session_state.current_section == "visao_geral":
         st.subheader("1. Visão Geral e Custos")
