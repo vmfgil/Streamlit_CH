@@ -1489,7 +1489,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 
                 # Atualiza as horas disponíveis do recurso
                 available_hours_per_resource[chosen_res_id] -= hours_to_assign
-            
+
+                # Remove a tarefa escolhida da lista de trabalho para este dia.
+                work_actions.remove(best_task_action)
+                simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
             
             next_state, reward, done = env.step(action_list_for_step)
             
@@ -1585,6 +1588,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
             
             available_hours_per_resource[chosen_res_id] -= hours_to_assign
+            # --- LINHA DE CORREÇÃO CRÍTICA (AVALIAÇÃO) ---
+            # Remove a tarefa escolhida da lista de trabalho para este dia.
+            work_actions.remove(best_task_action)
+            simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
             
             # Se a tarefa ficar sem esforço restante, removemo-la das opções para o resto do dia
             # (Pequena otimização para não continuar a tentar atribuir uma tarefa "quase completa")
