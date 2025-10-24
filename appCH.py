@@ -15,8 +15,6 @@ from datetime import timedelta
 import textwrap
 import html # <--- ADICIONADO PARA CORRIGIR O ERRO
 from scipy import stats
-import google.generativeai as genai
-import PIL.Image # Para lidar com imagens para a API
 from fpdf import FPDF
 from io import BytesIO
 import inspect
@@ -268,7 +266,8 @@ if 'data_frames_processed' not in st.session_state: st.session_state.data_frames
 if 'pdf_bytes_download' not in st.session_state: st.session_state.pdf_bytes_download = None
 if 'pdf_bytes_for_download_v14' not in st.session_state: st.session_state.pdf_bytes_for_download_v14 = None
 if 'pdf_ready_for_download' not in st.session_state: st.session_state.pdf_ready_for_download = False
-
+if 'show_external_ai_modal' not in st.session_state: st.session_state.show_external_ai_modal = False
+    
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
 #@st.cache_data
 def run_pre_mining_analysis(dfs):
@@ -3234,151 +3233,11 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
          traceback.print_exc()
          return None
 
-# --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
-@st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
-def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
-    """Faz a chamada à API Gemini com texto, código e imagens PIL."""
-    try:
-        genai.configure(api_key=_api_key)
-        # Usa um modelo recente que suporte multimodalidade
-        model = genai.GenerativeModel('gemini-pro-vision') # Ou 'gemini-1.5-flash'
-
-        # Constrói o conteúdo multimodal
-        prompt_parts = [
-            _prompt_instruction,
-            "\n\n**Código da Aplicação Streamlit:**\n```python\n",
-            _app_code,
-            "\n```\n\n**Resultados Visuais (Gráficos):**\n"
-        ]
-
-        # Adiciona as imagens PIL válidas
-        if _image_list_pil:
-             prompt_parts.extend(_image_list_pil)
-             prompt_parts.append("\n**Fim dos Resultados Visuais. Por favor, analise cada cartão/imagem.**")
-        else:
-             prompt_parts.append("\n[Nenhuma imagem válida foi fornecida para análise.]\n")
-
-        # Faz a chamada à API
-        # Aumenta o timeout e adiciona safety settings se necessário
-        generation_config = genai.types.GenerationConfig(
-            # response_mime_type="text/plain", # Descomentar se a resposta vier mal formatada
-            temperature=0.7 # Ajustar a criatividade/factualidade
-        )
-        safety_settings = [ # Ajustar níveis de segurança se bloquear respostas legítimas
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-        ]
-
-        # Use request_options para definir timeout (em segundos)
-        response = model.generate_content(
-             prompt_parts,
-             generation_config=generation_config,
-             safety_settings=safety_settings,
-             request_options={"timeout": 600} # Timeout de 10 minutos
-        )
-
-        # Tratar casos onde a resposta pode ser bloqueada por segurança
-        if not response.parts:
-             # Tenta obter o motivo do bloqueio, se disponível
-             block_reason = "Desconhecido (possivelmente filtros de segurança)"
-             if response.prompt_feedback and response.prompt_feedback.block_reason:
-                 block_reason = response.prompt_feedback.block_reason.name
-             return f"⚠️ A resposta da IA foi bloqueada. Motivo: {block_reason}. Tente refazer a análise ou ajustar os filtros de segurança (se aplicável)."
-
-        return response.text
-    except Exception as e:
-        # Tenta fornecer mais detalhes sobre o erro
-        error_message = f"Erro ao chamar a API Gemini: {e}\n"
-        if "API key not valid" in str(e):
-            error_message += "Verifique se a sua GOOGLE_API_KEY nos Secrets está correta e ativa.\n"
-        elif "retrying" in str(e).lower() or "timeout" in str(e).lower():
-             error_message += "O pedido excedeu o tempo limite ou falhou após tentativas. Tente novamente mais tarde ou com menos imagens.\n"
-        elif "billing" in str(e).lower():
-             error_message += "Verifique se a faturação está ativa no seu projeto Google Cloud e associada à API Key.\n"
-        else:
-             error_message += "Consulte a documentação da API Gemini para mais detalhes sobre o erro.\n"
-        return error_message
 
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     st.title("🏠 Process Mining")
-    # --- INÍCIO DO BLOCO DE DEBUGGING LIST MODELS ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Debug Modelos Gemini:")
-    if "GOOGLE_API_KEY" in st.secrets:
-        try:
-            st.sidebar.info("Tentando listar modelos disponíveis...")
-            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    
-            available_models = []
-            for m in genai.list_models():
-                # Verifica se o modelo suporta o método 'generateContent'
-                if 'generateContent' in m.supported_generation_methods:
-                    available_models.append(m.name)
-    
-            if available_models:
-                st.sidebar.success("Modelos 'generateContent' disponíveis:")
-                # Extrai apenas os nomes dos modelos (remove 'models/')
-                model_names_only = [name.replace("models/", "") for name in available_models]
-                st.sidebar.code("\n".join(model_names_only))
-                # Verifica se os modelos que tentámos usar estão na lista
-                if "gemini-1.5-flash" not in model_names_only:
-                    st.sidebar.warning("`gemini-1.5-flash` NÃO está na lista!")
-                if "gemini-pro-vision" not in model_names_only:
-                     st.sidebar.warning("`gemini-pro-vision` NÃO está na lista!")
-                # Sugere um modelo multimodal, se disponível
-                vision_alternatives = [m for m in model_names_only if 'vision' in m]
-                if vision_alternatives:
-                    st.sidebar.info(f"Sugestão: Tente usar '{vision_alternatives[0]}' no código.")
-                elif "gemini-pro" in model_names_only: # Fallback para gemini-pro (não suporta imagem diretamente no generateContent)
-                     st.sidebar.warning("`gemini-pro` está disponível, mas pode não suportar imagens diretamente desta forma.")
-                else:
-                    st.sidebar.error("Nenhum modelo multimodal comum encontrado!")
-    
-            else:
-                st.sidebar.error("Nenhum modelo suportando 'generateContent' foi encontrado para esta API Key.")
-                st.sidebar.write("Modelos encontrados (sem suporte generateContent):")
-                all_model_names = [m.name.replace("models/", "") for m in genai.list_models()]
-                st.sidebar.code("\n".join(all_model_names))
-    
-    
-        except Exception as e:
-            st.sidebar.error(f"Erro ao listar modelos: {e}")
-            st.sidebar.warning("Verifique a API Key, projeto Google Cloud e se a API 'Generative Language' está ativa.")
-    else:
-        st.sidebar.error("GOOGLE_API_KEY não encontrada nos Secrets para listar modelos.")
-    st.sidebar.markdown("---")
-    # --- FIM DO BLOCO DE DEBUGGING LIST MODELS ---
 
-    # --- INÍCIO DO BLOCO DE DEBUGGING DE SECRETS ---
-    st.sidebar.markdown("---") # Adiciona um separador na sidebar
-    st.sidebar.subheader("Debug Secrets:")
-    try:
-        # Tenta ler a chave API
-        api_key_found = "GOOGLE_API_KEY" in st.secrets
-        st.sidebar.write(f"GOOGLE_API_KEY encontrada: {api_key_found}")
-        if api_key_found:
-             # Mostra apenas os primeiros/últimos caracteres se encontrada
-             key_preview = st.secrets["GOOGLE_API_KEY"]
-             st.sidebar.text(f"  Preview: {key_preview[:4]}...{key_preview[-4:]}")
-        else:
-             # Verifica se há alguma chave parecida (erro de digitação?)
-             secrets_keys = list(st.secrets.keys())
-             st.sidebar.warning(f"Chave não encontrada! Chaves disponíveis: {secrets_keys}")
-    
-        # Tenta ler o segredo de teste
-        test_secret_found = "TEST_SECRET" in st.secrets
-        st.sidebar.write(f"TEST_SECRET encontrada: {test_secret_found}")
-        if test_secret_found:
-            st.sidebar.text(f"  Valor: {st.secrets['TEST_SECRET']}")
-    
-    except Exception as e:
-        st.sidebar.error(f"Erro ao ler secrets: {e}")
-    st.sidebar.markdown("---")
-    # --- FIM DO BLOCO DE DEBUGGING DE SECRETS ---
-    
     # (Adicione estas linhas DENTRO da função dashboard_page, APÓS st.title)
     ### START PDF/AI STATE INIT (if not global) ###
     if 'show_ai_modal' not in st.session_state: st.session_state.show_ai_modal = False
@@ -3447,91 +3306,75 @@ def dashboard_page():
             # --- FIM DO BLOCO PDF REVISADO V14 ---
         
         with col_ai:
-            # Botão para abrir a modal da IA
-            if st.button("🤖", help="Analisar resultados com IA (Gemini)", use_container_width=True):
-                st.session_state.show_ai_modal = True
-                st.session_state.gemini_analysis = None # Limpa análise anterior
+            # Botão para abrir a modal de preparação para Gemini Externo
+            if st.button("🤖 AI", help="Preparar dados para análise externa com Gemini", use_container_width=True):
+                st.session_state.show_external_ai_modal = True # Nova flag de estado
                 st.rerun()
-    
-        # --- Modal para o Chat AI (Fora das colunas) ---
-        if st.session_state.get("show_ai_modal", False):
-            @st.dialog("Análise com Inteligência Artificial")
-            def ai_modal():
-                st.info("A IA (Gemini) irá analisar o código da aplicação e as imagens dos resultados. Clique abaixo para iniciar.")
-                st.write("Isto pode demorar alguns minutos...")
-    
-                if st.button("🚀 Iniciar Análise com Gemini", key="start_gemini_analysis"):
-                    if 'GOOGLE_API_KEY' not in st.secrets:
-                        st.error("API Key do Google não configurada (GOOGLE_API_KEY).")
-                        return
-    
-                    google_api_key = st.secrets["GOOGLE_API_KEY"]
-    
+
+        # --- Modal para Preparar Contexto para Gemini Externo ---
+        if st.session_state.get("show_external_ai_modal", False):
+            @st.dialog("Preparar Análise com Gemini (Externo)")
+            def external_ai_modal():
+                st.info("Siga estes passos:\n1. Copie o prompt abaixo.\n2. Descarregue o PDF com os resultados.\n3. Clique em 'Abrir Gemini' para ir para a interface web.\n4. Cole o prompt no Gemini e faça upload do PDF descarregado.")
+
+                pdf_generated = False
+                pdf_bytes_modal = None
+                prompt_text = ""
+
+                # Tenta gerar o PDF e o Prompt dentro da modal
+                try:
+                    # Gerar PDF
+                    with st.spinner("Gerando PDF dos resultados..."):
+                         plots_pre = st.session_state.plots_pre_mining
+                         tables_pre = st.session_state.tables_pre_mining
+                         plots_post = st.session_state.plots_post_mining
+                         plots_eda = st.session_state.plots_eda
+                         tables_eda = st.session_state.tables_eda
+                         pdf_bytes_modal = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
+                         if pdf_bytes_modal and len(pdf_bytes_modal) > 100:
+                             pdf_generated = True
+                         else:
+                             st.error("Falha ao gerar o PDF para a análise.")
+
+                    # Gerar Prompt (Ler Código)
+                    app_code = "# Não foi possível ler o código da aplicação #"
                     try:
-                        # Recolhe dados DENTRO do clique
-                        plots_pre = st.session_state.plots_pre_mining
-                        plots_post = st.session_state.plots_post_mining
-                        plots_eda = st.session_state.plots_eda
-    
-                        # Cria lista de imagens (BytesIO) - INCLUI APENAS GRÁFICOS IMPORTANTES (reduzido para performance)
-                        image_keys_to_send = [
-                            ('pre', 'performance_matrix'), ('pre', 'cost_by_resource_type'), ('post', 'kpi_time_series'),
-                            ('eda', 'plot_30'), ('post', 'performance_heatmap'), ('pre', 'service_vs_wait_stacked'),
-                            ('post', 'waiting_time_matrix_plot'), ('pre', 'resource_workload'), ('post', 'resource_network_adv'),
-                            ('post', 'metrics_inductive'), ('pre', 'variants_frequency')
-                        ]
-                        image_list_bytesio_filtered = []
-                        plot_sources = {'pre': plots_pre, 'post': plots_post, 'eda': plots_eda}
-    
-                        for src_key, plot_key in image_keys_to_send:
-                            plot_obj = plot_sources[src_key].get(plot_key)
-                            if isinstance(plot_obj, BytesIO):
-                                image_list_bytesio_filtered.append(plot_obj)
-    
-                        # Converte BytesIO para PIL Images
-                        image_list_pil = []
-                        for img_bytes in image_list_bytesio_filtered:
-                             try:
-                                 img_bytes.seek(0)
-                                 img = PIL.Image.open(img_bytes)
-                                 image_list_pil.append(img)
-                             except Exception as img_err:
-                                 print(f"Erro ao converter BytesIO para PIL: {img_err}")
-    
-                        # Lê o código da app
-                        try:
-                             script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
-                             app_code = script_path.read_text(encoding='utf-8')
-                        except Exception as e1:
-                             print(f"Erro ao ler código com Path: {e1}. Tentando com inspect.getsource...")
-                             try: app_code = inspect.getsource(sys.modules[__name__])
-                             except Exception as e2: print(f"Erro ao ler código com inspect.getsource: {e2}"); app_code = f"# Erro: {e2}"
-    
-                        prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como os resultados das análises obtidas (imagens dos gráficos principais), e preciso que me analises em detalhe cada cartão (imagem)."
-    
-                        # Chama a API
-                        with st.spinner("A IA está a analisar os dados e imagens... 🤖"):
-                            analysis_result = call_gemini_api(google_api_key, app_code, image_list_pil, prompt_instruction)
-    
-                        st.session_state.gemini_analysis = analysis_result
-                        st.session_state.show_ai_modal = False
-                        st.rerun()
-    
-                    except Exception as e:
-                        st.error(f"Erro ao preparar ou enviar dados para IA: {e}")
-    
-                if st.button("Cancelar", key="cancel_gemini_analysis"):
-                    st.session_state.show_ai_modal = False
-                    st.rerun()
-    
-            # Chama a função para mostrar a modal (se show_ai_modal for True)
-            ai_modal()
-    
-        # --- Área para mostrar a Análise da IA (Fora das colunas e da modal) ---
-        if "gemini_analysis" in st.session_state and st.session_state.gemini_analysis:
-            with st.expander("🤖 Análise da Inteligência Artificial (Gemini)", expanded=True):
-                st.markdown(st.session_state.gemini_analysis)
-    ### END PDF/AI BUTTONS & MODAL ###
+                         script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
+                         app_code = script_path.read_text(encoding='utf-8')
+                    except Exception as e1:
+                         print(f"Erro ao ler código com Path: {e1}. Tentando com inspect.getsource...")
+                         try: app_code = inspect.getsource(sys.modules[__name__])
+                         except Exception as e2: print(f"Erro ao ler código com inspect.getsource: {e2}")
+
+                    prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como um PDF com os resultados das análises obtidas (gráficos/tabelas), e preciso que me analises em detalhe cada cartão (gráfico ou tabela) presente no PDF."
+                    prompt_text = f"{prompt_instruction}\n\n**Código da Aplicação Streamlit:**\n```python\n{app_code}\n```"
+
+                except Exception as e:
+                    st.error(f"Erro ao preparar dados para a IA: {e}")
+
+                # Mostrar Prompt e Botões
+                st.text_area("1. Prompt para Gemini:", prompt_text, height=250)
+
+                if pdf_generated:
+                    st.download_button(
+                        label="2. Descarregar PDF com Resultados",
+                        data=pdf_bytes_modal,
+                        file_name="relatorio_process_mining_analise.pdf", # Nome diferente para clareza
+                        mime="application/pdf",
+                        key="pdf_download_modal_ai"
+                    )
+                else:
+                    st.warning("Geração do PDF falhou. O Gemini não poderá analisar os gráficos.")
+
+                st.link_button("3. Abrir Gemini (Nova Aba)", "https://gemini.google.com/", target="_blank", use_container_width=True)
+
+                if st.button("Fechar", key="close_external_ai"):
+                    st.session_state.show_external_ai_modal = False
+                    st.rerun() # Fecha a modal
+
+            # Chama a função para mostrar a modal
+            external_ai_modal()
+        ### END PDF/AI BUTTONS & MODAL ###
     
     if st.session_state.get('show_welcome_message', False):
         st.success(f"Bem-vindo, {st.session_state.user_name}!")
