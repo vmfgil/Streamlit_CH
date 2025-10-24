@@ -998,7 +998,7 @@ def run_eda_analysis(dfs):
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
     
     # --- INÍCIO DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
-    
+    if 'complexity_score' not in df_projects.columns:
         # 1. Contar tarefas por projeto
         tasks_per_project = df_tasks.groupby('project_id').size().reset_index(name='calc_num_tasks')
     
