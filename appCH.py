@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 import google.generativeai as genai
 import PIL.Image
+from fpdf.enums import XPos, YPos # <--- ADICIONE ESTE IMPORT NO TOPO DO FICHEIRO JUNTO AOS OUTROS fpdf
 import sys # Necessário para inspect em alguns ambientes
 # ---------------------------------
 
@@ -2894,217 +2895,219 @@ def settings_page():
     else:
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
 
-
 # --- FUNÇÃO AUXILIAR PARA GERAR O PDF ---
-# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V11 - COM DEBUGGING) ---
+# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V12 - Sintaxe Atualizada e Mais Debugging) ---
+
+
 def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
-    # --- INÍCIO DO NOVO BLOCO DE DEBUGGING ---
-    print("\n--- Iniciando Geração do PDF ---")
-    # --- FIM DO NOVO BLOCO DE DEBUGGING ---
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Relatório de Análise de Processos", 0, 1, "C")
-    pdf.ln(10)
+    print("\n--- Iniciando Geração do PDF V12 ---")
+    try: # Try geral para toda a função
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        # --- ATUALIZAÇÃO fpdf: Usar fontes core (Helvetica é substituto de Arial) ---
+        pdf.set_font("Helvetica", "B", 16)
+        # --- ATUALIZAÇÃO fpdf: Usar new_x/new_y em vez de ln=1 ---
+        pdf.cell(0, 10, "Relatório de Análise de Processos", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(10)
 
-    # (Estrutura sections_data como na V10)
-    sections_data = {
-        "1. Visão Geral e Custos": {
-            'plots': [
-                (plots_pre.get('performance_matrix'), "Matriz de Performance (Custo vs Prazo) (PM)"),
-                (plots_pre.get('cost_by_resource_type'), "Custo por Tipo de Recurso"),
-                (plots_post.get('kpi_time_series'), "Séries Temporais de KPIs de Performance"),
-                (plots_post.get('cost_per_day_time_series'), "Custo Médio por Dia ao Longo do Tempo"),
-                (plots_eda.get('plot_01'), "Distribuição do Status dos Processos"),
-                (plots_eda.get('plot_06'), "Custo Médio dos Processos por Trimestre"),
-                (plots_eda.get('plot_16'), "Distribuição do Custo por Dia (Eficiência)"),
-                (plots_eda.get('plot_04'), "Custo Real vs. Orçamento por Processo"),
-                (plots_eda.get('plot_17'), "Alocação de Custos por Orçamento e Recurso"),
-                (plots_eda.get('plot_31'), "Evolução do Volume e Tamanho dos Processos"),
-            ],
-            'tables': [
-                (tables_pre.get('outlier_cost'), "Top 5 Processos Mais Caros"),
-                (tables_pre.get('outlier_duration'), "Top 5 Processos Mais Longos"),
-            ]
-        },
-        "2. Performance e Prazos": {
-            'plots': [
-                 (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
-                 (plots_pre.get('lead_time_hist'), "Distribuição do Lead Time"),
-                 (plots_pre.get('case_durations_boxplot'), "Distribuição da Duração dos Processos (PM)"),
-                 (plots_post.get('cumulative_throughput_plot'), "Gráfico Acumulado de Throughput"),
-                 (plots_eda.get('plot_05'), "Performance de Prazos por Trimestre"),
-                 (plots_pre.get('cycle_time_breakdown'), "Duração Média por Fase do Processo"),
-                 (plots_pre.get('throughput_hist'), "Distribuição do Throughput (horas)"),
-                 (plots_pre.get('throughput_boxplot'), "Boxplot do Throughput (horas)"),
-                 (plots_post.get('temporal_heatmap_fixed'), "Atividades por Dia da Semana"),
-                 (plots_eda.get('plot_30'), "Evolução da Performance (Prazo e Custo)"),
-                 (plots_eda.get('plot_03'), "Diferença entre Data Real e Planeada"),
-                 (plots_post.get('gantt_chart_all_projects'), "Linha do Tempo (Gantt Chart) - Amostra"),
-            ],
-            'tables': [
-                 (tables_pre.get('perf_stats'), "Estatísticas de Performance"),
-            ]
-        },
-        "3. Recursos e Equipa": {
-            'plots': [
-                (plots_eda.get('plot_12'), "Distribuição de Recursos por Tipo"),
-                (plots_pre.get('resource_avg_events'), "Recursos por Média de Tarefas/Processo"),
-                (plots_pre.get('weekly_efficiency'), "Eficiência Semanal (Horas Trabalhadas)"),
-                (plots_pre.get('delay_by_teamsize'), "Impacto do Tamanho da Equipa no Atraso (PM)"),
-                (plots_pre.get('throughput_benchmark_by_teamsize'), "Benchmark de Throughput por Equipa"), # Verifique se esta chave existe
-                (plots_pre.get('resource_workload'), "Top 10 Recursos por Horas Trabalhadas (PM)"),
-                (plots_pre.get('resource_handoffs'), "Top 10 Handoffs entre Recursos"),
-                (plots_post.get('resource_efficiency_plot'), "Métricas de Eficiência: Top Recursos"),
-                (plots_pre.get('median_duration_by_teamsize'), "Duração Mediana por Tamanho da Equipa"),
-                (plots_eda.get('plot_07'), "Nº Médio de Recursos por Processo a Cada Trimestre"),
-                (plots_eda.get('plot_14'), "Atraso Médio por Recurso"),
-                (plots_post.get('skill_vs_performance_adv'), "Relação entre Skill e Performance"),
-                (plots_eda.get('plot_23'), "Atraso por Nível de Competência"),
-                (plots_post.get('resource_network_bipartite'), "Rede de Recursos por Função"),
-                (plots_post.get('resource_network_adv'), "Rede Social de Recursos (Handovers)"),
-                (plots_pre.get('resource_activity_matrix'), "Heatmap de Esforço (Recurso vs Atividade)"),
-            ],
-            'tables': []
-        },
-        "4. Gargalos e Espera": {
-             'plots': [
-                (plots_post.get('performance_heatmap'), "Heatmap de Performance no Processo (Gargalos)"),
-                (plots_pre.get('top_activities_plot'), "Atividades Mais Frequentes"),
-                (plots_pre.get('service_vs_wait_stacked'), "Gargalos: Tempo de Serviço vs. Espera"),
-                (plots_pre.get('top_handoffs_cost'), "Top 10 Handoffs por Custo de Espera"),
-                (plots_pre.get('bottleneck_by_resource'), "Top Recursos por Tempo de Espera Gerado"),
-                (plots_eda.get('plot_18'), "Custo Real vs. Atraso"),
-                (plots_eda.get('plot_20'), "Nº de Recursos vs. Custo Total"),
-                (plots_pre.get('activity_service_times'), "Tempo Médio de Execução por Atividade"),
-                (plots_pre.get('wait_vs_service_scatter'), "Espera vs. Execução (Dispersão)"),
-                (plots_pre.get('wait_time_evolution'), "Evolução do Tempo Médio de Espera"),
-                (plots_pre.get('top_handoffs'), "Top 10 Handoffs por Tempo de Espera"),
-                (plots_eda.get('plot_19'), "Rate Horário Médio vs. Atraso"),
-                (plots_eda.get('plot_22'), "Atraso por Faixa de Orçamento"),
-                (plots_post.get('milestone_time_analysis_plot'), "Análise de Tempo entre Marcos do Processo"),
-                (plots_eda.get('plot_29'), "Matriz de Correlação"),
-                (plots_post.get('avg_waiting_time_by_activity_plot'), "Tempo Médio de Espera por Atividade"),
-                (plots_post.get('waiting_time_matrix_plot'), "Matriz de Tempo de Espera entre Atividades (horas)"),
-            ],
-            'tables': []
-        },
-         "5. Fluxo e Conformidade": {
-            'plots': [
-                (plots_post.get('model_inductive_petrinet'), "Modelo - Inductive Miner"),
-                (plots_post.get('model_heuristic_petrinet'), "Modelo - Heuristics Miner"),
-                (plots_post.get('metrics_inductive'), "Métricas (Inductive Miner)"),
-                (plots_post.get('metrics_heuristic'), "Métricas (Heuristics Miner)"),
-                (plots_post.get('custom_variants_sequence_plot'), "Sequência de Atividades das 10 Variantes Mais Comuns"),
-                (plots_post.get('variant_duration_plot'), "Duração Média das Variantes Mais Comuns"),
-                (plots_pre.get('variants_frequency'), "Top 10 Variantes de Processo por Frequência"),
-                (plots_eda.get('plot_08'), "Distribuição de Tarefas por Tipo"),
-                (plots_eda.get('plot_10'), "Distribuição da Duração das Tarefas"),
-                (plots_eda.get('plot_25'), "Centralidade dos Tipos de Tarefa"),
-                (plots_post.get('conformance_over_time_plot'), "Score de Conformidade ao Longo do Tempo"),
-                (plots_eda.get('plot_09'), "Distribuição de Tarefas por Prioridade"),
-                (plots_eda.get('plot_11'), "Top 10 Tarefas Específicas Mais Demoradas"),
-                (plots_eda.get('plot_24'), "Distribuição da Complexidade dos Processos"),
-                (plots_eda.get('plot_26'), "Gráfico de Dependências: Processo Exemplo"),
-                (plots_eda.get('plot_27'), "Relação entre Complexidade e Atraso"),
-                (plots_eda.get('plot_28'), "Relação entre Dependências e Desvio de Custo"),
-            ],
-            'tables': [
-                (tables_pre.get('variants_table'), "Frequência das 10 Principais Variantes"),
-                (tables_pre.get('rework_loops_table'), "Principais Loops de Rework (Tabela)"),
-            ]
-        },
-    }
+        # (Estrutura sections_data como na V10)
+        sections_data = {
+            "1. Visão Geral e Custos": {
+                'plots': [
+                    (plots_pre.get('performance_matrix'), "Matriz de Performance (Custo vs Prazo) (PM)"),
+                    (plots_pre.get('cost_by_resource_type'), "Custo por Tipo de Recurso"),
+                    (plots_post.get('kpi_time_series'), "Séries Temporais de KPIs de Performance"),
+                    (plots_post.get('cost_per_day_time_series'), "Custo Médio por Dia ao Longo do Tempo"),
+                    (plots_eda.get('plot_01'), "Distribuição do Status dos Processos"),
+                    (plots_eda.get('plot_06'), "Custo Médio dos Processos por Trimestre"),
+                    (plots_eda.get('plot_16'), "Distribuição do Custo por Dia (Eficiência)"),
+                    (plots_eda.get('plot_04'), "Custo Real vs. Orçamento por Processo"),
+                    (plots_eda.get('plot_17'), "Alocação de Custos por Orçamento e Recurso"),
+                    (plots_eda.get('plot_31'), "Evolução do Volume e Tamanho dos Processos"),
+                ], 'tables': [(tables_pre.get('outlier_cost'), "Top 5 Processos Mais Caros"),(tables_pre.get('outlier_duration'), "Top 5 Processos Mais Longos"),]
+            },
+            "2. Performance e Prazos": {
+                'plots': [
+                    (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
+                    (plots_pre.get('lead_time_hist'), "Distribuição do Lead Time"),
+                    (plots_pre.get('case_durations_boxplot'), "Distribuição da Duração dos Processos (PM)"),
+                    (plots_post.get('cumulative_throughput_plot'), "Gráfico Acumulado de Throughput"),
+                    (plots_eda.get('plot_05'), "Performance de Prazos por Trimestre"),
+                    (plots_pre.get('cycle_time_breakdown'), "Duração Média por Fase do Processo"),
+                    (plots_pre.get('throughput_hist'), "Distribuição do Throughput (horas)"),
+                    (plots_pre.get('throughput_boxplot'), "Boxplot do Throughput (horas)"),
+                    (plots_post.get('temporal_heatmap_fixed'), "Atividades por Dia da Semana"),
+                    (plots_eda.get('plot_30'), "Evolução da Performance (Prazo e Custo)"),
+                    (plots_eda.get('plot_03'), "Diferença entre Data Real e Planeada"),
+                    (plots_post.get('gantt_chart_all_projects'), "Linha do Tempo (Gantt Chart) - Amostra"),
+                ], 'tables': [(tables_pre.get('perf_stats'), "Estatísticas de Performance"),]
+            },
+            "3. Recursos e Equipa": {
+                'plots': [
+                    (plots_eda.get('plot_12'), "Distribuição de Recursos por Tipo"),
+                    (plots_pre.get('resource_avg_events'), "Recursos por Média de Tarefas/Processo"),
+                    (plots_pre.get('weekly_efficiency'), "Eficiência Semanal (Horas Trabalhadas)"),
+                    (plots_pre.get('delay_by_teamsize'), "Impacto do Tamanho da Equipa no Atraso (PM)"),
+                    (plots_pre.get('throughput_benchmark_by_teamsize'), "Benchmark de Throughput por Equipa"),
+                    (plots_pre.get('resource_workload'), "Top 10 Recursos por Horas Trabalhadas (PM)"),
+                    (plots_pre.get('resource_handoffs'), "Top 10 Handoffs entre Recursos"),
+                    (plots_post.get('resource_efficiency_plot'), "Métricas de Eficiência: Top Recursos"),
+                    (plots_pre.get('median_duration_by_teamsize'), "Duração Mediana por Tamanho da Equipa"),
+                    (plots_eda.get('plot_07'), "Nº Médio de Recursos por Processo a Cada Trimestre"),
+                    (plots_eda.get('plot_14'), "Atraso Médio por Recurso"),
+                    (plots_post.get('skill_vs_performance_adv'), "Relação entre Skill e Performance"),
+                    (plots_eda.get('plot_23'), "Atraso por Nível de Competência"),
+                    (plots_post.get('resource_network_bipartite'), "Rede de Recursos por Função"),
+                    (plots_post.get('resource_network_adv'), "Rede Social de Recursos (Handovers)"),
+                    (plots_pre.get('resource_activity_matrix'), "Heatmap de Esforço (Recurso vs Atividade)"),
+                ], 'tables': []
+            },
+            "4. Gargalos e Espera": {
+                 'plots': [
+                    (plots_post.get('performance_heatmap'), "Heatmap de Performance no Processo (Gargalos)"),
+                    (plots_pre.get('top_activities_plot'), "Atividades Mais Frequentes"),
+                    (plots_pre.get('service_vs_wait_stacked'), "Gargalos: Tempo de Serviço vs. Espera"),
+                    (plots_pre.get('top_handoffs_cost'), "Top 10 Handoffs por Custo de Espera"),
+                    (plots_pre.get('bottleneck_by_resource'), "Top Recursos por Tempo de Espera Gerado"),
+                    (plots_eda.get('plot_18'), "Custo Real vs. Atraso"),
+                    (plots_eda.get('plot_20'), "Nº de Recursos vs. Custo Total"),
+                    (plots_pre.get('activity_service_times'), "Tempo Médio de Execução por Atividade"),
+                    (plots_pre.get('wait_vs_service_scatter'), "Espera vs. Execução (Dispersão)"),
+                    (plots_pre.get('wait_time_evolution'), "Evolução do Tempo Médio de Espera"),
+                    (plots_pre.get('top_handoffs'), "Top 10 Handoffs por Tempo de Espera"),
+                    (plots_eda.get('plot_19'), "Rate Horário Médio vs. Atraso"),
+                    (plots_eda.get('plot_22'), "Atraso por Faixa de Orçamento"),
+                    (plots_post.get('milestone_time_analysis_plot'), "Análise de Tempo entre Marcos do Processo"),
+                    (plots_eda.get('plot_29'), "Matriz de Correlação"),
+                    (plots_post.get('avg_waiting_time_by_activity_plot'), "Tempo Médio de Espera por Atividade"),
+                    (plots_post.get('waiting_time_matrix_plot'), "Matriz de Tempo de Espera entre Atividades (horas)"),
+                ], 'tables': []
+            },
+             "5. Fluxo e Conformidade": {
+                'plots': [
+                    (plots_post.get('model_inductive_petrinet'), "Modelo - Inductive Miner"),
+                    (plots_post.get('model_heuristic_petrinet'), "Modelo - Heuristics Miner"),
+                    (plots_post.get('metrics_inductive'), "Métricas (Inductive Miner)"),
+                    (plots_post.get('metrics_heuristic'), "Métricas (Heuristics Miner)"),
+                    (plots_post.get('custom_variants_sequence_plot'), "Sequência de Atividades das 10 Variantes Mais Comuns"),
+                    (plots_post.get('variant_duration_plot'), "Duração Média das Variantes Mais Comuns"),
+                    (plots_pre.get('variants_frequency'), "Top 10 Variantes de Processo por Frequência"),
+                    (plots_eda.get('plot_08'), "Distribuição de Tarefas por Tipo"),
+                    (plots_eda.get('plot_10'), "Distribuição da Duração das Tarefas"),
+                    (plots_eda.get('plot_25'), "Centralidade dos Tipos de Tarefa"),
+                    (plots_post.get('conformance_over_time_plot'), "Score de Conformidade ao Longo do Tempo"),
+                    (plots_eda.get('plot_09'), "Distribuição de Tarefas por Prioridade"),
+                    (plots_eda.get('plot_11'), "Top 10 Tarefas Específicas Mais Demoradas"),
+                    (plots_eda.get('plot_24'), "Distribuição da Complexidade dos Processos"),
+                    (plots_eda.get('plot_26'), "Gráfico de Dependências: Processo Exemplo"),
+                    (plots_eda.get('plot_27'), "Relação entre Complexidade e Atraso"),
+                    (plots_eda.get('plot_28'), "Relação entre Dependências e Desvio de Custo"),
+                ],
+                'tables': [
+                    (tables_pre.get('variants_table'), "Frequência das 10 Principais Variantes"),
+                    (tables_pre.get('rework_loops_table'), "Principais Loops de Rework (Tabela)"),
+                ]
+            },
+        }
 
-    max_width = 190
+        max_width = 190
 
-    for section_title, data in sections_data.items():
-        # --- DEBUGGING ---
-        print(f"Adding section: {section_title}")
-        # -----------------
-        if section_title != list(sections_data.keys())[0]: pdf.add_page()
-        pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, section_title, 0, 1, "L"); pdf.ln(5)
-        pdf.set_font("Arial", "", 10)
+        for section_title, data in sections_data.items():
+            print(f"Adding section: {section_title}")
+            if section_title != list(sections_data.keys())[0]: pdf.add_page()
+            pdf.set_font("Helvetica", "B", 14); pdf.cell(0, 10, section_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.ln(5)
+            pdf.set_font("Helvetica", "", 10)
 
-        # Adicionar Tabelas
-        for table_df, table_title in data['tables']:
-            # --- DEBUGGING ---
-            print(f"  Attempting to add table: {table_title}")
-            # -----------------
-            if table_df is not None and isinstance(table_df, pd.DataFrame) and not table_df.empty:
-                try: # Try-except para tabelas
-                    pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, table_title, 0, 1, "L")
-                    pdf.set_font("Arial", "", 8); table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
-                    pdf.multi_cell(0, 5, table_string); pdf.ln(5)
-                    print(f"    Success adding table: {table_title}")
-                except Exception as table_err:
-                    print(f"    ERROR adding table '{table_title}': {table_err}")
-                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar tabela '{table_title}']")
-                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
-            elif table_df is not None and isinstance(table_df, dict):
-                 try: # Try-except para dicionários
-                     pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, table_title, 0, 1, "L")
-                     pdf.set_font("Arial", "", 8)
-                     for k, v in table_df.items(): pdf.multi_cell(0, 5, f"{k}: {v}")
-                     pdf.ln(5)
-                     print(f"    Success adding dict table: {table_title}")
-                 except Exception as dict_err:
-                    print(f"    ERROR adding dict table '{table_title}': {dict_err}")
-                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar tabela dict '{table_title}']")
-                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
-            else:
-                 print(f"    Skipping table '{table_title}': None, not DataFrame/Dict, or empty.")
+            # Adicionar Tabelas
+            for table_df, table_title in data['tables']:
+                print(f"  Attempting to add table: {table_title}")
+                if table_df is not None and isinstance(table_df, pd.DataFrame) and not table_df.empty:
+                    try:
+                        pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, table_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.set_font("Helvetica", "", 8); table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
+                        # --- ATUALIZAÇÃO fpdf: Usar write() para texto longo ---
+                        pdf.write(5, table_string); pdf.ln(5) # write() lida melhor com multi-linhas
+                        print(f"    Success adding table: {table_title}")
+                    except Exception as table_err:
+                        print(f"    ERROR adding table '{table_title}': {table_err}")
+                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar tabela '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                elif table_df is not None and isinstance(table_df, dict):
+                     try:
+                         pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, table_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                         pdf.set_font("Helvetica", "", 8)
+                         for k, v in table_df.items(): pdf.write(5, f"{k}: {v}\n") # Adiciona \n para nova linha
+                         pdf.ln(5)
+                         print(f"    Success adding dict table: {table_title}")
+                     except Exception as dict_err:
+                        print(f"    ERROR adding dict table '{table_title}': {dict_err}")
+                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar tabela dict '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                else:
+                     print(f"    Skipping table '{table_title}': None, not DataFrame/Dict, or empty.")
 
-        # Adicionar Gráficos
-        for plot_bytes, plot_title in data['plots']:
-            # --- DEBUGGING ---
-            print(f"  Attempting to add plot: {plot_title}")
-            # -----------------
-            if plot_bytes and isinstance(plot_bytes, BytesIO):
-                pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, plot_title, 0, 1, "L")
-                pdf.set_font("Arial", "", 10)
-                temp_img_path = None # Inicializa fora do try
-                try:
-                    # --- NOVO BLOCO TRY-EXCEPT ESPECÍFICO PARA IMAGEM ---
-                    plot_bytes.seek(0) # Garante que a leitura começa do início
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
-                        temp_img.write(plot_bytes.getvalue())
-                        temp_img_path = temp_img.name
+            # Adicionar Gráficos
+            for plot_bytes, plot_title in data['plots']:
+                print(f"  Attempting to add plot: {plot_title}")
+                if plot_bytes and isinstance(plot_bytes, BytesIO):
+                    pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, plot_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.set_font("Helvetica", "", 10)
+                    temp_img_path = None
+                    try:
+                        plot_bytes.seek(0)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
+                            temp_img.write(plot_bytes.getvalue())
+                            temp_img_path = temp_img.name
 
-                    pdf.image(temp_img_path, w=max_width); pdf.ln(5)
-                    print(f"    Success adding plot: {plot_title}")
-                    # --- FIM DO NOVO BLOCO TRY-EXCEPT ESPECÍFICO ---
-                except Exception as img_err:
-                    # --- DEBUGGING ---
-                    print(f"    ERROR adding plot '{plot_title}': {img_err}") # Imprime o erro específico
-                    # ---------------
-                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar gráfico '{plot_title}']")
-                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
-                finally:
-                    # Garante que o ficheiro temporário é sempre removido, mesmo se houver erro
-                    if temp_img_path and os.path.exists(temp_img_path):
-                        try:
-                            os.remove(temp_img_path)
-                            print(f"    Removed temp file: {temp_img_path}")
-                        except Exception as rm_err:
-                            print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
-            else:
-                 # --- DEBUGGING ---
-                 status = "None" if plot_bytes is None else f"Type {type(plot_bytes)}"
-                 print(f"    Skipping plot '{plot_title}': Data is {status}")
-                 # ---------------
+                        pdf.image(temp_img_path, w=max_width); pdf.ln(5)
+                        print(f"    Success adding plot: {plot_title}")
+                    except Exception as img_err:
+                        print(f"    ERROR adding plot '{plot_title}': {img_err}")
+                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar gráfico '{plot_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                    finally:
+                        if temp_img_path and os.path.exists(temp_img_path):
+                            try:
+                                os.remove(temp_img_path); print(f"    Removed temp file: {temp_img_path}")
+                            except Exception as rm_err: print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
+                else:
+                     status = "None" if plot_bytes is None else f"Type {type(plot_bytes)}"
+                     print(f"    Skipping plot '{plot_title}': Data is {status}")
 
-    # --- DEBUGGING ---
-    print("--- Finalizando Geração do PDF ---")
-    # ---------------
-    try:
-        pdf_output_bytes = pdf.output(dest='S').encode('latin-1', errors='replace')
-        print(f"PDF Geração concluída. Tamanho: {len(pdf_output_bytes)} bytes.") # Log de sucesso
+        # --- FINALIZAÇÃO MAIS ROBUSTA ---
+        print("--- Attempting to finalize PDF generation ---")
+        pdf_output_bytes = b"" # Inicializa como bytes vazios
+        try:
+            # Tenta gerar a string do PDF primeiro
+            pdf_string_output = pdf.output(dest='S')
+            print("    Successfully generated PDF string output.")
+            try:
+                # Tenta codificar para latin-1 com substituição
+                pdf_output_bytes = pdf_string_output.encode('latin-1', errors='replace')
+                print(f"    Successfully encoded PDF to latin-1. Size: {len(pdf_output_bytes)} bytes.")
+            except Exception as encode_err:
+                print(f"    ERROR encoding PDF string to latin-1: {encode_err}")
+                st.error(f"Erro ao codificar o PDF: {encode_err}") # Mostra erro na UI
+                return None # Retorna None em caso de falha na codificação
+        except Exception as pdf_err:
+            print(f"    ERROR during final pdf.output() call: {pdf_err}")
+            st.error(f"Erro crítico ao finalizar o PDF: {pdf_err}") # Mostra erro na UI
+            return None # Retorna None em caso de falha na geração
+
+        # Verifica se os bytes gerados são válidos antes de retornar
+        if not pdf_output_bytes or len(pdf_output_bytes) < 1000: # Se for muito pequeno, algo correu mal
+             print(f"    WARNING: PDF output size ({len(pdf_output_bytes)} bytes) seems too small. Returning None.")
+             st.warning("O PDF gerado parece estar vazio ou incompleto.") # Mostra aviso na UI
+             return None
+
+        print("--- PDF Generation Function Completed Successfully ---")
         return pdf_output_bytes
-    except Exception as e:
-        print(f"Erro final na codificação do PDF: {e}") # Log de erro final
-        return b""
+
+    except Exception as general_err:
+         # Captura qualquer outro erro inesperado na função
+         print(f"--- UNEXPECTED ERROR during PDF generation: {general_err} ---")
+         st.error(f"Erro inesperado ao gerar PDF: {general_err}") # Mostra erro na UI
+         import traceback
+         traceback.print_exc() # Imprime o traceback completo nos logs
+         return None # Retorna None em caso de erro grave
 
 # --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
 @st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
