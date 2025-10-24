@@ -263,6 +263,7 @@ if 'plots_rl' not in st.session_state: st.session_state.plots_rl = {}
 if 'tables_rl' not in st.session_state: st.session_state.tables_rl = {}
 if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
 if 'data_frames_processed' not in st.session_state: st.session_state.data_frames_processed = {}
+if 'pdf_bytes_download' not in st.session_state: st.session_state.pdf_bytes_download = None
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
 #@st.cache_data
@@ -3158,38 +3159,50 @@ def dashboard_page():
         col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
     
         with col_pdf:
-            # --- BLOCO PDF SIMPLIFICADO V12 ---
+            # --- BLOCO PDF REVISADO V13 (Botão Gerar + Download Condicional) ---
+            
+            # Botão para INICIAR a geração do PDF
+            if st.button("📄 Gerar PDF", help="Preparar relatório completo para download", use_container_width=True, key="generate_pdf_button"):
+                with st.spinner("Gerando PDF... Este processo pode demorar."):
+                    try:
+                        # Reúne os dados necessários DENTRO do clique
+                        plots_pre = st.session_state.plots_pre_mining
+                        tables_pre = st.session_state.tables_pre_mining
+                        plots_post = st.session_state.plots_post_mining
+                        plots_eda = st.session_state.plots_eda
+                        tables_eda = st.session_state.tables_eda
+                        pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
+                        
+                        # Verifica se a geração foi bem-sucedida
+                        if pdf_bytes_output and len(pdf_bytes_output) > 100: # Verifica se tem conteúdo (>100 bytes)
+                             st.session_state.pdf_bytes_download = pdf_bytes_output
+                             st.info("PDF pronto para download abaixo.") # Feedback visual
+                        else:
+                             st.error("Falha ao gerar o conteúdo do PDF. Verifique os logs.")
+                             st.session_state.pdf_bytes_download = None # Limpa em caso de erro
 
-            # Função auxiliar interna que gera os dados QUANDO chamada
-            @st.cache_data(show_spinner="Gerando PDF...") # Mostra spinner automaticamente
-            def get_pdf_bytes_for_download():
-                try:
-                    # Reúne os dados necessários DENTRO da função
-                    plots_pre = st.session_state.plots_pre_mining
-                    tables_pre = st.session_state.tables_pre_mining
-                    plots_post = st.session_state.plots_post_mining
-                    plots_eda = st.session_state.plots_eda
-                    tables_eda = st.session_state.tables_eda
-                    pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
-                    if not pdf_bytes_output: # Verifica se a geração retornou bytes vazios (erro)
-                        st.error("Falha ao gerar o conteúdo do PDF.")
-                        return None # Retorna None para não iniciar download vazio
-                    return pdf_bytes_output
-                except Exception as e:
-                    st.error(f"Erro durante a geração do PDF: {e}")
-                    return None # Retorna None em caso de erro
+                        # Força rerun para potencialmente mostrar/esconder o botão de download
+                        time.sleep(0.1)
+                        st.rerun()
 
-            # Botão de download que chama a função de geração diretamente
-            st.download_button(
-                label="📄 PDF",
-                help="Exportar relatório completo em PDF",
-                data=get_pdf_bytes_for_download(), # Chama a função que gera e retorna os bytes
-                file_name="relatorio_process_mining.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="pdf_download_button_direct_v12" # Chave única
-            )
-            # --- FIM DO BLOCO PDF SIMPLIFICADO V12 ---
+                    except Exception as e:
+                        st.error(f"Erro durante a geração do PDF: {e}")
+                        st.session_state.pdf_bytes_download = None # Limpa em caso de erro grave
+                        st.rerun() # Atualiza a UI para mostrar o erro
+
+            # Botão de download condicional (aparece APENAS se os bytes existirem)
+            if 'pdf_bytes_download' in st.session_state and st.session_state.pdf_bytes_download:
+                st.download_button(
+                    label="⬇️ Download PDF",
+                    data=st.session_state.pdf_bytes_download,
+                    file_name="relatorio_process_mining.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_button_conditional",
+                    use_container_width=True,
+                    # Limpa os bytes após o clique para esconder o botão de download novamente
+                    on_click=lambda: st.session_state.update({'pdf_bytes_download': None})
+                )
+            # --- FIM DO BLOCO PDF REVISADO V13 ---
         
         with col_ai:
             # Botão para abrir a modal da IA
