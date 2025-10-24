@@ -2777,12 +2777,19 @@ def render_diagnostics_page():
     st.markdown("<h4>1. Saúde Geral (KPIs de Baseline)</h4>", unsafe_allow_html=True)
     kpi_data = report.get('saude_geral', [])
     if kpi_data and len(kpi_data) == 6:
-        cols = st.columns(6) # Usa 6 colunas para os 6 KPIs
-        for i, kpi in enumerate(kpi_data):
-            cols[i].metric(label=kpi['label'], value=kpi['value'])
+        # --- CÓDIGO CORRIGIDO (2 linhas de 3) ---
+        cols1 = st.columns(3)
+        cols1[0].metric(label=kpi_data[0]['label'], value=kpi_data[0]['value'])
+        cols1[1].metric(label=kpi_data[1]['label'], value=kpi_data[1]['value'])
+        cols1[2].metric(label=kpi_data[2]['label'], value=kpi_data[2]['value'])
+
+        cols2 = st.columns(3)
+        cols2[0].metric(label=kpi_data[3]['label'], value=kpi_data[3]['value'])
+        cols2[1].metric(label=kpi_data[4]['label'], value=kpi_data[4]['value'])
+        cols2[2].metric(label=kpi_data[5]['label'], value=kpi_data[5]['value'])
+        # --- FIM DO CÓDIGO CORRIGIDO ---
     else:
         st.warning("Não foi possível calcular os KPIs de Saúde Geral.")
-
     # --- Bloco 2: Diagnóstico por Áreas Funcionais (com colunas) ---
     st.markdown("---")
     st.markdown("<h4>2. Diagnóstico Detalhado por Área</h4>", unsafe_allow_html=True)
