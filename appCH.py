@@ -3158,37 +3158,32 @@ def dashboard_page():
         col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
     
         with col_pdf:
-            # Botão para gerar PDF
-            if st.button("📄", help="Exportar relatório completo em PDF", use_container_width=True):
-                with st.spinner("Gerando PDF... Este processo pode demorar."):
+            # --- NOVO BLOCO PDF (MAIS SIMPLES) ---
+            # Define a função que será chamada QUANDO o botão for clicado
+            def get_pdf_data():
+                with st.spinner("Gerando PDF..."): # Spinner durante a geração
                     try:
-                        # Reúne os dados necessários DENTRO do clique
                         plots_pre = st.session_state.plots_pre_mining
                         tables_pre = st.session_state.tables_pre_mining
                         plots_post = st.session_state.plots_post_mining
                         plots_eda = st.session_state.plots_eda
                         tables_eda = st.session_state.tables_eda
                         pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
-                        st.session_state.pdf_bytes_ready = pdf_bytes_output # Guarda para o download button
-                        # Força rerun para mostrar o botão de download
-                        time.sleep(0.1) # Pequeno delay
-                        st.rerun()
+                        return pdf_bytes_output
                     except Exception as e:
                         st.error(f"Erro ao gerar PDF: {e}")
-                        st.session_state.pdf_bytes_ready = None
-    
-            # Botão de download condicional (aparece abaixo do botão de gerar)
-            if 'pdf_bytes_ready' in st.session_state and st.session_state.pdf_bytes_ready:
-                st.download_button(
-                    label="Download PDF",
-                    data=st.session_state.pdf_bytes_ready,
-                    file_name="relatorio_process_mining.pdf",
-                    mime="application/pdf",
-                    key="pdf_download_button_final",
-                    use_container_width=True,
-                    # Limpa os bytes após o clique para esconder o botão de download
-                    on_click=lambda: st.session_state.update({'pdf_bytes_ready': None})
-                )
+                        return b"" # Retorna bytes vazios em caso de erro
+
+            st.download_button(
+                label="📄 PDF", # Pode usar o ícone ou texto + ícone
+                help="Exportar relatório completo em PDF",
+                data=get_pdf_data, # Passa a FUNÇÃO que gera os dados
+                file_name="relatorio_process_mining.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="pdf_download_button_direct" # Nova chave para evitar conflitos
+            )
+            # --- FIM DO NOVO BLOCO PDF ---
     
         with col_ai:
             # Botão para abrir a modal da IA
