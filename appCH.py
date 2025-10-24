@@ -2111,8 +2111,7 @@ class DiagnosticEngineV5:
         self._check_custos_atrasos_facts()
         self._check_performance_prazos_facts()
         self._check_recursos_equipas_facts()
-        self.
-        _check_gargalos_esperas_facts()
+        self._check_gargalos_esperas_facts()
         self._check_fluxo_conformidade_facts()
         
         # 5. Ordena os insights (corrigido para ignorar 'saude_geral')
