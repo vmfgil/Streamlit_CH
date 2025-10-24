@@ -264,6 +264,8 @@ if 'tables_rl' not in st.session_state: st.session_state.tables_rl = {}
 if 'logs_rl' not in st.session_state: st.session_state.logs_rl = {}
 if 'data_frames_processed' not in st.session_state: st.session_state.data_frames_processed = {}
 if 'pdf_bytes_download' not in st.session_state: st.session_state.pdf_bytes_download = None
+if 'pdf_bytes_for_download_v14' not in st.session_state: st.session_state.pdf_bytes_for_download_v14 = None
+if 'pdf_ready_for_download' not in st.session_state: st.session_state.pdf_ready_for_download = False
 
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
 #@st.cache_data
@@ -3187,10 +3189,13 @@ def dashboard_page():
         col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
     
         with col_pdf:
-            # --- BLOCO PDF REVISADO V13 (Botão Gerar + Download Condicional) ---
-            
-            # Botão para INICIAR a geração do PDF
-            if st.button("📄 Gerar PDF", help="Preparar relatório completo para download", use_container_width=True, key="generate_pdf_button"):
+            # --- BLOCO PDF REVISADO V14 (Geração Direta no Download Button) ---
+
+            # Flag para controlar se o botão de download deve ser mostrado
+            show_download = st.session_state.get('pdf_ready_for_download', False)
+
+            # Botão para INICIAR a geração e PREPARAR o download
+            if st.button("📄 Gerar PDF", help="Preparar relatório completo para download", use_container_width=True, key="generate_pdf_button_v14"):
                 with st.spinner("Gerando PDF... Este processo pode demorar."):
                     try:
                         # Reúne os dados necessários DENTRO do clique
@@ -3200,37 +3205,44 @@ def dashboard_page():
                         plots_eda = st.session_state.plots_eda
                         tables_eda = st.session_state.tables_eda
                         pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
-                        
+
                         # Verifica se a geração foi bem-sucedida
-                        if pdf_bytes_output and len(pdf_bytes_output) > 100: # Verifica se tem conteúdo (>100 bytes)
-                             st.session_state.pdf_bytes_download = pdf_bytes_output
-                             st.info("PDF pronto para download abaixo.") # Feedback visual
+                        if pdf_bytes_output and len(pdf_bytes_output) > 100:
+                             # Guarda os bytes para o botão de download usar
+                             st.session_state.pdf_bytes_for_download_v14 = pdf_bytes_output
+                             st.session_state.pdf_ready_for_download = True # Flag para mostrar o botão
+                             st.info("PDF pronto. Clique em 'Download PDF'.") # Feedback
                         else:
                              st.error("Falha ao gerar o conteúdo do PDF. Verifique os logs.")
-                             st.session_state.pdf_bytes_download = None # Limpa em caso de erro
+                             st.session_state.pdf_bytes_for_download_v14 = None
+                             st.session_state.pdf_ready_for_download = False
 
-                        # Força rerun para potencialmente mostrar/esconder o botão de download
+                        # Rerun para atualizar a UI e mostrar/esconder o botão de download
                         time.sleep(0.1)
                         st.rerun()
 
                     except Exception as e:
                         st.error(f"Erro durante a geração do PDF: {e}")
-                        st.session_state.pdf_bytes_download = None # Limpa em caso de erro grave
-                        st.rerun() # Atualiza a UI para mostrar o erro
+                        st.session_state.pdf_bytes_for_download_v14 = None
+                        st.session_state.pdf_ready_for_download = False
+                        st.rerun()
 
-            # Botão de download condicional (aparece APENAS se os bytes existirem)
-            if 'pdf_bytes_download' in st.session_state and st.session_state.pdf_bytes_download:
+            # Botão de download condicional - usa os bytes guardados
+            if show_download and 'pdf_bytes_for_download_v14' in st.session_state and st.session_state.pdf_bytes_for_download_v14:
                 st.download_button(
                     label="⬇️ Download PDF",
-                    data=st.session_state.pdf_bytes_download,
+                    data=st.session_state.pdf_bytes_for_download_v14, # Usa os bytes guardados
                     file_name="relatorio_process_mining.pdf",
                     mime="application/pdf",
-                    key="pdf_download_button_conditional",
+                    key="pdf_download_button_conditional_v14",
                     use_container_width=True,
-                    # Limpa os bytes após o clique para esconder o botão de download novamente
-                    on_click=lambda: st.session_state.update({'pdf_bytes_download': None})
+                    # Limpa a flag e os bytes após o clique para esconder o botão
+                    on_click=lambda: st.session_state.update({
+                        'pdf_bytes_for_download_v14': None,
+                        'pdf_ready_for_download': False
+                    })
                 )
-            # --- FIM DO BLOCO PDF REVISADO V13 ---
+            # --- FIM DO BLOCO PDF REVISADO V14 ---
         
         with col_ai:
             # Botão para abrir a modal da IA
