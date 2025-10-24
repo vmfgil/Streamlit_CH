@@ -3241,7 +3241,7 @@ def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
     try:
         genai.configure(api_key=_api_key)
         # Usa um modelo recente que suporte multimodalidade
-        model = genai.GenerativeModel('gemini-1.5-flash') # Ou 'gemini-pro-vision'
+        model = genai.GenerativeModel('gemini-pro-vision') # Ou 'gemini-1.5-flash'
 
         # Constrói o conteúdo multimodal
         prompt_parts = [
