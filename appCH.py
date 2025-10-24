@@ -3072,30 +3072,44 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                      status = "None" if plot_bytes is None else f"Type {type(plot_bytes)}"
                      print(f"    Skipping plot '{plot_title}': Data is {status}")
 
-        # --- FINALIZAÇÃO MAIS ROBUSTA ---
+        # --- FINALIZAÇÃO MAIS ROBUSTA (V13) ---
         print("--- Attempting to finalize PDF generation ---")
         pdf_output_bytes = b"" # Inicializa como bytes vazios
         try:
-            # Tenta gerar a string do PDF primeiro
-            pdf_string_output = pdf.output(dest='S')
-            print("    Successfully generated PDF string output.")
-            try:
-                # Tenta codificar para latin-1 com substituição
-                pdf_output_bytes = pdf_string_output.encode('latin-1', errors='replace')
-                print(f"    Successfully encoded PDF to latin-1. Size: {len(pdf_output_bytes)} bytes.")
-            except Exception as encode_err:
-                print(f"    ERROR encoding PDF string to latin-1: {encode_err}")
-                st.error(f"Erro ao codificar o PDF: {encode_err}") # Mostra erro na UI
-                return None # Retorna None em caso de falha na codificação
+            # Gera a saída do PDF. O 'S' pode retornar str ou bytes.
+            pdf_output = pdf.output(dest='S') # Removida a antiga flag 'name'
+            print(f"    pdf.output(dest='S') returned type: {type(pdf_output)}") # DEBUG type
+
+            # Verifica o tipo de retorno e converte para bytes se necessário
+            if isinstance(pdf_output, str):
+                print("    Output is string, attempting to encode to latin-1...")
+                try:
+                    # Tenta codificar para latin-1 com substituição
+                    pdf_output_bytes = pdf_output.encode('latin-1', errors='replace')
+                    print(f"    Successfully encoded string PDF to latin-1. Size: {len(pdf_output_bytes)} bytes.")
+                except Exception as encode_err:
+                    print(f"    ERROR encoding PDF string to latin-1: {encode_err}")
+                    st.error(f"Erro ao codificar o PDF: {encode_err}")
+                    return None # Retorna None em caso de falha na codificação
+            elif isinstance(pdf_output, (bytes, bytearray)):
+                print("    Output is already bytes/bytearray. Using directly.")
+                pdf_output_bytes = bytes(pdf_output) # Garante que é do tipo 'bytes'
+                print(f"    PDF bytes size: {len(pdf_output_bytes)} bytes.")
+            else:
+                # Caso inesperado
+                print(f"    ERROR: pdf.output(dest='S') returned unexpected type: {type(pdf_output)}")
+                st.error(f"Tipo inesperado retornado pela geração do PDF: {type(pdf_output)}")
+                return None
+
         except Exception as pdf_err:
             print(f"    ERROR during final pdf.output() call: {pdf_err}")
-            st.error(f"Erro crítico ao finalizar o PDF: {pdf_err}") # Mostra erro na UI
+            st.error(f"Erro crítico ao finalizar o PDF: {pdf_err}")
             return None # Retorna None em caso de falha na geração
 
         # Verifica se os bytes gerados são válidos antes de retornar
         if not pdf_output_bytes or len(pdf_output_bytes) < 1000: # Se for muito pequeno, algo correu mal
              print(f"    WARNING: PDF output size ({len(pdf_output_bytes)} bytes) seems too small. Returning None.")
-             st.warning("O PDF gerado parece estar vazio ou incompleto.") # Mostra aviso na UI
+             st.warning("O PDF gerado parece estar vazio ou incompleto.")
              return None
 
         print("--- PDF Generation Function Completed Successfully ---")
@@ -3104,11 +3118,10 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
     except Exception as general_err:
          # Captura qualquer outro erro inesperado na função
          print(f"--- UNEXPECTED ERROR during PDF generation: {general_err} ---")
-         st.error(f"Erro inesperado ao gerar PDF: {general_err}") # Mostra erro na UI
+         st.error(f"Erro inesperado ao gerar PDF: {general_err}")
          import traceback
-         traceback.print_exc() # Imprime o traceback completo nos logs
-         return None # Retorna None em caso de erro grave
-
+         traceback.print_exc()
+         return None
 # --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
 @st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
 def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
