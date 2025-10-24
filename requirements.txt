@@ -8,3 +8,4 @@ pm4py
 altair
 streamlit-option-menu
 missingno
+google-generativeai
