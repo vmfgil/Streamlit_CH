@@ -3305,6 +3305,33 @@ def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
 def dashboard_page():
     st.title("🏠 Process Mining")
 
+    # --- INÍCIO DO BLOCO DE DEBUGGING DE SECRETS ---
+    st.sidebar.markdown("---") # Adiciona um separador na sidebar
+    st.sidebar.subheader("Debug Secrets:")
+    try:
+        # Tenta ler a chave API
+        api_key_found = "GOOGLE_API_KEY" in st.secrets
+        st.sidebar.write(f"GOOGLE_API_KEY encontrada: {api_key_found}")
+        if api_key_found:
+             # Mostra apenas os primeiros/últimos caracteres se encontrada
+             key_preview = st.secrets["GOOGLE_API_KEY"]
+             st.sidebar.text(f"  Preview: {key_preview[:4]}...{key_preview[-4:]}")
+        else:
+             # Verifica se há alguma chave parecida (erro de digitação?)
+             secrets_keys = list(st.secrets.keys())
+             st.sidebar.warning(f"Chave não encontrada! Chaves disponíveis: {secrets_keys}")
+    
+        # Tenta ler o segredo de teste
+        test_secret_found = "TEST_SECRET" in st.secrets
+        st.sidebar.write(f"TEST_SECRET encontrada: {test_secret_found}")
+        if test_secret_found:
+            st.sidebar.text(f"  Valor: {st.secrets['TEST_SECRET']}")
+    
+    except Exception as e:
+        st.sidebar.error(f"Erro ao ler secrets: {e}")
+    st.sidebar.markdown("---")
+    # --- FIM DO BLOCO DE DEBUGGING DE SECRETS ---
+    
     # (Adicione estas linhas DENTRO da função dashboard_page, APÓS st.title)
     ### START PDF/AI STATE INIT (if not global) ###
     if 'show_ai_modal' not in st.session_state: st.session_state.show_ai_modal = False
