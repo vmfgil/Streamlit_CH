@@ -2894,7 +2894,11 @@ def settings_page():
 
 
 # --- FUNÇÃO AUXILIAR PARA GERAR O PDF ---
+# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V11 - COM DEBUGGING) ---
 def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
+    # --- INÍCIO DO NOVO BLOCO DE DEBUGGING ---
+    print("\n--- Iniciando Geração do PDF ---")
+    # --- FIM DO NOVO BLOCO DE DEBUGGING ---
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -2902,7 +2906,7 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
     pdf.cell(0, 10, "Relatório de Análise de Processos", 0, 1, "C")
     pdf.ln(10)
 
-    # --- ATENÇÃO: Verifique se as chaves correspondem exatamente às geradas nas suas funções de análise ---
+    # (Estrutura sections_data como na V10)
     sections_data = {
         "1. Visão Geral e Custos": {
             'plots': [
@@ -3011,70 +3015,94 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
         },
     }
 
-    max_width = 190 # Largura útil da página A4 em mm (210 - 10 - 10)
+    max_width = 190
 
     for section_title, data in sections_data.items():
-        # Adiciona nova página apenas se não for a primeira secção
-        if section_title != list(sections_data.keys())[0]:
-            pdf.add_page()
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, section_title, 0, 1, "L")
-        pdf.ln(5)
-
+        # --- DEBUGGING ---
+        print(f"Adding section: {section_title}")
+        # -----------------
+        if section_title != list(sections_data.keys())[0]: pdf.add_page()
+        pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, section_title, 0, 1, "L"); pdf.ln(5)
         pdf.set_font("Arial", "", 10)
 
         # Adicionar Tabelas
         for table_df, table_title in data['tables']:
+            # --- DEBUGGING ---
+            print(f"  Attempting to add table: {table_title}")
+            # -----------------
             if table_df is not None and isinstance(table_df, pd.DataFrame) and not table_df.empty:
-                pdf.set_font("Arial", "B", 11)
-                pdf.cell(0, 10, table_title, 0, 1, "L")
-                pdf.set_font("Arial", "", 8)
-                # Formata todas as colunas como string para evitar problemas de tipo
-                table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
-                pdf.multi_cell(0, 5, table_string)
-                pdf.ln(5)
-            elif table_df is not None and isinstance(table_df, dict): # Tratar dicionários (KPIs)
-                 pdf.set_font("Arial", "B", 11)
-                 pdf.cell(0, 10, table_title, 0, 1, "L")
-                 pdf.set_font("Arial", "", 8)
-                 for k, v in table_df.items():
-                     pdf.multi_cell(0, 5, f"{k}: {v}")
-                 pdf.ln(5)
+                try: # Try-except para tabelas
+                    pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, table_title, 0, 1, "L")
+                    pdf.set_font("Arial", "", 8); table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
+                    pdf.multi_cell(0, 5, table_string); pdf.ln(5)
+                    print(f"    Success adding table: {table_title}")
+                except Exception as table_err:
+                    print(f"    ERROR adding table '{table_title}': {table_err}")
+                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar tabela '{table_title}']")
+                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
+            elif table_df is not None and isinstance(table_df, dict):
+                 try: # Try-except para dicionários
+                     pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, table_title, 0, 1, "L")
+                     pdf.set_font("Arial", "", 8)
+                     for k, v in table_df.items(): pdf.multi_cell(0, 5, f"{k}: {v}")
+                     pdf.ln(5)
+                     print(f"    Success adding dict table: {table_title}")
+                 except Exception as dict_err:
+                    print(f"    ERROR adding dict table '{table_title}': {dict_err}")
+                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar tabela dict '{table_title}']")
+                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
+            else:
+                 print(f"    Skipping table '{table_title}': None, not DataFrame/Dict, or empty.")
 
         # Adicionar Gráficos
         for plot_bytes, plot_title in data['plots']:
-            if plot_bytes and isinstance(plot_bytes, BytesIO): # Verifica se são bytes
-                pdf.set_font("Arial", "B", 11)
-                pdf.cell(0, 10, plot_title, 0, 1, "L")
+            # --- DEBUGGING ---
+            print(f"  Attempting to add plot: {plot_title}")
+            # -----------------
+            if plot_bytes and isinstance(plot_bytes, BytesIO):
+                pdf.set_font("Arial", "B", 11); pdf.cell(0, 10, plot_title, 0, 1, "L")
                 pdf.set_font("Arial", "", 10)
+                temp_img_path = None # Inicializa fora do try
                 try:
-                    # Salvar bytes temporariamente para fpdf ler
+                    # --- NOVO BLOCO TRY-EXCEPT ESPECÍFICO PARA IMAGEM ---
+                    plot_bytes.seek(0) # Garante que a leitura começa do início
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
                         temp_img.write(plot_bytes.getvalue())
                         temp_img_path = temp_img.name
 
-                    # Adicionar imagem ao PDF, tentando escalar para a largura da página
-                    pdf.image(temp_img_path, w=max_width)
-                    os.remove(temp_img_path) # Limpar ficheiro temporário
-                    pdf.ln(5)
-                except Exception as e:
-                    pdf.set_text_color(255, 0, 0) # Vermelho para erro
-                    pdf.multi_cell(0, 5, f"Erro ao adicionar gráfico '{plot_title}': {e}")
-                    pdf.set_text_color(0, 0, 0) # Reset cor
-                    pdf.ln(5)
-            elif plot_bytes is None:
-                 print(f"Aviso: Gráfico '{plot_title}' não encontrado ou vazio.") # Log para debug
-            elif not isinstance(plot_bytes, BytesIO):
-                 print(f"Aviso: Gráfico '{plot_title}' não é um objeto BytesIO.") # Log para debug
+                    pdf.image(temp_img_path, w=max_width); pdf.ln(5)
+                    print(f"    Success adding plot: {plot_title}")
+                    # --- FIM DO NOVO BLOCO TRY-EXCEPT ESPECÍFICO ---
+                except Exception as img_err:
+                    # --- DEBUGGING ---
+                    print(f"    ERROR adding plot '{plot_title}': {img_err}") # Imprime o erro específico
+                    # ---------------
+                    pdf.set_text_color(255, 0, 0); pdf.multi_cell(0, 5, f"[Erro ao adicionar gráfico '{plot_title}']")
+                    pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                finally:
+                    # Garante que o ficheiro temporário é sempre removido, mesmo se houver erro
+                    if temp_img_path and os.path.exists(temp_img_path):
+                        try:
+                            os.remove(temp_img_path)
+                            print(f"    Removed temp file: {temp_img_path}")
+                        except Exception as rm_err:
+                            print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
+            else:
+                 # --- DEBUGGING ---
+                 status = "None" if plot_bytes is None else f"Type {type(plot_bytes)}"
+                 print(f"    Skipping plot '{plot_title}': Data is {status}")
+                 # ---------------
 
-
-    # Retorna os bytes do PDF (codificados corretamente)
+    # --- DEBUGGING ---
+    print("--- Finalizando Geração do PDF ---")
+    # ---------------
     try:
-        pdf_output_bytes = pdf.output(dest='S').encode('latin-1', errors='replace') # Usa replace para caracteres inválidos
+        pdf_output_bytes = pdf.output(dest='S').encode('latin-1', errors='replace')
+        print(f"PDF Geração concluída. Tamanho: {len(pdf_output_bytes)} bytes.") # Log de sucesso
         return pdf_output_bytes
     except Exception as e:
-        print(f"Erro final na codificação do PDF: {e}")
-        return b"" # Retorna bytes vazios em caso de erro
+        print(f"Erro final na codificação do PDF: {e}") # Log de erro final
+        return b""
 
 # --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
 @st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
