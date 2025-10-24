@@ -14,6 +14,7 @@ import random
 from datetime import timedelta
 import textwrap
 import html # <--- ADICIONADO PARA CORRIGIR O ERRO
+from scipy import stats
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -1782,45 +1783,57 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     # --- FIM DO BLOCO DE CÓDIGO FINAL ---
 
-# --- INÍCIO DO NOVO MOTOR DE DIAGNÓSTICO (V5 - EXAUSTIVO E MODULAR) ---
+# --- INÍCIO DO NOVO MOTOR DE DIAGNÓSTICO (V5 - AUTÓNOMO) ---
+
+import streamlit as st
 
 class DiagnosticEngineV5:
     """
     Motor de Diagnóstico V5 (Exaustivo, Modular e Baseado em Regras).
-    Projetado para varrer sistematicamente todas as fontes de dados 
-    (que alimentam os 77 cartões) e aplicar as 102 regras materiais selecionadas.
+    Calcula internamente os dados agregados necessários a partir dos DataFrames base.
     """
     
-    def __init__(self, tables_pre, metrics, data_frames):
-        # Armazenar todas as fontes de dados para fácil acesso
-        self.tables_pre = tables_pre if tables_pre else {}
-        self.metrics = metrics if metrics else {}
-        self.data_frames = data_frames if data_frames else {}
+    def __init__(self, tables_pre, metrics, data_frames, tables_eda):
+        # Armazenar referências aos dados originais
+        self.tables_pre_orig = tables_pre if tables_pre else {}
+        self.metrics_orig = metrics if metrics else {}
+        self.data_frames_orig = data_frames if data_frames else {}
+        self.tables_eda_orig = tables_eda if tables_eda else {}
         
-        # Dicionários de dados base (acessos rápidos)
-        self.kpis = self.tables_pre.get('kpi_data', {})
-        self.delay_kpis = self.tables_pre.get('cost_of_delay_kpis', {})
-        self.df_projects = self.data_frames.get('projects')
-        self.df_full_context = self.data_frames.get('full_context')
-        self.df_resources = self.data_frames.get('resources')
-        
-        # Fontes de dados específicas para regras
-        self.df_handoffs_cost = self.tables_pre.get('handoff_stats_data')
-        self.df_perf_stats = self.tables_pre.get('perf_stats')
-        self.df_fase_data = self.tables_pre.get('avg_cycle_time_by_phase_data')
-        self.df_resource_avg_events = self.tables_pre.get('resource_avg_events_data')
-        self.df_workload = self.tables_pre.get('resource_workload_data')
-        self.df_efficiency_metrics = self.metrics.get('resource_efficiency_data')
-        self.df_bottleneck_res = self.tables_pre.get('bottleneck_by_resource_data')
-        self.df_activity_wait_stats = self.tables_pre.get('bottleneck_by_activity_data')
-        self.df_activity_service_times = self.tables_pre.get('activity_service_times') # Assumindo que isto é guardado
-        self.df_milestone_data = self.tables_pre.get('milestone_pairs_data') # Assumindo que isto é guardado
-        self.df_wait_by_activity = self.tables_pre.get('avg_waiting_time_by_activity_data') # Assumindo que isto é guardado
-        self.metrics_im = self.metrics.get('inductive_miner', {})
-        self.metrics_hm = self.metrics.get('heuristics_miner', {})
-        self.df_variants = self.tables_pre.get('variants_table')
-        self.df_rework = self.tables_pre.get('rework_loops_table')
-        
+        # Acessos rápidos aos DataFrames base (cruciais)
+        self.df_projects_base = self.data_frames_orig.get('projects', pd.DataFrame())
+        self.df_tasks_base = self.data_frames_orig.get('tasks', pd.DataFrame()) # Assumindo tasks pré-processadas
+        self.df_resources_base = self.data_frames_orig.get('resources', pd.DataFrame())
+        self.df_full_context_base = self.data_frames_orig.get('full_context', pd.DataFrame()) # Assume que este já foi calculado e passado
+
+        # Dados que vêm diretamente dos outputs originais (sem recálculo)
+        self.kpis = self.tables_pre_orig.get('kpi_data', {})
+        self.delay_kpis = self.tables_pre_orig.get('cost_of_delay_kpis', {})
+        self.df_variants = self.tables_pre_orig.get('variants_table', pd.DataFrame())
+        self.df_rework = self.tables_pre_orig.get('rework_loops_table', pd.DataFrame())
+        self.metrics_im = self.metrics_orig.get('inductive_miner', {})
+        self.metrics_hm = self.metrics_orig.get('heuristics_miner', {})
+        self.df_efficiency_metrics = self.metrics_orig.get('resource_efficiency_data', pd.DataFrame()) # Calculado em post-mining
+
+        # Atributos para dados agregados calculados internamente
+        self.df_handoffs = pd.DataFrame()
+        self.df_resource_avg_events = pd.DataFrame()
+        self.df_workload = pd.DataFrame()
+        self.df_bottleneck_res = pd.DataFrame()
+        self.df_activity_wait_stats = pd.DataFrame()
+        self.df_cost_by_resource_type = pd.DataFrame()
+        self.df_avg_cycle_time_phase = pd.DataFrame()
+        self.df_kpi_temporal = pd.DataFrame()
+        self.df_monthly_fitness = pd.DataFrame()
+        self.df_monthly_kpis_eda = pd.DataFrame()
+        self.df_monthly_wait_time = pd.DataFrame()
+        self.df_wait_by_activity = pd.DataFrame()
+        self.df_milestone_transitions = pd.DataFrame()
+        self.df_wait_matrix = pd.DataFrame()
+        self.resource_handoffs_counts = Counter()
+        self.df_perf_stats_data = pd.DataFrame()
+        self.df_activity_service_times = pd.DataFrame()
+
         # Dicionário de resultados
         self.insights = {
             'saude_geral': [],
@@ -1829,559 +1842,790 @@ class DiagnosticEngineV5:
             'diagnostico_gargalos_esperas': [],
             'diagnostico_fluxo_conformidade': []
         }
+        
+        # Calcular os dados agregados necessários
+        self._prepare_aggregated_data()
 
+    def _prepare_aggregated_data(self):
+        """ Calcula internamente os DataFrames agregados necessários para as regras. """
+        
+        # --- Cálculos baseados principalmente em df_full_context_base e df_projects_base ---
+        if not self.df_full_context_base.empty and not self.df_projects_base.empty:
+            try:
+                # Custo por Tipo de Recurso (Regra 7)
+                self.df_cost_by_resource_type = self.df_full_context_base.groupby('resource_type')['cost_of_work'].sum().reset_index()
+            except Exception as e: print(f"Erro ao calcular df_cost_by_resource_type: {e}")
+
+            try:
+                # Recursos por Média de Tarefas/Processo (Regra 27)
+                self.df_resource_avg_events = self.df_full_context_base.groupby("resource_name").agg(
+                    unique_cases=('project_id', 'nunique'), 
+                    event_count=('task_id', 'count') # Assumindo task_id está em full_context
+                ).reset_index()
+                self.df_resource_avg_events["avg_events_per_case"] = self.df_resource_avg_events["event_count"] / self.df_resource_avg_events["unique_cases"].replace(0, 1)
+            except Exception as e: print(f"Erro ao calcular df_resource_avg_events: {e}")
+
+            try:
+                # Workload por Recurso (Regra 31)
+                self.df_workload = self.df_full_context_base.groupby('resource_name')['hours_worked'].sum().sort_values(ascending=False).reset_index()
+            except Exception as e: print(f"Erro ao calcular df_workload: {e}")
+                
+            try:
+                # Tempo médio de execução por Atividade (Regra 49)
+                # Nota: df_tasks_base pode não ter 'hours_worked', usamos df_full_context
+                 self.df_activity_service_times = self.df_full_context_base.groupby('task_name')['hours_worked'].mean().reset_index()
+                 self.df_activity_service_times['service_time_days'] = self.df_activity_service_times['hours_worked'] / 8 # Assumindo 8h/dia
+            except Exception as e: print(f"Erro ao calcular df_activity_service_times: {e}")
+
+
+        # --- Cálculos baseados em df_tasks_base e df_projects_base ---
+        if not self.df_tasks_base.empty and not self.df_projects_base.empty:
+            try:
+                # Cálculos de tempo de espera (Regras 44, 46, 51, 57, 58)
+                df_tasks_analysis = self.df_tasks_base.copy()
+                # Garantir que datas são datetime
+                for col in ['start_date', 'end_date']:
+                    df_tasks_analysis[col] = pd.to_datetime(df_tasks_analysis[col], errors='coerce')
+
+                df_tasks_analysis.sort_values(['project_id', 'start_date'], inplace=True)
+                df_tasks_analysis['previous_task_end'] = df_tasks_analysis.groupby('project_id')['end_date'].shift(1)
+                df_tasks_analysis['waiting_time_seconds'] = (df_tasks_analysis['start_date'] - df_tasks_analysis['previous_task_end']).dt.total_seconds()
+                df_tasks_analysis['waiting_time_days'] = df_tasks_analysis['waiting_time_seconds'].apply(lambda x: x / (24*3600) if pd.notna(x) and x > 0 else 0)
+                df_tasks_analysis['service_time_days'] = (df_tasks_analysis['end_date'] - df_tasks_analysis['start_date']).dt.total_seconds() / (24*3600)
+                df_tasks_analysis.loc[df_tasks_analysis['service_time_days'] < 0, 'service_time_days'] = 0 # Corrigir durações negativas
+
+                # Gargalos Serviço vs Espera por Atividade (Regra 44)
+                if 'task_type' in df_tasks_analysis.columns:
+                    self.df_activity_wait_stats = df_tasks_analysis.groupby('task_type')[['service_time_days', 'waiting_time_days']].mean().reset_index()
+                
+                # Tempo Médio Espera por Atividade (Fila) (Regra 57)
+                self.df_wait_by_activity = df_tasks_analysis.groupby('task_name')['waiting_time_days'].mean().reset_index()
+                self.df_wait_by_activity['sojourn_time_hours'] = self.df_wait_by_activity['waiting_time_days'] * 24
+
+                # Evolução Tempo Médio Espera (Regra 51)
+                if 'project_id' in df_tasks_analysis.columns and 'project_id' in self.df_projects_base.columns and 'completion_month' in self.df_projects_base.columns:
+                     df_wait_evo_merged = df_tasks_analysis.merge(self.df_projects_base[['project_id', 'completion_month']], on='project_id', how='left')
+                     self.df_monthly_wait_time = df_wait_evo_merged.groupby('completion_month')['waiting_time_days'].mean().reset_index()
+
+                # Matriz de Tempo de Espera (Regra 58)
+                df_tasks_analysis['previous_task_name'] = df_tasks_analysis.groupby('project_id')['task_name'].shift(1)
+                self.df_wait_matrix = df_tasks_analysis.pivot_table(index='previous_task_name', columns='task_name', values='waiting_time_days', aggfunc='mean') # Não preenche NA aqui
+
+            except Exception as e: print(f"Erro nos cálculos de tempo de espera: {e}")
+            
+            # --- Outros Cálculos ---
+            try:
+                # Duração Média por Fase (Regra 18)
+                 def get_phase(task_type): # Função original
+                     if task_type in ['Onboarding', 'Validação KYC e Conformidade', 'Análise Documental']: return '1. Onboarding, KYC e Documentação'
+                     elif task_type in ['Análise de Risco e Proposta']: return '2. Análise de Risco'
+                     elif task_type in ['Avaliação da Imóvel']: return '3. Avaliação de imóvel'
+                     elif task_type in ['Decisão de Crédito e Condições']: return '4. Decisão de crédito'
+                     elif task_type in ['Fecho', 'Preparação Legal']: return '5. Contratação e Desembolso'
+                     return 'Outra Fase' # Garante que todas as tasks têm fase
+                 
+                 if 'task_type' in self.df_tasks_base.columns:
+                     df_tasks_ph = self.df_tasks_base.copy()
+                     df_tasks_ph['start_date'] = pd.to_datetime(df_tasks_ph['start_date'], errors='coerce')
+                     df_tasks_ph['end_date'] = pd.to_datetime(df_tasks_ph['end_date'], errors='coerce')
+                     df_tasks_ph['phase'] = df_tasks_ph['task_type'].apply(get_phase)
+                     phase_times = df_tasks_ph.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
+                     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
+                     self.df_avg_cycle_time_phase = phase_times.groupby('phase')['cycle_time_days'].mean().reset_index()
+                 else:
+                     print("Aviso: Coluna 'task_type' não encontrada para cálculo de fases.")
+            except Exception as e: print(f"Erro ao calcular df_avg_cycle_time_phase: {e}")
+
+        # --- Cálculos que usam o log de eventos (requer PM4PY) ---
+        try:
+             # Recriar log simplificado para handoffs (similar a run_pre_mining)
+             if not self.df_full_context_base.empty:
+                log_df_simple = self.df_full_context_base[['project_id', 'task_name', 'allocation_date', 'resource_name']].copy()
+                log_df_simple.rename(columns={'project_id': 'case:concept:name', 'task_name': 'concept:name', 
+                                              'allocation_date': 'time:timestamp', 'resource_name': 'org:resource'}, inplace=True)
+                log_df_simple['time:timestamp'] = pd.to_datetime(log_df_simple['time:timestamp'], errors='coerce')
+                log_df_simple.dropna(subset=['time:timestamp'], inplace=True) # Remove eventos sem data
+                log_df_simple.sort_values(['case:concept:name', 'time:timestamp'], inplace=True)
+
+                # Cálculo Handoffs (Regra 42, 45, 52)
+                log_df_simple['previous_activity_end_time'] = log_df_simple.groupby('case:concept:name')['time:timestamp'].shift(1)
+                log_df_simple['handoff_time_seconds'] = (log_df_simple['time:timestamp'] - log_df_simple['previous_activity_end_time']).dt.total_seconds()
+                log_df_simple['handoff_time_days'] = log_df_simple['handoff_time_seconds'].apply(lambda x: x / (24*3600) if pd.notna(x) and x > 0 else 0)
+                log_df_simple['previous_activity'] = log_df_simple.groupby('case:concept:name')['concept:name'].shift(1)
+                
+                handoff_stats = log_df_simple.groupby(['previous_activity', 'concept:name'])['handoff_time_days'].mean().reset_index().sort_values('handoff_time_days', ascending=False)
+                handoff_stats['transition'] = handoff_stats['previous_activity'].fillna('Start') + ' -> ' + handoff_stats['concept:name'].fillna('End')
+                
+                # Estimar custo (requer cost_per_day, usamos a média se disponível)
+                mean_cost_per_day = self.df_projects_base['cost_per_day'].mean() if 'cost_per_day' in self.df_projects_base.columns else 0
+                handoff_stats['estimated_cost_of_wait'] = handoff_stats['handoff_time_days'] * mean_cost_per_day
+                self.df_handoffs = handoff_stats
+                
+                # Contagem de Handoffs entre Recursos (Regra 32)
+                # Iterar sobre o dataframe ordenado para contar handoffs
+                resource_handoffs = Counter()
+                current_case = None
+                last_resource = None
+                for _, row in log_df_simple.iterrows():
+                    case = row['case:concept:name']
+                    resource = row['org:resource']
+                    if case == current_case and pd.notna(last_resource) and pd.notna(resource) and resource != last_resource:
+                         resource_handoffs[(last_resource, resource)] += 1
+                    current_case = case
+                    last_resource = resource
+                self.resource_handoffs_counts = resource_handoffs
+
+             else:
+                 print("Aviso: df_full_context_base está vazio, não foi possível calcular handoffs.")
+
+        except Exception as e: print(f"Erro nos cálculos baseados em log: {e}")
+
+        # --- Cálculos de Séries Temporais (usando dados EDA, se disponíveis) ---
+        try:
+            # Regras 12, 22 (já no df_monthly_kpis_eda)
+             self.df_monthly_kpis_eda = self.tables_eda_orig.get('monthly_kpis_data', pd.DataFrame())
+        except Exception as e: print(f"Erro ao obter df_monthly_kpis_eda: {e}")
+
+        # --- Cálculos que dependem de dados do post-mining (se disponíveis) ---
+        try:
+            # Regra 71: Conformidade ao Longo do Tempo
+            self.df_monthly_fitness = self.metrics_orig.get('monthly_fitness_data', pd.DataFrame())
+            # Regra 3: KPIs Temporais
+            self.df_kpi_temporal = self.metrics_orig.get('kpi_temporal_data', pd.DataFrame())
+            # Regra 55: Transições entre Marcos
+            self.df_milestone_transitions = self.metrics_orig.get('milestone_transition_data', pd.DataFrame())
+        except Exception as e: print(f"Erro ao obter dados do post-mining: {e}")
+
+
+    # --- Funções _add_insight e _get_trend (sem alterações) ---
+    # ... (manter as funções _add_insight e _get_trend como na versão anterior) ...
     def _add_insight(self, section, title, detail, cartao_ref, level='problema'):
-        """ Wrapper para adicionar insights de forma padronizada. """
         self.insights[section].append({
-            'titulo': title,
-            'detalhe': detail,
-            'cartao_ref': cartao_ref,
-            'level': level
+            'titulo': title, 'detalhe': detail, 'cartao_ref': cartao_ref, 'level': level
         })
 
+    def _get_trend(self, series_data, series_index=None):
+        if series_data is None or not isinstance(series_data, (pd.Series, pd.DataFrame)) or series_data.empty or len(series_data) < 2:
+            return 0
+        
+        # Se for DataFrame, tenta pegar a primeira coluna numérica
+        if isinstance(series_data, pd.DataFrame):
+            numeric_cols = series_data.select_dtypes(include=np.number).columns
+            if not numeric_cols.empty:
+                y = series_data[numeric_cols[0]].copy()
+            else: return 0 # Nenhuma coluna numérica
+        else: # É uma Series
+            y = series_data.copy()
+
+        y.fillna(0, inplace=True) # Preenche NaNs nos dados
+
+        if series_index is None:
+            # Tenta usar o índice do DataFrame/Series se for do tipo correto
+            if isinstance(y.index, (pd.DatetimeIndex, pd.PeriodIndex)):
+                 x = mdates.date2num(y.index.to_timestamp() if isinstance(y.index, pd.PeriodIndex) else y.index)
+            elif pd.api.types.is_numeric_dtype(y.index):
+                 x = y.index.to_numpy()
+            else: # Fallback para índice numérico simples
+                 x = np.arange(len(y))
+        else: # Índice fornecido externamente
+             x_dt = pd.to_datetime(series_index, errors='coerce')
+             if not pd.isna(x_dt).any():
+                 x = mdates.date2num(x_dt)
+             elif pd.api.types.is_numeric_dtype(series_index):
+                 x = pd.to_numeric(series_index, errors='coerce')
+             else:
+                 x = np.arange(len(y))
+        
+        # Garantir que x é numpy array
+        if not isinstance(x, np.ndarray):
+            x = np.array(x)
+            
+        # Remover NaNs em X ou Y que possam ter surgido
+        mask = ~np.isnan(x) & ~np.isnan(y)
+        x = x[mask]
+        y_np = y.to_numpy()[mask] # Converte y para numpy aqui
+        
+        if len(x) < 2: return 0 
+            
+        try:
+            slope, _, _, _, _ = stats.linregress(x, y_np)
+            return slope if not np.isnan(slope) else 0
+        except ValueError as e:
+            print(f"Erro na regressão linear: {e}. X: {x[:5]}, Y: {y_np[:5]}")
+            return 0
+
+
+    # --- Função run (sem alterações) ---
+    # ... (manter a função run como na versão anterior) ...
     def run(self):
-        """ Ponto de entrada principal. Executa todas as verificações. """
         self._check_kpis()
         self._check_custos_atrasos()
-        self._check_recursos_equipas()
+        self._check_recursos_equipas() # Corrigido nome da função
         self._check_gargalos_esperas()
         self._check_fluxo_conformidade()
         return self.insights
 
-    # --- 1. SAÚDE GERAL (KPIs) ---
-    def _check_kpis(self):
-        try:
-            dur_media = self.kpis.get('Duração Média Num', 0)
-            espera_media = self.kpis.get('Espera Média (dias)', 0)
-            perc_espera = (espera_media / max(dur_media, 1)) * 100
-
-            kpi_geral = [
-                {'label': 'Duração Média', 'value': f"{dur_media:.1f} dias"},
-                {'label': 'Custo Médio', 'value': f"€{self.kpis.get('Custo Médio', 0):,.0f}"},
-                {'label': 'Atraso Médio', 'value': f"{self.delay_kpis.get('Atraso Médio (dias)', 0):.1f} dias"},
-                {'label': 'Desvio de Custo Médio', 'value': f"€{self.kpis.get('Desvio de Custo Médio', 0):,.0f}"},
-                {'label': 'Espera Média (Total)', 'value': f"{espera_media:.1f} dias"},
-                {'label': '% Tempo em Espera', 'value': f"{perc_espera:.1f}%"}
-            ]
-            self.insights['saude_geral'] = kpi_geral
-            
-            # Regra derivada dos KPIs
-            if perc_espera > 40:
-                self._add_insight('diagnostico_gargalos_esperas', "Processo Dominado por Espera", 
-                                  f"Mais de {perc_espera:.0f}% da duração total do processo é gasta em filas de espera.", "KPIs Saúde Geral")
-        except Exception as e:
-            print(f"Erro em _check_kpis: {e}")
-
-    # --- 2. DIAGNÓSTICO: CUSTOS E ATRASOS ---
+    # --- Funções de verificação (adaptadas para usar self. e dados recalculados) ---
+    # (Colar aqui as funções _check_kpis, _check_custos_atrasos, 
+    #  _check_recursos_equipas, _check_gargalos_esperas, _check_fluxo_conformidade
+    #  da versão anterior, garantindo que usam self.df_... para os dados)
+    # Exemplo de adaptação:
     def _check_custos_atrasos(self):
         section = 'diagnostico_custos_atrasos'
-        if self.df_projects is None:
-            return
+        # Usa self.df_projects_base em vez de self.df_projects
+        if self.df_projects_base.empty: return
 
         # Cartão 1: Matriz de Performance
         try:
-            q_mau = (self.df_projects['days_diff'] > 0) & (self.df_projects['cost_diff'] > 0)
+            # Usa self.df_projects_base
+            q_mau = (self.df_projects_base['days_diff'] > 0) & (self.df_projects_base['cost_diff'] > 0)
             if not q_mau.empty and q_mau.mean() > 0.25:
-                self._add_insight(section, 'Baixa Eficiência Crítica', f"{q_mau.mean():.0%} dos processos estouram o custo E o prazo.", "Cartão 1")
-            
-            corr_custo_prazo = self.df_projects['days_diff'].corr(self.df_projects['cost_diff'])
-            if corr_custo_prazo > 0.5:
-                self._add_insight(section, 'Atrasos Caros', f"Existe uma forte correlação positiva ({corr_custo_prazo:.2f}) entre atrasos e custos extra.", "Cartão 1")
+                self._add_insight(section, 'Baixa Eficiência Crítica', f"{q_mau.mean():.0%} dos processos estouram custo E prazo.", "Cartão 1")
+
+            corr_custo_prazo = self.df_projects_base['days_diff'].corr(self.df_projects_base['cost_diff'])
+            if not pd.isna(corr_custo_prazo) and corr_custo_prazo > 0.5:
+                self._add_insight(section, 'Atrasos Caros', f"Forte correlação ({corr_custo_prazo:.2f}) entre atrasos e custos extra.", "Cartão 1")
+
+            q_bom = (self.df_projects_base['days_diff'] < 0) & (self.df_projects_base['cost_diff'] < 0)
+            if not q_bom.empty and q_bom.mean() > 0.5:
+                self._add_insight(section, 'Alta Eficiência', f"{q_bom.mean():.0%} dos processos terminam abaixo do custo e do prazo.", "Cartão 1", level='facto')
         except Exception as e: print(f"Erro Regra [1]: {e}")
 
         # Cartão 2: Top 5 Processos Mais Caros
         try:
-            cost_mean = self.df_projects['total_actual_cost'].mean()
-            cost_max = self.df_projects['total_actual_cost'].max()
-            if cost_mean > 0 and (cost_max / cost_mean) > 3:
-                self._add_insight(section, 'Outlier de Custo Extremo', f"O processo mais caro (€{cost_max:,.0f}) é {cost_max/cost_mean:.1f}x mais caro que a média (€{cost_mean:,.0f}).", "Cartão 2")
-            
-            top_5_cost_sum = self.df_projects.nlargest(5, 'total_actual_cost')['total_actual_cost'].sum()
-            total_cost_sum = self.df_projects['total_actual_cost'].sum()
-            if total_cost_sum > 0 and (top_5_cost_sum / total_cost_sum) > 0.30:
-                self._add_insight(section, 'Concentração de Custo (Pareto)', f"Os 5 processos mais caros representam {top_5_cost_sum / total_cost_sum:.0%} do custo total.", "Cartão 2")
+            df_sorted_cost = self.df_projects_base.sort_values('total_actual_cost', ascending=False)
+            if not df_sorted_cost.empty:
+                top_1_cost = df_sorted_cost.iloc[0]
+                # Usa .get() para segurança caso a coluna não exista
+                self._add_insight(section, 'Processo Mais Caro (Top 1)', f"O processo mais caro foi '{top_1_cost.get('project_name', 'N/A')}', com €{top_1_cost['total_actual_cost']:,.0f}.", "Cartão 2", level='facto')
+
+                cost_mean = self.df_projects_base['total_actual_cost'].mean()
+                if not pd.isna(cost_mean) and cost_mean > 0 and (top_1_cost['total_actual_cost'] / cost_mean) > 3:
+                    self._add_insight(section, 'Outlier de Custo Extremo', f"O processo mais caro é {top_1_cost['total_actual_cost']/cost_mean:.1f}x mais caro que a média.", "Cartão 2")
+
+                top_5_cost_sum = df_sorted_cost.head(5)['total_actual_cost'].sum()
+                total_cost_sum = self.df_projects_base['total_actual_cost'].sum()
+                if total_cost_sum > 0 and (top_5_cost_sum / total_cost_sum) > 0.30:
+                    self._add_insight(section, 'Concentração de Custo (Pareto)', f"Os 5 processos mais caros representam {top_5_cost_sum / total_cost_sum:.0%} do custo total.", "Cartão 2")
         except Exception as e: print(f"Erro Regra [2]: {e}")
 
-        # Cartão 3: Séries Temporais KPIs (Assumindo kpi_temporal calculado em run_post_mining_analysis)
-        # Esta regra é complexa de implementar aqui sem a fonte de dados (kpi_temporal).
-        # Assumindo que os dados estão em df_projects
-        
+        # Cartão 3: Séries Temporais KPIs (Usa self.df_kpi_temporal calculado internamente)
+        try:
+            if not self.df_kpi_temporal.empty:
+                 # Adiciona a conversão do índice para timestamp se for PeriodIndex
+                 if isinstance(self.df_kpi_temporal.index, pd.PeriodIndex):
+                     time_index = self.df_kpi_temporal.index.to_timestamp()
+                 else:
+                     time_index = pd.to_datetime(self.df_kpi_temporal.get('completion_month', self.df_kpi_temporal.index), errors='coerce')
+
+                 if not pd.isna(time_index).any():
+                     lead_time_slope = self._get_trend(self.df_kpi_temporal['avg_lead_time'], time_index)
+                     lead_time_slope_monthly = lead_time_slope * 30.4
+
+                     if lead_time_slope_monthly > 0.5:
+                         self._add_insight(section, 'Degradação da Duração (Tendência)', f"O Lead Time está a aumentar (+{lead_time_slope_monthly:.1f} dias/mês).", "Cartão 3")
+                     elif lead_time_slope_monthly < -0.5:
+                          self._add_insight(section, 'Melhoria de Duração (Tendência)', f"O Lead Time está a diminuir ({lead_time_slope_monthly:.1f} dias/mês).", "Cartão 3", level='facto')
+
+                     corr_lt_tp = self.df_kpi_temporal['avg_lead_time'].corr(self.df_kpi_temporal['throughput'])
+                     if not pd.isna(corr_lt_tp) and corr_lt_tp > 0.5:
+                         self._add_insight(section, 'Sistema Saturado (Tendência)', f"Correlação positiva ({corr_lt_tp:.2f}) entre Lead Time e Throughput. Mais trabalho = mais lentidão.", "Cartão 3")
+                 else:
+                      print("Aviso Regra [3]: Não foi possível converter o índice de tempo para cálculo de tendência.")
+
+        except Exception as e: print(f"Erro Regra [3]: {e}")
+
+        # ... (Restantes regras de _check_custos_atrasos adaptadas de forma similar)...
         # Cartão 4: Distribuição do Status
         try:
-            status_counts = self.df_projects['project_status'].value_counts(normalize=True)
-            if 'Em Andamento' in status_counts and status_counts['Em Andamento'] > 0.20:
-                self._add_insight(section, 'WIP Elevado', f"{status_counts['Em Andamento']:.0%} dos processos estão 'Em Andamento'.", "Cartão 4")
-            if 'Cancelado' in status_counts and status_counts['Cancelado'] > 0.05:
-                self._add_insight(section, 'Taxa de Abandono', f"{status_counts['Cancelado']:.0%} dos processos foram 'Cancelados'.", "Cartão 4")
+            if 'project_status' in self.df_projects_base.columns:
+                status_counts = self.df_projects_base['project_status'].value_counts(normalize=True)
+                if 'Em Andamento' in status_counts and status_counts['Em Andamento'] > 0.20:
+                    self._add_insight(section, 'WIP Elevado', f"{status_counts['Em Andamento']:.0%} dos processos estão 'Em Andamento'.", "Cartão 4")
+                if 'Cancelado' in status_counts and status_counts['Cancelado'] > 0.05:
+                    self._add_insight(section, 'Taxa de Abandono', f"{status_counts['Cancelado']:.0%} dos processos foram 'Cancelados'.", "Cartão 4")
         except Exception as e: print(f"Erro Regra [4]: {e}")
-        
+
         # Cartão 5: Custo Médio por Trimestre
         try:
-            if 'completion_quarter' in self.df_projects.columns:
-                custo_trimestral = self.df_projects.groupby('completion_quarter')['total_actual_cost'].mean()
-                if len(custo_trimestral) > 1:
-                    if custo_trimestral.iloc[-1] > (custo_trimestral.iloc[0] * 1.10):
-                         self._add_insight(section, 'Inflação de Custo', f"O custo médio do último trimestre é > 10% superior ao do primeiro.", "Cartão 5")
-                    
-                    std_dev_custo = custo_trimestral.std()
-                    mean_custo = custo_trimestral.mean()
-                    anomalias = custo_trimestral[custo_trimestral > mean_custo + (2 * std_dev_custo)]
-                    if not anomalias.empty:
-                        self._add_insight(section, 'Anomalia de Custo (Trimestre)', f"O trimestre {anomalias.index[0]} teve um pico de custo ({anomalias.iloc[0]:,.0f}€) > 2 desvios padrão acima da média.", "Cartão 5")
+            if 'end_date' in self.df_projects_base.columns and 'total_actual_cost' in self.df_projects_base.columns:
+                 # Usa PeriodIndex para agrupar por trimestre corretamente
+                 custo_trimestral = self.df_projects_base.groupby(pd.PeriodIndex(self.df_projects_base['end_date'], freq='Q'))['total_actual_cost'].mean().dropna()
+
+                 if len(custo_trimestral) > 4:
+                     # Converte índice de período para numérico para regressão
+                     slope = self._get_trend(custo_trimestral, custo_trimestral.index.to_timestamp().map(mdates.date2num))
+                     avg_cost = custo_trimestral.mean()
+                     # A inclinação é € / dia. Multiplica por 365/4 para €/trimestre aprox.
+                     slope_per_quarter = slope * (365.25 / 4)
+
+                     if slope_per_quarter > (avg_cost * 0.05): # Aumento > 5% da média por trimestre
+                          self._add_insight(section, 'Inflação de Custo (Tendência)', f"O custo médio por processo está a subir ~€{slope_per_quarter*4:,.0f} por ano.", "Cartão 5")
         except Exception as e: print(f"Erro Regra [5]: {e}")
+
+        # Cartão 7: Custo por Tipo de Recurso (Usa self.df_cost_by_resource_type)
+        try:
+            if not self.df_cost_by_resource_type.empty:
+                df_sorted = self.df_cost_by_resource_type.sort_values('cost_of_work', ascending=False)
+                top_1 = df_sorted.iloc[0]
+                total_cost = self.df_cost_by_resource_type['cost_of_work'].sum()
+                perc = top_1['cost_of_work'] / total_cost if total_cost > 0 else 0
+                self._add_insight(section, 'Função Mais Dispendiosa (Top 1)', f"A função '{top_1['resource_type']}' é a mais cara ({perc:.0%}).", "Cartão 7", level='facto')
+                if perc > 0.40:
+                    self._add_insight(section, 'Dependência de Custo', f"A função '{top_1['resource_type']}' representa {perc:.0%} do custo total.", "Cartão 7")
+        except Exception as e: print(f"Erro Regra [7]: {e}")
 
         # Cartão 8: Top 5 Processos Mais Longos
         try:
-            dur_mean = self.df_projects['actual_duration_days'].mean()
-            dur_max = self.df_projects['actual_duration_days'].max()
-            if dur_mean > 0 and (dur_max / dur_mean) > 3:
-                self._add_insight(section, 'Outlier de Duração Extremo', f"O processo mais longo ({dur_max:.0f} dias) é {dur_max/dur_mean:.1f}x mais longo que a média ({dur_mean:.1f} dias).", "Cartão 8")
+            if 'actual_duration_days' in self.df_projects_base.columns:
+                df_sorted_dur = self.df_projects_base.sort_values('actual_duration_days', ascending=False)
+                if not df_sorted_dur.empty:
+                    top_1_dur = df_sorted_dur.iloc[0]
+                    self._add_insight(section, 'Processo Mais Longo (Top 1)', f"O processo mais longo foi '{top_1_dur.get('project_name', 'N/A')}', com {top_1_dur['actual_duration_days']:.0f} dias.", "Cartão 8", level='facto')
+                    dur_mean = self.df_projects_base['actual_duration_days'].mean()
+                    if not pd.isna(dur_mean) and dur_mean > 0 and (top_1_dur['actual_duration_days'] / dur_mean) > 3:
+                        self._add_insight(section, 'Outlier de Duração Extremo', f"O processo mais longo é {top_1_dur['actual_duration_days']/dur_mean:.1f}x mais longo que a média.", "Cartão 8")
         except Exception as e: print(f"Erro Regra [8]: {e}")
-        
+
         # Cartão 10: Custo Real vs. Orçamento
         try:
-            estoiro_orcamento = (self.df_projects['cost_diff'] > 0).mean()
-            if estoiro_orcamento > 0.50:
-                self._add_insight(section, 'Suborçamentação Crónica', f"{estoiro_orcamento:.0%} dos processos estouram o orçamento.", "Cartão 10")
-            
-            perc_diff = (self.df_projects['cost_diff'] / self.df_projects['budget_impact'].replace(0, np.nan)).dropna()
-            if perc_diff.std() > 0.40:
-                self._add_insight(section, 'Imprevisibilidade Orçamental', f"O desvio percentual do orçamento é muito alto (Std Dev: {perc_diff.std():.1%}), indicando estimativas pouco fiáveis.", "Cartão 10")
+            if 'cost_diff' in self.df_projects_base.columns and 'budget_impact' in self.df_projects_base.columns:
+                df_valid = self.df_projects_base.dropna(subset=['cost_diff', 'budget_impact'])
+                if not df_valid.empty:
+                    estoiro_orcamento = (df_valid['cost_diff'] > 0).mean()
+                    if estoiro_orcamento > 0.50:
+                        self._add_insight(section, 'Suborçamentação Crónica', f"{estoiro_orcamento:.0%} dos processos estouram o orçamento.", "Cartão 10")
+                    elif estoiro_orcamento < 0.30:
+                         self._add_insight(section, 'Estimativas Conservadoras', f"{(1-estoiro_orcamento):.0%} dos processos terminam abaixo do orçamento.", "Cartão 10", level='facto')
+
+                    # Calcula perc_diff apenas onde budget_impact > 0
+                    perc_diff = (df_valid.loc[df_valid['budget_impact'] > 0, 'cost_diff'] / df_valid.loc[df_valid['budget_impact'] > 0, 'budget_impact'])
+                    if not perc_diff.empty and perc_diff.std() > 0.40:
+                        self._add_insight(section, 'Imprevisibilidade Orçamental', f"O desvio percentual do orçamento é muito alto (Std Dev: {perc_diff.std():.1%}).", "Cartão 10")
         except Exception as e: print(f"Erro Regra [10]: {e}")
 
         # Cartão 11: Distribuição Custo por Dia
         try:
-            cv_cost_per_day = self.df_projects['cost_per_day'].std() / self.df_projects['cost_per_day'].mean()
-            if cv_cost_per_day > 0.7:
-                 self._add_insight(section, 'Custo por Dia Imprevisível', f"O custo por dia é muito inconsistente (Coef. Variação: {cv_cost_per_day:.1%}).", "Cartão 11")
+            if 'cost_per_day' in self.df_projects_base.columns:
+                cost_per_day = self.df_projects_base['cost_per_day'].dropna()
+                if not cost_per_day.empty and cost_per_day.mean() > 0:
+                    cv_cost_per_day = cost_per_day.std() / cost_per_day.mean()
+                    if cv_cost_per_day > 0.7:
+                         self._add_insight(section, 'Custo por Dia Imprevisível', f"O custo por dia é muito inconsistente (Coef. Variação: {cv_cost_per_day:.1%}).", "Cartão 11")
         except Exception as e: print(f"Erro Regra [11]: {e}")
 
-        # Cartão 12: Evolução Volume vs Tamanho
+        # Cartão 12 & 22: Evolução Performance (Prazo e Custo) (Usa self.df_monthly_kpis_eda)
         try:
-            if 'completion_month' in self.df_projects.columns:
-                monthly_kpis = self.df_projects.groupby('completion_month').agg(mean_duration=('actual_duration_days', 'mean'), completed_projects=('project_id', 'count')).reset_index()
-                if len(monthly_kpis) > 1:
-                    corr_vol_dur = monthly_kpis['completed_projects'].corr(monthly_kpis['mean_duration'])
-                    if corr_vol_dur > 0.6:
-                        self._add_insight(section, 'Sistema Sobrecarregado', f"Correlação forte ({corr_vol_dur:.2f}) entre volume de processos e duração média. Mais trabalho = processos mais lentos.", "Cartão 12")
-        except Exception as e: print(f"Erro Regra [12]: {e}")
-        
-        # Cartão 14 & 15 & 23: Distribuição Lead Time / Atraso
+            if not self.df_monthly_kpis_eda.empty and len(self.df_monthly_kpis_eda) > 1:
+                 # Assume 'completion_month' é string 'YYYY-MM'
+                 time_index = pd.to_datetime(self.df_monthly_kpis_eda['completion_month'] + '-01', errors='coerce')
+
+                 if not pd.isna(time_index).any():
+                     corr_vol_dur = self.df_monthly_kpis_eda['completed_projects'].corr(self.df_monthly_kpis_eda['mean_duration'])
+                     if not pd.isna(corr_vol_dur):
+                         if corr_vol_dur > 0.6:
+                             self._add_insight(section, 'Sistema Sobrecarregado', f"Correlação forte ({corr_vol_dur:.2f}) entre volume e duração média.", "Cartão 12")
+                         elif corr_vol_dur < -0.3:
+                              self._add_insight(section, 'Sistema Escalável', f"Volume aumentou e Duração Média diminuiu (Corr: {corr_vol_dur:.2f}).", "Cartão 12", level='facto')
+
+                     cost_diff_slope = self._get_trend(self.df_monthly_kpis_eda['mean_cost_diff'], time_index)
+                     # Slope é €/dia. Multiplica por 30.4 para €/mês
+                     if cost_diff_slope * 30.4 > 10: # Aumento > 10€/mês
+                         self._add_insight(section, 'Desvio de Custo Agravado', f"O desvio de custo está a piorar (+€{cost_diff_slope*30.4:,.0f}/mês).", "Cartão 22")
+
+                     days_diff_slope = self._get_trend(self.df_monthly_kpis_eda['mean_days_diff'], time_index)
+                     # Slope é dias/dia. Multiplica por 30.4 para dias/mês
+                     if days_diff_slope * 30.4 < -0.1:
+                         self._add_insight(section, 'Melhoria de Prazo', f"O atraso médio está a diminuir ({days_diff_slope*30.4:.1f} dias/mês).", "Cartão 22", level='facto')
+                     elif days_diff_slope * 30.4 > 0.1:
+                         self._add_insight(section, 'Degradação de Pontualidade', f"O atraso médio está a aumentar (+{days_diff_slope*30.4:.1f} dias/mês).", "Cartão 17, 22")
+                 else:
+                     print("Aviso Regra [12, 17, 22]: Não foi possível converter 'completion_month' para cálculo de tendência.")
+        except Exception as e: print(f"Erro Regra [12, 17, 22]: {e}")
+
+        # Cartão 14, 15, 23: Distribuição Lead Time / Atraso
         try:
-            skew_lead_time = self.df_projects['actual_duration_days'].skew()
-            if skew_lead_time > 1.0:
-                self._add_insight(section, 'Cauda Longa de Atrasos', f"A distribuição da duração dos processos é muito assimétrica (skewness: {skew_lead_time:.2f}), com muitos outliers longos.", "Cartão 14")
-            
-            cv_lead_time = self.df_projects['actual_duration_days'].std() / self.df_projects['actual_duration_days'].mean()
-            if cv_lead_time > 0.5:
-                self._add_insight(section, 'Imprevisibilidade (Duração)', f"A duração dos processos é muito imprevisível (Coef. Variação: {cv_lead_time:.1%}).", "Cartão 14")
+            if 'actual_duration_days' in self.df_projects_base.columns and 'days_diff' in self.df_projects_base.columns:
+                durations = self.df_projects_base['actual_duration_days'].dropna()
+                delays = self.df_projects_base['days_diff'].dropna()
+                if not durations.empty and durations.mean() > 0:
+                    cv_lead_time = durations.std() / durations.mean()
+                    if cv_lead_time > 0.5:
+                        self._add_insight(section, 'Imprevisibilidade (Duração)', f"Duração muito imprevisível (CV: {cv_lead_time:.1%}).", "Cartão 14")
+                if not delays.empty:
+                    mean_atraso = delays.mean()
+                    if mean_atraso > 3:
+                        self._add_insight(section, 'Atrasos Crónicos', f"Atraso médio: {mean_atraso:.1f} dias.", "Cartão 23")
+                    std_atraso = delays.std()
+                    if std_atraso > 10:
+                        self._add_insight(section, 'Estimativas de Prazo Inúteis', f"Variabilidade dos atrasos muito alta (Std Dev: {std_atraso:.1f} dias).", "Cartão 23")
+        except Exception as e: print(f"Erro Regra [14, 15, 23]: {e}")
 
-            mean_atraso = self.df_projects['days_diff'].mean()
-            if mean_atraso > 3:
-                self._add_insight(section, 'Atrasos Crónicos', f"Os processos atrasam-se, em média, {mean_atraso:.1f} dias.", "Cartão 23")
-                
-            std_atraso = self.df_projects['days_diff'].std()
-            if std_atraso > 10:
-                self._add_insight(section, 'Estimativas de Prazo Inúteis', f"A variabilidade dos atrasos é muito alta (Std Dev: {std_atraso:.1f} dias).", "Cartão 23")
-        except Exception as e: print(f"Erro Regra [14/15/23]: {e}")
-
-    # --- 3. DIAGNÓSTICO: RECURSOS E EQUIPAS ---
+    # --- Funções _check_recursos_equipas (adaptada) ---
     def _check_recursos_equipas(self):
         section = 'diagnostico_recursos_equipas'
-        
+
         # Cartão 26: Distribuição Recursos por Tipo
         try:
-            if self.df_resources is not None:
-                resource_counts = self.df_resources['resource_type'].value_counts()
-                specialists = resource_counts[resource_counts == 1]
-                if len(specialists) > 3:
-                    self._add_insight(section, 'Muitos Especialistas Isolados', f"Existem {len(specialists)} funções com apenas 1 pessoa (ex: {', '.join(specialists.index[:3])}), criando potenciais gargalos.", "Cartão 26")
+            if not self.df_resources_base.empty:
+                 resource_counts = self.df_resources_base['resource_type'].value_counts()
+                 specialists = resource_counts[resource_counts <= 2]
+                 if not specialists.empty:
+                     critical_roles = ['Comité de Crédito', 'Diretor de Risco', 'ExCo'] # Ajustar se necessário
+                     critical_specialists = specialists[specialists.index.isin(critical_roles)]
+                     if not critical_specialists.empty:
+                         self._add_insight(section, 'Função-Gargalo Crítica (Potencial)', f"Funções críticas dependem de <= 2 pessoas: {', '.join(critical_specialists.index)}.", "Cartão 26")
+                     elif len(specialists) > 3:
+                         self._add_insight(section, 'Muitos Especialistas Isolados', f"Existem {len(specialists)} funções com <= 2 pessoas (ex: {', '.join(specialists.index[:3])}).", "Cartão 26")
         except Exception as e: print(f"Erro Regra [26]: {e}")
-        
-        # Cartão 27: Recursos por Média de Tarefas/Processo
+
+        # Cartão 27: Recursos por Média de Tarefas/Processo (Usa self.df_resource_avg_events)
         try:
-            if self.df_resource_avg_events is not None:
-                df = self.df_resource_avg_events
-                cv = df['avg_events_per_case'].std() / df['avg_events_per_case'].mean()
-                if cv > 0.8:
-                    self._add_insight(section, "Recursos 'Herói'", f"O envolvimento dos recursos é muito desigual (Coef. Variação: {cv:.1%}). Alguns fazem muito mais por processo.", "Cartão 27")
-                
-                top_1 = df.nlargest(1, 'avg_events_per_case').iloc[0]
-                top_2 = df.nlargest(2, 'avg_events_per_case').iloc[1]
-                if (top_1['avg_events_per_case'] / max(top_2['avg_events_per_case'], 1)) > 3:
-                    self._add_insight(section, "Dependência de 'Herói'", f"O recurso '{top_1['resource_name']}' ({top_1['avg_events_per_case']:.1f} t/p) faz 3x mais tarefas por processo que o segundo.", "Cartão 27")
+            if not self.df_resource_avg_events.empty and self.df_resource_avg_events['avg_events_per_case'].mean() > 0:
+                cv = self.df_resource_avg_events['avg_events_per_case'].std() / self.df_resource_avg_events['avg_events_per_case'].mean()
+                if not pd.isna(cv) and cv > 0.8:
+                    top_hero = self.df_resource_avg_events.nlargest(1, 'avg_events_per_case').iloc[0]
+                    self._add_insight(section, "Recursos 'Herói'", f"Envolvimento desigual (CV: {cv:.1%}). '{top_hero['resource_name']}' faz {top_hero['avg_events_per_case']:.1f} tarefas/processo.", "Cartão 27")
         except Exception as e: print(f"Erro Regra [27]: {e}")
 
-        # Cartão 29: Impacto Tamanho Equipa no Atraso
+        # Cartão 29: Impacto Tamanho Equipa no Atraso (Usa self.df_projects_base)
         try:
-            if self.df_projects is not None and 'num_resources' in self.df_projects.columns:
-                corr_size_delay = self.df_projects['num_resources'].corr(self.df_projects['days_diff'])
-                if corr_size_delay > 0.3:
-                    self._add_insight(section, 'Custo de Coordenação (Lei de Brooks)', f"Processos com mais recursos tendem a ter MAIS atrasos (Correlação: {corr_size_delay:.2f}).", "Cartão 29")
+            if not self.df_projects_base.empty and 'num_resources' in self.df_projects_base.columns and 'days_diff' in self.df_projects_base.columns:
+                 # Garante que ambas as colunas são numéricas
+                 df_corr = self.df_projects_base[['num_resources', 'days_diff']].apply(pd.to_numeric, errors='coerce').dropna()
+                 if len(df_corr) > 1:
+                     corr_size_delay = df_corr['num_resources'].corr(df_corr['days_diff'])
+                     if not pd.isna(corr_size_delay) and corr_size_delay > 0.3:
+                         self._add_insight(section, 'Custo de Coordenação (Lei de Brooks)', f"Processos com mais recursos tendem a atrasar mais (Corr: {corr_size_delay:.2f}).", "Cartão 29")
         except Exception as e: print(f"Erro Regra [29]: {e}")
-        
-        # Cartão 31: Top 10 Recursos por Horas
+
+        # Cartão 31: Top 10 Recursos por Horas (Usa self.df_workload)
         try:
-            if self.df_workload is not None:
+            if not self.df_workload.empty and len(self.df_workload) > 1:
                 top_1 = self.df_workload.iloc[0]
                 top_2 = self.df_workload.iloc[1]
-                if (top_1['hours_worked'] / max(top_2['hours_worked'], 1)) > 2:
-                    self._add_insight(section, 'Risco de Burnout (Recurso)', f"O recurso '{top_1['resource_name']}' ({top_1['hours_worked']:.0f}h) trabalhou 2x mais que o segundo.", "Cartão 31")
-            
-            if self.df_full_context is not None:
-                gestao_types = ['Diretor', 'ExCo', 'Gestor', 'Comité de Crédito'] # Ajustar conforme os seus dados
-                workload_gestao = self.df_full_context[self.df_full_context['resource_type'].isin(gestao_types)]
-                if not workload_gestao.empty:
-                    top_5_workload = self.df_workload.head(5)['resource_name']
-                    gestao_no_top_5 = workload_gestao[workload_gestao['resource_name'].isin(top_5_workload)]['resource_name'].nunique()
-                    if gestao_no_top_5 > 0:
-                        self._add_insight(section, 'Desalinhamento de Carga', f"{gestao_no_top_5} recurso(s) de gestão está(ão) no Top 5 de horas trabalhadas.", "Cartão 31")
+                self._add_insight(section, 'Recurso Mais Ativo (Top 1)', f"Recurso com mais horas: '{top_1['resource_name']}' ({top_1['hours_worked']:.0f} h).", "Cartão 31", level='facto')
+                if (top_1['hours_worked'] / max(top_2['hours_worked'], 1)) > 1.5:
+                    self._add_insight(section, 'Risco de Burnout (Recurso)', f"'{top_1['resource_name']}' trabalhou {top_1['hours_worked']/max(top_2['hours_worked'], 1):.1f}x mais que o segundo.", "Cartão 31")
         except Exception as e: print(f"Erro Regra [31]: {e}")
 
-        # Cartão 33: Métricas de Eficiência
+        # Cartão 32: Top 10 Handoffs entre Recursos (Usa self.resource_handoffs_counts)
         try:
-            if self.df_efficiency_metrics is not None:
-                pior_ratio = self.df_efficiency_metrics['avg_hours_per_task'].max()
-                melhor_ratio = self.df_efficiency_metrics['avg_hours_per_task'].min()
-                if melhor_ratio > 0 and (pior_ratio / melhor_ratio) > 5:
-                    self._add_insight(section, 'Performance Discrepante', f"O recurso mais lento demora {pior_ratio/melhor_ratio:.1f}x mais tempo por tarefa que o mais rápido.", "Cartão 33")
+            if self.resource_handoffs_counts:
+                 df_handoffs = pd.DataFrame(self.resource_handoffs_counts.most_common(10), columns=['Handoff_Tuple', 'Contagem'])
+                 if not df_handoffs.empty and len(df_handoffs) > 1:
+                    df_handoffs['Handoff'] = df_handoffs['Handoff_Tuple'].apply(lambda x: f"{x[0]} -> {x[1]}")
+                    top_1 = df_handoffs.iloc[0]
+                    top_2 = df_handoffs.iloc[1]
+                    self._add_insight(section, 'Principal Handoff (Recursos)', f"Transição mais frequente: '{top_1['Handoff']}' ({top_1['Contagem']} vezes).", "Cartão 32", level='facto')
+                    if (top_1['Contagem'] / max(top_2['Contagem'], 1)) > 2:
+                        self._add_insight(section, 'Dependência de Pares', f"O handoff Top 1 é {top_1['Contagem']/max(top_2['Contagem'], 1):.1f}x mais frequente que o Top 2.", "Cartão 32")
+        except Exception as e: print(f"Erro Regra [32]: {e}")
+
+        # Cartão 33: Métricas de Eficiência (Usa self.df_efficiency_metrics)
+        try:
+            if not self.df_efficiency_metrics.empty and 'avg_hours_per_task' in self.df_efficiency_metrics.columns:
+                df_effic = self.df_efficiency_metrics.sort_values(by='avg_hours_per_task')
+                if len(df_effic) >= 3:
+                    melhores = df_effic.head(3)
+                    piores = df_effic.tail(3).iloc[::-1]
+
+                    self._add_insight(section, 'Top 3 Recursos Eficientes', f"Mais rápidos: 1. {melhores.iloc[0]['resource_name']}, 2. {melhores.iloc[1]['resource_name']}, 3. {melhores.iloc[2]['resource_name']}.", "Cartão 33", level='facto')
+                    self._add_insight(section, 'Top 3 Recursos Ineficientes', f"Mais lentos: 1. {piores.iloc[0]['resource_name']}, 2. {piores.iloc[1]['resource_name']}, 3. {piores.iloc[2]['resource_name']}.", "Cartão 33", level='facto')
+
+                    ratio = piores.iloc[0]['avg_hours_per_task'] / max(melhores.iloc[0]['avg_hours_per_task'], 0.1)
+                    if not pd.isna(ratio) and ratio > 5:
+                        self._add_insight(section, 'Performance Discrepante', f"O recurso mais lento é {ratio:.1f}x mais lento que o mais rápido.", "Cartão 33")
         except Exception as e: print(f"Erro Regra [33]: {e}")
 
-        # Cartão 36: Atraso Médio por Recurso
+        # Cartão 36: Atraso Médio por Recurso (Usa self.df_full_context_base)
         try:
-            if self.df_full_context is not None:
-                atraso_por_recurso = self.df_full_context.groupby('resource_name')['days_diff'].mean()
-                media_geral_atraso = self.df_full_context['days_diff'].mean()
-                pior_recurso = atraso_por_recurso.nlargest(1)
-                if not pior_recurso.empty and pior_recurso.iloc[0] > max(media_geral_atraso * 3, 3):
-                    self._add_insight(section, "Recurso 'Atrasador' Crónico", f"O recurso '{pior_recurso.index[0]}' está associado a um atraso médio de {pior_recurso.iloc[0]:.1f} dias.", "Cartão 36")
-                
-                atraso_por_funcao = self.df_full_context.groupby('resource_type')['days_diff'].mean()
-                top_10_recursos_atraso = atraso_por_recurso.nlargest(10).index
-                recursos_top_10 = self.df_full_context[self.df_full_context['resource_name'].isin(top_10_recursos_atraso)]
-                if not recursos_top_10.empty:
-                    funcao_dominante = recursos_top_10['resource_type'].mode()
-                    if not funcao_dominante.empty:
-                        funcao_dominante_nome = funcao_dominante.iloc[0]
-                        perc = recursos_top_10[recursos_top_10['resource_type'] == funcao_dominante_nome]['resource_name'].nunique() / 10
-                        if perc > 0.5:
-                            self._add_insight(section, "Função 'Atrasadora'", f"Mais de 50% dos 10 piores recursos em atraso são da função: '{funcao_dominante_nome}'.", "Cartão 36")
+            if not self.df_full_context_base.empty and 'days_diff' in self.df_full_context_base.columns and 'resource_name' in self.df_full_context_base.columns:
+                 atraso_por_recurso = self.df_full_context_base.groupby('resource_name')['days_diff'].mean().dropna()
+                 if not atraso_por_recurso.empty:
+                     pior_recurso = atraso_por_recurso.nlargest(1)
+                     if not pior_recurso.empty:
+                          self._add_insight(section, "Recurso 'Atrasador' Crónico (Top 1)", f"Recurso associado ao maior atraso médio: '{pior_recurso.index[0]}' ({pior_recurso.iloc[0]:.1f} dias).", "Cartão 36")
         except Exception as e: print(f"Erro Regra [36]: {e}")
 
-        # Cartão 37: Skill vs Performance
+        # Cartão 37: Skill vs Performance (Usa self.df_full_context_base)
         try:
-            if self.df_full_context is not None and 'skill_level' in self.df_full_context.columns:
-                corr_skill_perf = self.df_full_context['skill_level'].corr(self.df_full_context['hours_worked'] / self.df_full_context['task_id'].map(self.df_full_context['task_id'].value_counts()))
-                if abs(corr_skill_perf) < 0.2:
-                    self._add_insight(section, 'Skill Irrelevante', f"O 'skill_level' ({corr_skill_perf:.2f}) não tem correlação com a performance (horas/tarefa).", "Cartão 37")
-                if corr_skill_perf > 0.2:
-                    self._add_insight(section, 'Skill Invertido', f"Recursos com skill mais alto parecem demorar mais tempo por tarefa (Corr: {corr_skill_perf:.2f}).", "Cartão 37")
+            if not self.df_full_context_base.empty and 'skill_level' in self.df_full_context_base.columns and 'hours_worked' in self.df_full_context_base.columns and 'task_id' in self.df_full_context_base.columns:
+                # Calcula performance (horas por tarefa única por recurso)
+                task_counts = self.df_full_context_base.groupby('resource_name')['task_id'].nunique()
+                hours_sum = self.df_full_context_base.groupby('resource_name')['hours_worked'].sum()
+                perf_df = pd.DataFrame({'hours_per_task': hours_sum / task_counts.replace(0,1)}).dropna().reset_index()
+
+                # Adiciona skill_level
+                skill_map = self.df_full_context_base[['resource_name', 'skill_level']].drop_duplicates().set_index('resource_name')
+                perf_df = perf_df.join(skill_map, on='resource_name')
+                perf_df = perf_df.dropna(subset=['skill_level', 'hours_per_task']) # Remove linhas sem skill ou performance
+
+                if len(perf_df['skill_level'].unique()) > 1 and len(perf_df) > 1: # Precisa de variação no skill e dados
+                    corr_skill_perf = perf_df['skill_level'].corr(perf_df['hours_per_task'])
+                    if not pd.isna(corr_skill_perf):
+                        if abs(corr_skill_perf) < 0.2:
+                            self._add_insight(section, 'Skill Irrelevante', f"'skill_level' (Corr: {corr_skill_perf:.2f}) não tem correlação com performance (horas/tarefa).", "Cartão 37")
+                        if corr_skill_perf > 0.2:
+                            self._add_insight(section, 'Skill Invertido', f"Recursos com skill mais alto parecem demorar mais (Corr: {corr_skill_perf:.2f}).", "Cartão 37")
+        except KeyError as e: print(f"Erro Regra [37]: Coluna em falta - {e}")
         except Exception as e: print(f"Erro Regra [37]: {e}")
 
-        # Cartão 38: Atraso por Skill
+        # Cartão 41: Heatmap Esforço (Usa self.df_full_context_base)
         try:
-             if self.df_full_context is not None and 'skill_level' in self.df_full_context.columns:
-                corr_skill_atraso = self.df_full_context.groupby('project_id').agg(
-                    mean_skill=('skill_level', 'mean'), 
-                    days_diff=('days_diff', 'first')
-                )['mean_skill'].corr(self.df_full_context.groupby('project_id')['days_diff'].first())
-                
-                if corr_skill_atraso > 0.3:
-                    self._add_insight(section, 'Alocação Errada?', f"Recursos com skill mais alto estão alocados a projetos que se atrasam mais (Corr: {corr_skill_atraso:.2f}).", "Cartão 38")
-        except Exception as e: print(f"Erro Regra [38]: {e}")
-        
-        # Cartão 39: Rede Recursos por Função
-        try:
-            if self.df_full_context is not None:
-                func_por_recurso = self.df_full_context.groupby('resource_name')['resource_type'].nunique()
-                recurso_faz_tudo = func_por_recurso.nlargest(1)
-                if not recurso_faz_tudo.empty and recurso_faz_tudo.iloc[0] > 5:
-                    self._add_insight(section, "Recurso 'Faz-Tudo'", f"O recurso '{recurso_faz_tudo.index[0]}' está envolvido em {recurso_faz_tudo.iloc[0]} funções diferentes.", "Cartão 39")
-                
-                recursos_por_func = self.df_full_context.groupby('resource_type')['resource_name'].nunique()
-                gargalos_skill = recursos_por_func[recursos_por_func <= 2]
-                if not gargalos_skill.empty:
-                    self._add_insight(section, "Função-Gargalo (Skill)", f"As seguintes funções dependem de 2 ou menos pessoas: {', '.join(gargalos_skill.index)}.", "Cartão 39")
-        except Exception as e: print(f"Erro Regra [39]: {e}")
-
-        # Cartão 41: Heatmap Esforço
-        try:
-            if self.df_full_context is not None:
-                recursos_por_tarefa = self.df_full_context.groupby('task_name')['resource_name'].nunique()
-                dependencia_critica = recursos_por_tarefa[recursos_por_tarefa == 1]
-                if not dependencia_critica.empty:
-                    self._add_insight(section, 'Dependência Crítica (Recurso/Tarefa)', f"As seguintes tarefas são feitas por 1 só pessoa: {', '.join(dependencia_critica.index[:3])}...", "Cartão 41")
-                
-                tarefas_por_recurso = self.df_full_context.groupby('resource_name')['task_name'].nunique()
-                total_tarefas = self.df_full_context['task_name'].nunique()
-                recurso_faz_tudo_tarefa = tarefas_por_recurso[tarefas_por_recurso > (total_tarefas * 0.9)]
-                if not recurso_faz_tudo_tarefa.empty:
-                     self._add_insight(section, "Recurso 'Faz-Tudo' (Tarefas)", f"O recurso '{recurso_faz_tudo_tarefa.index[0]}' executa > 90% dos tipos de tarefa.", "Cartão 41")
+            if not self.df_full_context_base.empty and 'task_name' in self.df_full_context_base.columns and 'resource_name' in self.df_full_context_base.columns:
+                 recursos_por_tarefa = self.df_full_context_base.groupby('task_name')['resource_name'].nunique()
+                 dependencia_critica = recursos_por_tarefa[recursos_por_tarefa == 1]
+                 if not dependencia_critica.empty:
+                     self._add_insight(section, 'Dependência Crítica (Recurso/Tarefa)', f"Tarefas feitas por 1 só pessoa: {', '.join(dependencia_critica.index[:3])}...", "Cartão 41")
         except Exception as e: print(f"Erro Regra [41]: {e}")
 
-    # --- 4. DIAGNÓSTICO: GARGALOS E ESPERAS ---
+    # --- Funções _check_gargalos_esperas (adaptada) ---
     def _check_gargalos_esperas(self):
         section = 'diagnostico_gargalos_esperas'
-        duracao_media_proc = self.kpis.get('Duração Média Num', 1)
+        duracao_media_proc = self.kpis.get('Duração Média Num', 1) # Usado como referência
 
-        # Cartão 42 & 52: Heatmap Performance / Top 10 Handoffs (Tempo)
+        # Cartão 42 & 52: Heatmap Performance / Top 10 Handoffs (Tempo) (Usa self.df_handoffs)
         try:
-            if self.df_handoffs_cost is not None:
-                top_1_espera = self.df_handoffs_cost.nlargest(1, 'handoff_time_days').iloc[0]
-                top_2_espera = self.df_handoffs_cost.nlargest(2, 'handoff_time_days').iloc[1]
-                
-                if (top_1_espera['handoff_time_days'] / max(top_2_espera['handoff_time_days'], 0.1)) > 3:
-                    self._add_insight(section, 'Gargalo Dominante (Tempo)', f"A transição '{top_1_espera['transition']}' ({top_1_espera['handoff_time_days']:.1f} dias) é 3x mais lenta que a segunda.", "Cartão 42/52")
-                
-                if (top_1_espera['handoff_time_days'] / duracao_media_proc) > 0.2:
-                    self._add_insight(section, 'Espera Crítica', f"A transição '{top_1_espera['transition']}' ({top_1_espera['handoff_time_days']:.1f} dias) consome {top_1_espera['handoff_time_days']/duracao_media_proc:.0%} da duração média do processo.", "Cartão 42/52")
+            if not self.df_handoffs.empty and len(self.df_handoffs) > 1 and 'handoff_time_days' in self.df_handoffs.columns:
+                top_1 = self.df_handoffs.nlargest(1, 'handoff_time_days').iloc[0]
+                top_2 = self.df_handoffs.nlargest(2, 'handoff_time_days').iloc[1]
+
+                self._add_insight(section, 'Gargalo Principal (Tempo)', f"Transição mais demorada: '{top_1['transition']}' ({top_1['handoff_time_days']:.1f} dias).", "Cartão 42/52", level='facto')
+
+                if (top_1['handoff_time_days'] / max(top_2['handoff_time_days'], 0.1)) > 2:
+                    self._add_insight(section, 'Gargalo Dominante (Tempo)', f"O gargalo Top 1 é {top_1['handoff_time_days']/max(top_2['handoff_time_days'], 0.1):.1f}x mais lento que o Top 2.", "Cartão 42/52")
+
+                if duracao_media_proc > 0 and (top_1['handoff_time_days'] / duracao_media_proc) > 0.2:
+                    self._add_insight(section, 'Espera Crítica', f"O gargalo Top 1 consome {top_1['handoff_time_days']/duracao_media_proc:.0%} da duração média do processo.", "Cartão 42/52")
+
+                esperas_longas = self.df_handoffs[self.df_handoffs['handoff_time_days'] > 5]
+                if not esperas_longas.empty:
+                    self._add_insight(section, 'Esperas Elevadas (> 5 dias)', f"Existem {len(esperas_longas)} transições com espera média superior a 5 dias.", "Cartão 42/52")
+            elif self.df_handoffs.empty:
+                 print("Aviso Regra [42/52]: DataFrame de handoffs vazio.")
+            elif 'handoff_time_days' not in self.df_handoffs.columns:
+                 print("Aviso Regra [42/52]: Coluna 'handoff_time_days' não encontrada.")
+
         except Exception as e: print(f"Erro Regra [42/52]: {e}")
 
-        # Cartão 44: Tempo Serviço vs. Espera
+        # Cartão 44: Tempo Serviço vs. Espera (Usa self.df_activity_wait_stats)
         try:
-            if self.df_activity_wait_stats is not None:
-                df = self.df_activity_wait_stats
-                df['total_time'] = df['service_time_days'] + df['waiting_time_days']
-                df['wait_ratio'] = df['waiting_time_days'] / df['total_time'].replace(0, np.nan)
-                
-                pior_fila = df.nlargest(1, 'wait_ratio').iloc[0]
-                if pior_fila['wait_ratio'] > 0.7:
-                    self._add_insight(section, 'Atividade em Fila Crítica', f"A atividade '{pior_fila['task_type']}' passa {pior_fila['wait_ratio']:.0%} do seu tempo em fila de espera.", "Cartão 44")
-                
-                if (df['wait_ratio'] > 0.5).mean() > 0.5:
-                     self._add_insight(section, 'Espera Generalizada', "Mais de metade das atividades passam > 50% do seu tempo em espera (problema sistémico de fluxo).", "Cartão 44")
+            if not self.df_activity_wait_stats.empty and 'waiting_time_days' in self.df_activity_wait_stats.columns:
+                df = self.df_activity_wait_stats.copy()
+                df['total_time'] = df.get('service_time_days', 0) + df['waiting_time_days']
+                df['wait_ratio'] = df.apply(lambda row: row['waiting_time_days'] / row['total_time'] if row['total_time'] > 0 else 0, axis=1)
+
+                pior_espera_abs = df.nlargest(1, 'waiting_time_days').iloc[0]
+                self._add_insight(section, 'Atividade-Gargalo (Espera Absoluta)', f"Maior espera absoluta: '{pior_espera_abs['task_type']}' ({pior_espera_abs['waiting_time_days']:.1f} dias).", "Cartão 44", level='facto')
+
+                ineficientes = df[df['wait_ratio'] > 0.45]
+                if not ineficientes.empty:
+                    self._add_insight(section, 'Ineficiência de Fluxo (Espera > 45%)', f"Atividades onde espera > 45% do tempo: '{', '.join(ineficientes['task_type'])}'.", "Cartão 44")
         except Exception as e: print(f"Erro Regra [44]: {e}")
-        
-        # Cartão 45: Top 10 Handoffs por Custo
+
+        # Cartão 45: Top 10 Handoffs por Custo (Usa self.df_handoffs)
         try:
-            if self.df_handoffs_cost is not None:
+            if not self.df_handoffs.empty and 'estimated_cost_of_wait' in self.df_handoffs.columns:
                 custo_medio_proc = self.kpis.get('Custo Médio', 1)
-                top_1_custo = self.df_handoffs_cost.nlargest(1, 'estimated_cost_of_wait').iloc[0]
+                top_1_custo = self.df_handoffs.nlargest(1, 'estimated_cost_of_wait').iloc[0]
+
+                self._add_insight(section, 'Gargalo Mais Caro', f"Espera mais cara: '{top_1_custo['transition']}' (€{top_1_custo['estimated_cost_of_wait']:,.0f}).", "Cartão 45", level='facto')
+
                 if custo_medio_proc > 0 and (top_1_custo['estimated_cost_of_wait'] / custo_medio_proc) > 0.2:
-                    self._add_insight(section, 'Gargalo Caro', f"A espera na transição '{top_1_custo['transition']}' custa €{top_1_custo['estimated_cost_of_wait']:,.0f}, o que é > 20% do custo médio de um processo.", "Cartão 45")
+                    self._add_insight(section, 'Gargalo Financeiro Crítico', f"O custo de espera do Top 1 é > 20% do custo médio de um processo.", "Cartão 45")
         except Exception as e: print(f"Erro Regra [45]: {e}")
 
-        # Cartão 46: Top Recursos por Espera Gerada
+        # Cartão 46: Top Recursos por Espera Gerada (Usa self.df_bottleneck_res)
         try:
-            if self.df_bottleneck_res is not None:
-                media_espera_gerada = self.df_bottleneck_res['waiting_time_days'].mean()
-                pior_recurso = self.df_bottleneck_res.iloc[0]
-                if pior_recurso['waiting_time_days'] > max(media_espera_gerada * 5, 1):
-                    self._add_insight(section, "Recurso-Gargalo (Gerador de Espera)", f"O recurso '{pior_recurso['resource_name']}' gera, em média, {pior_recurso['waiting_time_days']:.1f} dias de espera a jusante.", "Cartão 46")
+            if not self.df_bottleneck_res.empty and len(self.df_bottleneck_res) > 1 and 'waiting_time_days' in self.df_bottleneck_res.columns:
+                top_1 = self.df_bottleneck_res.iloc[0]
+                top_2 = self.df_bottleneck_res.iloc[1]
+                self._add_insight(section, 'Recurso Gerador de Espera (Top 1)', f"Recurso que gera mais espera a jusante: '{top_1['resource_name']}' ({top_1['waiting_time_days']:.1f} dias).", "Cartão 46", level='facto')
+                if (top_1['waiting_time_days'] / max(top_2['waiting_time_days'], 0.1)) > 3:
+                    self._add_insight(section, 'Recurso-Gargalo (Gerador)', f"O recurso Top 1 gera {top_1['waiting_time_days']/max(top_2['waiting_time_days'], 0.1):.1f}x mais espera que o Top 2.", "Cartão 46")
         except Exception as e: print(f"Erro Regra [46]: {e}")
 
-        # Cartão 47: Custo Real vs Atraso
+        # Cartão 49: Tempo Médio Execução por Atividade (Usa self.df_activity_service_times)
         try:
-            if self.df_projects is not None:
-                corr_custo_atraso = self.df_projects['total_actual_cost'].corr(self.df_projects['days_diff'])
-                if corr_custo_atraso > 0.6:
-                    self._add_insight(section, 'Atraso Caro', f"Correlação forte ({corr_custo_atraso:.2f}) entre Custo Real e Atraso. Cada dia de atraso custa dinheiro.", "Cartão 47")
-        except Exception as e: print(f"Erro Regra [47]: {e}")
-        
-        # Cartão 48: Nº Recursos vs Custo Total
-        try:
-            if self.df_projects is not None and 'num_resources' in self.df_projects.columns:
-                corr_rec_custo = self.df_projects['num_resources'].corr(self.df_projects['total_actual_cost'])
-                if corr_rec_custo < 0.3:
-                    self._add_insight(section, 'Custo Desalinhado da Equipa', f"Correlação fraca ({corr_rec_custo:.2f}) entre Nº de Recursos e Custo. O custo não é explicado pelo tamanho da equipa.", "Cartão 48")
-        except Exception as e: print(f"Erro Regra [48]: {e}")
-
-        # Cartão 49: Tempo Médio Execução por Atividade
-        try:
-            if self.df_full_context is not None: # Usando df_full_context para ter task_type
-                service_times = self.df_full_context.groupby('task_type')['hours_worked'].mean()
-                top_1_serv = service_times.nlargest(1).iloc[0]
-                top_2_serv = service_times.nlargest(2).iloc[-1]
-                if (top_1_serv / max(top_2_serv, 1)) > 5:
-                    self._add_insight(section, 'Tarefa-Gargalo (Execução)', f"A atividade '{service_times.nlargest(1).index[0]}' ({top_1_serv/8:.1f} dias) é 5x mais longa que a segunda.", "Cartão 49")
+            if not self.df_activity_service_times.empty and len(self.df_activity_service_times) > 1 and 'service_time_days' in self.df_activity_service_times.columns:
+                df_sorted = self.df_activity_service_times.sort_values('service_time_days', ascending=False)
+                top_1 = df_sorted.iloc[0]
+                top_2 = df_sorted.iloc[1]
+                self._add_insight(section, 'Tarefa Mais Longa (Execução)', f"Tarefa com maior tempo de execução: '{top_1['task_name']}' ({top_1['service_time_days']:.1f} dias).", "Cartão 49", level='facto')
+                if (top_1['service_time_days'] / max(top_2['service_time_days'], 0.1)) > 3:
+                    self._add_insight(section, 'Tarefa-Gargalo (Execução)', f"A tarefa Top 1 é {top_1['service_time_days']/max(top_2['service_time_days'], 0.1):.1f}x mais longa que a Top 2.", "Cartão 49")
         except Exception as e: print(f"Erro Regra [49]: {e}")
 
-        # Cartão 51: Evolução Tempo Médio de Espera
+        # Cartão 51: Evolução Tempo Médio de Espera (Usa self.df_monthly_wait_time)
         try:
-            # Esta regra é complexa de implementar sem a fonte de dados (monthly_wait_time)
-            pass
+            if not self.df_monthly_wait_time.empty and len(self.df_monthly_wait_time) > 1:
+                 time_index = pd.to_datetime(self.df_monthly_wait_time.get('completion_month', self.df_monthly_wait_time.index), errors='coerce')
+                 if not pd.isna(time_index).any():
+                     slope = self._get_trend(self.df_monthly_wait_time['waiting_time_days'], time_index)
+                     slope_monthly = slope * 30.4 # dias/mês
+                     if slope_monthly > 0.05:
+                         self._add_insight(section, 'Aumento de Congestionamento (Tendência)', f"O tempo médio de espera está a aumentar (+{slope_monthly:.1f} dias/mês).", "Cartão 51")
+
+                     if len(self.df_monthly_wait_time) > 3:
+                         last_3_months_avg = self.df_monthly_wait_time.tail(3)['waiting_time_days'].mean()
+                         overall_avg = self.df_monthly_wait_time.head(-3)['waiting_time_days'].mean()
+                         if not pd.isna(last_3_months_avg) and not pd.isna(overall_avg) and last_3_months_avg > overall_avg * 1.2:
+                              self._add_insight(section, 'Pico de Congestionamento Recente', f"Espera nos últimos 3 meses ({last_3_months_avg:.1f} dias) é > 20% superior à média histórica.", "Cartão 51")
+                 else:
+                     print("Aviso Regra [51]: Não foi possível converter índice de tempo.")
         except Exception as e: print(f"Erro Regra [51]: {e}")
 
-        # Cartão 53: Rate Horário vs Atraso
+        # Cartão 57: Tempo Médio Espera por Atividade (Fila) (Usa self.df_wait_by_activity)
         try:
-            if self.df_projects is not None and 'avg_hourly_rate' in self.df_projects.columns:
-                corr_rate_atraso = self.df_projects['avg_hourly_rate'].corr(self.df_projects['days_diff'])
-                if corr_rate_atraso > 0.3:
-                    self._add_insight(section, "Séniores Mal Alocados (Prazo)?", f"Correlação positiva ({corr_rate_atraso:.2f}) entre Custo/Hora médio e Atraso. Recursos caros estão nos projetos mais atrasados.", "Cartão 53")
-        except Exception as e: print(f"Erro Regra [53]: {e}")
-        
-        # Cartão 54: Atraso por Faixa Orçamento
-        try:
-            if self.df_projects is not None and 'budget_bin' in self.df_projects.columns:
-                atraso_por_orcamento = self.df_projects.groupby('budget_bin')['days_diff'].mean()
-                if not atraso_por_orcamento.empty:
-                    media_geral_atraso = self.df_projects['days_diff'].mean()
-                    if atraso_por_orcamento.iloc[-1] > max(media_geral_atraso * 2, 1):
-                        self._add_insight(section, 'Projetos Grandes Atrasam Mais', f"A faixa de orçamento mais alta atrasa-se em média {atraso_por_orcamento.iloc[-1]:.1f} dias.", "Cartão 54")
-        except Exception as e: print(f"Erro Regra [54]: {e}")
-        
-        # Cartão 55: Tempo entre Marcos
-        try:
-            if self.df_milestone_data is not None:
-                media_transicoes = self.df_milestone_data.groupby('transition')['duration_hours'].mean()
-                pior_transicao = media_transicoes.nlargest(1)
-                if not pior_transicao.empty and pior_transicao.iloc[0] > 72:
-                    self._add_insight(section, 'Gargalo Entre Fases', f"A transição entre marcos '{pior_transicao.index[0]}' demora em média {pior_transicao.iloc[0]:.1f} horas.", "Cartão 55")
-        except Exception as e: print(f"Erro Regra [55]: {e}")
-
-        # Cartão 56: Matriz Correlação
-        try:
-            if self.df_full_context is not None and 'priority' in self.df_full_context.columns:
-                corr_prio_atraso = self.df_full_context.groupby('project_id').agg(
-                    priority=('priority', 'mean'), 
-                    days_diff=('days_diff', 'first')
-                )['priority'].corr(self.df_full_context.groupby('project_id')['days_diff'].first())
-                
-                if corr_prio_atraso > 0.6:
-                    self._add_insight(section, 'Correlação Inesperada: Prioridade', f"Correlação forte ({corr_prio_atraso:.2f}) entre Prioridade e Atraso. Tarefas prioritárias estão nos projetos mais atrasados.", "Cartão 56")
-        except Exception as e: print(f"Erro Regra [56]: {e}")
-
-        # Cartão 57: Tempo Médio Espera por Atividade
-        try:
-            if self.df_wait_by_activity is not None:
-                top_1_fila = self.df_wait_by_activity.nlargest(1, 'sojourn_time_hours').iloc[0]
-                top_2_fila = self.df_wait_by_activity.nlargest(2, 'sojourn_time_hours').iloc[1]
-                if (top_1_fila['sojourn_time_hours'] / max(top_2_fila['sojourn_time_hours'], 1)) > 3:
-                     self._add_insight(section, 'Atividade-Gargalo (Fila)', f"A atividade '{top_1_fila['task_name']}' ({top_1_fila['sojourn_time_hours']:.1f}h) tem 3x mais tempo de fila que a segunda.", "Cartão 57")
+            if not self.df_wait_by_activity.empty and len(self.df_wait_by_activity) > 1 and 'sojourn_time_hours' in self.df_wait_by_activity.columns:
+                df_sorted = self.df_wait_by_activity.sort_values('sojourn_time_hours', ascending=False)
+                top_1 = df_sorted.iloc[0]
+                top_2 = df_sorted.iloc[1]
+                self._add_insight(section, 'Pior Fila (Top 1)', f"Atividade que passa mais tempo em fila: '{top_1['task_name']}' ({top_1['sojourn_time_hours']:.1f} horas).", "Cartão 57", level='facto')
+                if (top_1['sojourn_time_hours'] / max(top_2['sojourn_time_hours'], 1)) > 1.5:
+                    self._add_insight(section, 'Atividade-Gargalo (Fila)', f"A atividade Top 1 tem {top_1['sojourn_time_hours']/max(top_2['sojourn_time_hours'], 1):.1f}x mais tempo de fila que a Top 2.", "Cartão 57")
         except Exception as e: print(f"Erro Regra [57]: {e}")
-        
-    # --- 5. DIAGNÓSTICO: FLUXO E CONFORMIDADE ---
+
+        # Cartão 58: Matriz de Tempo de Espera (Usa self.df_wait_matrix)
+        try:
+            if not self.df_wait_matrix.empty:
+                flat_matrix = self.df_wait_matrix.stack().sort_values(ascending=False)
+                top_3 = flat_matrix[flat_matrix > 0].head(3) # Espera em dias
+                if not top_3.empty:
+                    # Converte para horas para ser consistente com o gráfico
+                    top_3_str = [f"{idx[0]} -> {idx[1]} ({val*24:.1f}h)" for idx, val in top_3.items()]
+                    self._add_insight(section, 'Top 3 Gargalos (Matriz de Espera)', f"As 3 piores transições (espera média): 1. {top_3_str[0]}, 2. {top_3_str[1]}, 3. {top_3_str[2]}.", "Cartão 58", level='facto')
+        except Exception as e: print(f"Erro Regra [58]: {e}")
+
+    # --- Funções _check_fluxo_conformidade (adaptada) ---
     def _check_fluxo_conformidade(self):
         section = 'diagnostico_fluxo_conformidade'
 
-        # Cartão 61: Métricas Inductive
+        # Cartão 61: Métricas Inductive (Usa self.metrics_im)
         try:
-            if 'Fitness' in self.metrics_im and self.metrics_im['Fitness'] < 0.8:
-                self._add_insight(section, 'Modelo Incorreto (Inductive)', f"O modelo Inductive Miner tem Fitness baixo ({self.metrics_im['Fitness']:.1%}), não representa bem a realidade.", "Cartão 61")
-            if 'Precisão' in self.metrics_im and self.metrics_im['Precisão'] < 0.7:
-                self._add_insight(section, 'Modelo Vago (Inductive)', f"O modelo Inductive Miner tem Precisão baixa ({self.metrics_im['Precisão']:.1%}), permite muitos caminhos que não existem.", "Cartão 61")
+            if 'Fitness' in self.metrics_im and 'Precisão' in self.metrics_im:
+                fit = self.metrics_im['Fitness']
+                prec = self.metrics_im['Precisão']
+                if fit > 0.95 and prec > 0.95:
+                    self._add_insight(section, 'Modelo Perfeito', f"Modelo Inductive excelente (Fitness: {fit:.1%}, Precisão: {prec:.1%}).", "Cartão 61", level='facto')
+                # Apenas reporta problemas se não for perfeito
+                elif fit < 0.8:
+                    self._add_insight(section, 'Modelo Incorreto (Inductive)', f"Fitness baixo ({fit:.1%}), modelo não representa bem a realidade.", "Cartão 61")
+                elif prec < 0.7:
+                    self._add_insight(section, 'Modelo Vago (Inductive)', f"Precisão baixa ({prec:.1%}), modelo permite muitos caminhos que não existem.", "Cartão 61")
         except Exception as e: print(f"Erro Regra [61]: {e}")
-        
-        # Cartão 62: Métricas Heuristics
-        try:
-            if 'Fitness' in self.metrics_hm and self.metrics_hm['Fitness'] < 0.8:
-                self._add_insight(section, 'Modelo Incorreto (Heuristics)', f"O modelo Heuristics Miner tem Fitness baixo ({self.metrics_hm['Fitness']:.1%}).", "Cartão 62")
-        except Exception as e: print(f"Erro Regra [62]: {e}")
 
-        # Cartão 64: Duração Média Variantes
+        # Cartão 65: Frequência Variantes (Usa self.df_variants)
         try:
-            # Esta regra é complexa de implementar sem a fonte de dados (variant_durations)
-            pass
-        except Exception as e: print(f"Erro Regra [64]: {e}")
-
-        # Cartão 65: Frequência Variantes
-        try:
-            if self.df_variants is not None:
+            if not self.df_variants.empty:
                 top_1_perc = self.df_variants.iloc[0]['percentage']
                 if top_1_perc < 20:
-                    self._add_insight(section, 'Processo Caótico (Baixa Padronização)', f"O 'caminho feliz' (variante mais comum) representa apenas {top_1_perc:.1f}% dos casos.", "Cartão 65")
-                
+                    self._add_insight(section, 'Processo Caótico (Baixa Padronização)', f"Variante Top 1 representa apenas {top_1_perc:.1f}% dos casos.", "Cartão 65")
+                elif top_1_perc > 60:
+                    self._add_insight(section, 'Alta Padronização', f"Variante Top 1 representa {top_1_perc:.1f}% dos casos.", "Cartão 65", level='facto')
+
                 top_10_sum = self.df_variants.head(10)['percentage'].sum()
                 if top_10_sum < 50:
-                    self._add_insight(section, 'Muitas Variantes Relevantes', f"As 10 variantes mais comuns representam apenas {top_10_sum:.1f}% de todos os casos. Muitas exceções.", "Cartão 65")
+                    self._add_insight(section, 'Muitas Exceções', f"Top 10 variantes representam apenas {top_10_sum:.1f}% do total.", "Cartão 65")
         except Exception as e: print(f"Erro Regra [65]: {e}")
-        
-        # Cartão 67: Distribuição Tarefas por Tipo
-        try:
-            if self.df_full_context is not None:
-                task_type_counts = self.df_full_context['task_type'].value_counts()
-                rework_tasks = [t for t in task_type_counts.index if 'corr' in t.lower() or 'rev' in t.lower() or 'ajus' in t.lower()]
-                if rework_tasks:
-                    rework_freq = task_type_counts[rework_tasks].sum()
-                    if rework_freq > task_type_counts.nlargest(5).iloc[-1]:
-                         self._add_insight(section, 'Tarefa de Rework Frequente', f"Tarefas de Rework (ex: {', '.join(rework_tasks)}) estão no Top 5 de tarefas mais frequentes.", "Cartão 67")
-        except Exception as e: print(f"Erro Regra [67]: {e}")
 
-        # Cartão 68: Distribuição Duração Tarefas
+        # Cartão 70: Rework (Usa self.df_rework)
         try:
-            if self.data_frames.get('tasks') is not None:
-                df_tasks = self.data_frames['tasks']
-                cv_task_dur = df_tasks['task_duration_days'].std() / df_tasks['task_duration_days'].mean()
-                if cv_task_dur > 0.8:
-                    self._add_insight(section, 'Imprevisibilidade (Duração Tarefa)', f"A duração das tarefas é muito imprevisível (Coef. Variação: {cv_task_dur:.1%}).", "Cartão 68")
-        except Exception as e: print(f"Erro Regra [68]: {e}")
-        
-        # Cartão 70: Rework
-        try:
-            if self.df_rework is not None:
-                total_casos = self.kpis.get('Total de Processos', 1)
-                if self.df_rework.empty or self.df_rework.iloc[0]['frequency'] / total_casos < 0.005:
-                     self._add_insight(section, 'Sem Rework Significativo', "A análise não detetou loops de retrabalho (rework) significativos (< 0.5% dos casos).", "Cartão 70", level='facto')
+            total_casos = self.kpis.get('Total de Processos', 1)
+            if total_casos > 0: # Evita divisão por zero
+                if self.df_rework is None or self.df_rework.empty or (self.df_rework.iloc[0]['frequency'] / total_casos < 0.01): # Limiar revisto para 1%
+                     self._add_insight(section, 'Sem Rework Significativo', "Nenhum loop de rework afeta > 1% dos processos.", "Cartão 70", level='facto')
                 else:
                     top_rework = self.df_rework.iloc[0]
-                    perc_casos = top_rework['frequency'] / total_casos
-                    if perc_casos > 0.05:
-                        self._add_insight(section, 'Rework Crónico', f"O loop de rework '{top_rework['rework_loop']}' afeta {perc_casos:.1%} dos processos.", "Cartão 70")
-                    
+                    perc_casos_top1 = top_rework['frequency'] / total_casos
+                    if perc_casos_top1 > 0.05:
+                        self._add_insight(section, 'Rework Crónico', f"O loop '{top_rework['rework_loop']}' afeta {perc_casos_top1:.1%} dos processos.", "Cartão 70")
+
                     total_rework_freq = self.df_rework['frequency'].sum()
                     if (total_rework_freq / total_casos) > 0.10:
-                        self._add_insight(section, 'Rework Dominante', f"No total, mais de {(total_rework_freq / total_casos):.0%} dos processos sofrem algum tipo de rework.", "Cartão 70")
+                        self._add_insight(section, 'Rework Dominante', f"No total, > {(total_rework_freq / total_casos):.0%} dos processos sofrem algum tipo de rework.", "Cartão 70")
         except Exception as e: print(f"Erro Regra [70]: {e}")
 
-        # Cartão 71: Conformidade ao Longo do Tempo
+        # Cartão 71: Conformidade ao Longo do Tempo (Usa self.df_monthly_fitness)
         try:
-            # Esta regra é complexa de implementar sem a fonte de dados (monthly_fitness)
-            pass
+            if not self.df_monthly_fitness.empty and len(self.df_monthly_fitness) > 1:
+                # Assume índice ou coluna 'end_month' como string 'YYYY-MM'
+                time_index = pd.to_datetime(self.df_monthly_fitness.get('end_month', self.df_monthly_fitness.index) + '-01', errors='coerce')
+                if not pd.isna(time_index).any():
+                     slope = self._get_trend(self.df_monthly_fitness['fitness'], time_index)
+                     slope_monthly = slope * 30.4 # Fitness / mês
+                     if slope_monthly < -0.01: # Queda > 1% ao mês
+                         self._add_insight(section, 'Degradação de Conformidade (Tendência)', f"O score de conformidade (fitness) está a diminuir.", "Cartão 71")
+                     elif slope_monthly > 0.01:
+                         self._add_insight(section, 'Melhoria de Conformidade (Tendência)', f"O score de conformidade (fitness) está a aumentar.", "Cartão 71", level='facto')
+                else:
+                    print("Aviso Regra [71]: Não foi possível converter índice de tempo.")
         except Exception as e: print(f"Erro Regra [71]: {e}")
-        
-        # Cartão 72: Prioridade
+
+        # Cartão 72: Prioridade (Usa self.df_tasks_base)
         try:
-            if self.data_frames.get('tasks') is not None:
-                priorities = self.data_frames['tasks']['priority']
-                if (priorities.isin([4, 5])).mean() > 0.5:
-                    self._add_insight(section, 'Inflação de Prioridade', f"Mais de 50% das tarefas são consideradas de 'Alta Prioridade' (4 ou 5).", "Cartão 72")
-                if priorities.nunique() < 3:
-                     self._add_insight(section, 'Prioridades Ignoradas', f"Mais de 90% das tarefas têm a mesma prioridade.", "Cartão 72")
+            if not self.df_tasks_base.empty and 'priority' in self.df_tasks_base.columns:
+                 priorities = self.df_tasks_base['priority']
+                 if not priorities.empty:
+                     if (priorities.isin([4, 5])).mean() > 0.5:
+                         self._add_insight(section, 'Inflação de Prioridade', f"> 50% das tarefas são 'Alta Prioridade' (4 ou 5).", "Cartão 72")
+                     if priorities.nunique() < 3:
+                          self._add_insight(section, 'Prioridades Ignoradas', f"> 90% das tarefas têm a mesma prioridade.", "Cartão 72")
         except Exception as e: print(f"Erro Regra [72]: {e}")
-        
-        # Cartão 76: Complexidade vs Atraso
+
+        # Cartão 76: Complexidade vs Atraso (Usa self.df_projects_base)
         try:
-            if self.df_projects is not None and 'complexity_score' in self.df_projects.columns:
-                corr_complex_atraso = self.df_projects['complexity_score'].corr(self.df_projects['days_diff'])
-                if corr_complex_atraso > 0.6:
-                    self._add_insight(section, 'Complexidade Causa Atraso', f"Correlação forte ({corr_complex_atraso:.2f}) entre o índice de complexidade e os atrasos.", "Cartão 76")
+            if not self.df_projects_base.empty and 'complexity_score' in self.df_projects_base.columns and 'days_diff' in self.df_projects_base.columns:
+                df_corr = self.df_projects_base[['complexity_score', 'days_diff']].apply(pd.to_numeric, errors='coerce').dropna()
+                if len(df_corr) > 1:
+                    corr_complex_atraso = df_corr['complexity_score'].corr(df_corr['days_diff'])
+                    if not pd.isna(corr_complex_atraso):
+                        if corr_complex_atraso > 0.6:
+                            self._add_insight(section, 'Complexidade Causa Atraso', f"Correlação forte ({corr_complex_atraso:.2f}) entre complexidade e atrasos.", "Cartão 76")
+                        elif abs(corr_complex_atraso) < 0.2:
+                            self._add_insight(section, 'Complexidade Gerida', f"Complexidade não impacta significativamente os atrasos (Corr: {corr_complex_atraso:.2f}).", "Cartão 76", level='facto')
         except Exception as e: print(f"Erro Regra [76]: {e}")
-        
-        # Cartão 77: Dependências vs Desvio Custo
+
+        # Cartão 77: Dependências vs Desvio Custo (Usa self.df_projects_base)
         try:
-            if self.df_projects is not None and 'dependency_count' in self.df_projects.columns:
-                corr_dep_cost = self.df_projects['dependency_count'].corr(self.df_projects['cost_diff'])
-                if corr_dep_cost > 0.6:
-                    self._add_insight(section, 'Dependências Custam Dinheiro', f"Correlação forte ({corr_dep_cost:.2f}) entre o número de dependências e o desvio de custo.", "Cartão 77")
+            if not self.df_projects_base.empty and 'dependency_count' in self.df_projects_base.columns and 'cost_diff' in self.df_projects_base.columns:
+                df_corr = self.df_projects_base[['dependency_count', 'cost_diff']].apply(pd.to_numeric, errors='coerce').dropna()
+                if len(df_corr) > 1:
+                    corr_dep_cost = df_corr['dependency_count'].corr(df_corr['cost_diff'])
+                    if not pd.isna(corr_dep_cost) and corr_dep_cost > 0.6:
+                        self._add_insight(section, 'Dependências Custam Dinheiro', f"Correlação forte ({corr_dep_cost:.2f}) entre nº de dependências e desvio de custo.", "Cartão 77")
         except Exception as e: print(f"Erro Regra [77]: {e}")
 
 
-# --- FUNÇÃO DE RENDERIZAÇÃO DA PÁGINA DE DIAGNÓSTICO (V5) ---
+# --- FUNÇÃO DE RENDERIZAÇÃO DA PÁGINA DE DIAGNÓSTICO (V5 - SEM ALTERAÇÕES) ---
 def render_diagnostics_page():
     """
     Renderiza a página de Diagnóstico Automático V5, com KPIs e secções funcionais.
     """
     st.subheader("💡 Diagnóstico Automático e Insights")
     st.markdown("Esta secção varre automaticamente todos os dados da análise e apresenta os KPIs mais importantes, factos notáveis e problemas materiais que requerem investigação.")
-    
-    # Obter os dados do session_state
+
+    # Obter os dados do session_state (necessários para instanciar o engine)
     tables_pre = st.session_state.tables_pre_mining
     metrics = st.session_state.metrics
     data_frames = st.session_state.data_frames_processed
-    
+    tables_eda = st.session_state.tables_eda
+
     if not tables_pre or not metrics or not data_frames:
         st.error("Os dados da análise não foram encontrados. Por favor, execute a análise na página 'Configurações'.")
         return
 
     # Executar o novo motor de diagnóstico V5
-    engine = DiagnosticEngineV5(tables_pre, metrics, data_frames)
+    # Passa todos os dicionários, o engine selecionará o que precisa
+    engine = DiagnosticEngineV5(tables_pre, metrics, data_frames, tables_eda)
     report = engine.run()
-    
+
     # --- Bloco 1: Saúde Geral (KPIs) ---
     st.markdown("---")
     st.markdown("<h4>1. Saúde Geral (KPIs de Baseline)</h4>", unsafe_allow_html=True)
     kpi_data = report.get('saude_geral', [])
-    
+
     if kpi_data and len(kpi_data) == 6:
         cols1 = st.columns(3)
         cols1[0].metric(label=kpi_data[0]['label'], value=kpi_data[0]['value'])
@@ -2397,28 +2641,30 @@ def render_diagnostics_page():
     # --- Bloco 2: Diagnóstico por Áreas Funcionais ---
     st.markdown("---")
     st.markdown("<h4>2. Diagnóstico de Problemas e Destaques</h4>", unsafe_allow_html=True)
-    
+
     sections = [
         ('diagnostico_custos_atrasos', 'Diagnóstico: Custos e Atrasos', 'bi-cash-coin'),
-        ('diagnostico_recursos_equipas', 'Diagnóstico: Recursos e Equipas', 'bi-people-fill'),
         ('diagnostico_gargalos_esperas', 'Diagnóstico: Gargalos e Esperas', 'bi-traffic-light-fill'),
+        ('diagnostico_recursos_equipas', 'Diagnóstico: Recursos e Equipas', 'bi-people-fill'),
         ('diagnostico_fluxo_conformidade', 'Diagnóstico: Fluxo e Conformidade', 'bi-signpost-split-fill')
     ]
 
     for key, title, icon in sections:
         st.markdown(f"<h5 style='margin-top: 20px;'><i class='bi {icon}'></i> {title}</h5>", unsafe_allow_html=True)
         items = report.get(key, [])
-        
+
         if not items:
             st.success("Nenhum problema material ou facto notável encontrado nesta área.")
         else:
-            for item in items:
-                # Definir cor e ícone com base no nível (problema ou facto)
+            # Ordenar para mostrar problemas primeiro, depois factos
+            items_sorted = sorted(items, key=lambda x: 0 if x['level'] == 'problema' else 1)
+            
+            for item in items_sorted:
                 if item['level'] == 'facto':
-                    icon_html = "<i class='bi bi-check-circle-fill' style='color: #198754;'></i>"
+                    icon_html = "<i class='bi bi-check-circle-fill' style='color: #198754;'></i>" # Verde
                 else: # 'problema'
-                    icon_html = "<i class='bi bi-exclamation-triangle-fill' style='color: #ffc107;'></i>"
-                
+                    icon_html = "<i class='bi bi-exclamation-triangle-fill' style='color: #ffc107;'></i>" # Amarelo/Laranja
+
                 with st.container(border=True):
                     st.markdown(f"<h6>{icon_html} {item['titulo']}</h6>", unsafe_allow_html=True)
                     st.markdown(f"> {item['detalhe']}")
