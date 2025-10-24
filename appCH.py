@@ -338,7 +338,7 @@ def run_pre_mining_analysis(dfs):
     def compute_avg_throughput(group):
         group = group.sort_values("time:timestamp"); deltas = group["time:timestamp"].diff().dropna()
         return deltas.mean().total_seconds() if not deltas.empty else 0
-    throughput_per_case = log_df_final.groupby("case:concept:name").apply(compute_avg_throughput).reset_index(name="avg_throughput_seconds")
+    throughput_per_case = log_df_final.groupby("case:concept:name").apply(compute_avg_throughput, include_groups=False).reset_index(name="avg_throughput_seconds")
     throughput_per_case["avg_throughput_hours"] = throughput_per_case["avg_throughput_seconds"] / 3600
     perf_df = pd.merge(lead_times, throughput_per_case, on="case:concept:name")
     tables['perf_stats'] = perf_df[["lead_time_days", "avg_throughput_hours"]].describe()
@@ -378,7 +378,7 @@ def run_pre_mining_analysis(dfs):
 
     activity_counts = df_tasks["task_name"].value_counts()
     
-    fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x=activity_counts.head(10).values, y=activity_counts.head(10).index, ax=ax, palette='YlGnBu'); ax.set_title("Atividades Mais Frequentes")
+    fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x=activity_counts.head(10).values, y=activity_counts.head(10).index, ax=ax, palette='YlGnBu', hue=activity_counts.head(10).index, legend=False); ax.set_title("Atividades Mais Frequentes")
     plots['top_activities_plot'] = convert_fig_to_bytes(fig)
     
     resource_workload = df_full_context.groupby('resource_name')['hours_worked'].sum().sort_values(ascending=False).reset_index()
@@ -428,7 +428,7 @@ def run_pre_mining_analysis(dfs):
     tables['variants_table'] = variant_analysis.head(10)
     
     # --- CORREÇÃO PARA O GRÁFICO DE FREQUÊNCIA ---
-    data_plot_freq = variant_analysis.head(10)
+    data_plot_freq = variant_analysis.head(10).copy()
     data_plot_freq['variant_str_wrapped'] = data_plot_freq['variant_str'].apply(
         lambda x: textwrap.fill(x, width=90)
     )
@@ -562,13 +562,7 @@ def run_pre_mining_analysis(dfs):
     ax.set_title("Duração Média por Tipo de Tarefa"); # Altera o título
     plt.xticks(rotation=45,ha='right')
     plots['cycle_time_breakdown'] = convert_fig_to_bytes(fig)
-    phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
-    phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
-    avg_cycle_time_by_phase = phase_times.groupby('phase')['cycle_time_days'].mean()
-    tables['avg_cycle_time_by_phase_data'] = avg_cycle_time_by_phase.reset_index()
-    fig, ax = plt.subplots(figsize=(8, 4)); avg_cycle_time_by_phase.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); ax.set_title("Duração Média por Fase do Processo"); plt.xticks(rotation=45,ha='right')
-    plots['cycle_time_breakdown'] = convert_fig_to_bytes(fig)
-    
+        
     return plots, tables, event_log_pm4py, df_projects, df_tasks, df_resources, df_full_context
 
 #@st.cache_data
