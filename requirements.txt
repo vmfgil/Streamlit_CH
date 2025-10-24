@@ -9,3 +9,5 @@ altair
 streamlit-option-menu
 missingno
 google-generativeai
+fpdf2
+Pillow
