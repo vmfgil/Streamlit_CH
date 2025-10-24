@@ -15,6 +15,8 @@ from datetime import timedelta
 import textwrap
 import html # <--- ADICIONADO PARA CORRIGIR O ERRO
 from scipy import stats
+import google.generativeai as genai
+import PIL.Image # Para lidar com imagens para a API
 
 # Imports de Process Mining (PM4PY)
 import pm4py
