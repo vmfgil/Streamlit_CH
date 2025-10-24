@@ -3304,6 +3304,53 @@ def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     st.title("🏠 Process Mining")
+    # --- INÍCIO DO BLOCO DE DEBUGGING LIST MODELS ---
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Debug Modelos Gemini:")
+    if "GOOGLE_API_KEY" in st.secrets:
+        try:
+            st.sidebar.info("Tentando listar modelos disponíveis...")
+            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    
+            available_models = []
+            for m in genai.list_models():
+                # Verifica se o modelo suporta o método 'generateContent'
+                if 'generateContent' in m.supported_generation_methods:
+                    available_models.append(m.name)
+    
+            if available_models:
+                st.sidebar.success("Modelos 'generateContent' disponíveis:")
+                # Extrai apenas os nomes dos modelos (remove 'models/')
+                model_names_only = [name.replace("models/", "") for name in available_models]
+                st.sidebar.code("\n".join(model_names_only))
+                # Verifica se os modelos que tentámos usar estão na lista
+                if "gemini-1.5-flash" not in model_names_only:
+                    st.sidebar.warning("`gemini-1.5-flash` NÃO está na lista!")
+                if "gemini-pro-vision" not in model_names_only:
+                     st.sidebar.warning("`gemini-pro-vision` NÃO está na lista!")
+                # Sugere um modelo multimodal, se disponível
+                vision_alternatives = [m for m in model_names_only if 'vision' in m]
+                if vision_alternatives:
+                    st.sidebar.info(f"Sugestão: Tente usar '{vision_alternatives[0]}' no código.")
+                elif "gemini-pro" in model_names_only: # Fallback para gemini-pro (não suporta imagem diretamente no generateContent)
+                     st.sidebar.warning("`gemini-pro` está disponível, mas pode não suportar imagens diretamente desta forma.")
+                else:
+                    st.sidebar.error("Nenhum modelo multimodal comum encontrado!")
+    
+            else:
+                st.sidebar.error("Nenhum modelo suportando 'generateContent' foi encontrado para esta API Key.")
+                st.sidebar.write("Modelos encontrados (sem suporte generateContent):")
+                all_model_names = [m.name.replace("models/", "") for m in genai.list_models()]
+                st.sidebar.code("\n".join(all_model_names))
+    
+    
+        except Exception as e:
+            st.sidebar.error(f"Erro ao listar modelos: {e}")
+            st.sidebar.warning("Verifique a API Key, projeto Google Cloud e se a API 'Generative Language' está ativa.")
+    else:
+        st.sidebar.error("GOOGLE_API_KEY não encontrada nos Secrets para listar modelos.")
+    st.sidebar.markdown("---")
+    # --- FIM DO BLOCO DE DEBUGGING LIST MODELS ---
 
     # --- INÍCIO DO BLOCO DE DEBUGGING DE SECRETS ---
     st.sidebar.markdown("---") # Adiciona um separador na sidebar
