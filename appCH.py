@@ -267,7 +267,8 @@ if 'pdf_bytes_download' not in st.session_state: st.session_state.pdf_bytes_down
 if 'pdf_bytes_for_download_v14' not in st.session_state: st.session_state.pdf_bytes_for_download_v14 = None
 if 'pdf_ready_for_download' not in st.session_state: st.session_state.pdf_ready_for_download = False
 if 'show_external_ai_modal' not in st.session_state: st.session_state.show_external_ai_modal = False
-    
+if 'show_ai_prep_area' not in st.session_state: st.session_state.show_ai_prep_area = False
+
 # --- FUNÇÕES DE ANÁLISE (PROCESS MINING E EDA) ---
 #@st.cache_data
 def run_pre_mining_analysis(dfs):
@@ -3305,76 +3306,93 @@ def dashboard_page():
                 )
             # --- FIM DO BLOCO PDF REVISADO V14 ---
         
+        # --- NOVO BLOCO AI (V15) - Botão Toggle + Área de Contexto ---
         with col_ai:
-            # Botão para abrir a modal de preparação para Gemini Externo
-            if st.button("🤖 AI", help="Preparar dados para análise externa com Gemini", use_container_width=True):
-                st.session_state.show_external_ai_modal = True # Nova flag de estado
-                st.rerun()
+            # Botão para MOSTRAR/ESCONDER a área de preparação
+            button_label = "🤖 Esconder AI Prep" if st.session_state.get("show_ai_prep_area", False) else "🤖 AI Prep"
+            if st.button(button_label, help="Preparar dados para análise externa com Gemini", use_container_width=True):
+                # Inverte o estado de visibilidade da área de preparação
+                st.session_state.show_ai_prep_area = not st.session_state.get("show_ai_prep_area", False)
+                st.rerun() # Rerun para mostrar/esconder a área abaixo
 
-        # --- Modal para Preparar Contexto para Gemini Externo ---
-        if st.session_state.get("show_external_ai_modal", False):
-            @st.dialog("Preparar Análise com Gemini (Externo)")
-            def external_ai_modal():
-                st.info("Siga estes passos:\n1. Copie o prompt abaixo.\n2. Descarregue o PDF com os resultados.\n3. Clique em 'Abrir Gemini' para ir para a interface web.\n4. Cole o prompt no Gemini e faça upload do PDF descarregado.")
+    # --- Área Condicional para Preparar Contexto (Substitui a Modal) ---
+    if st.session_state.get("show_ai_prep_area", False):
+        st.markdown("---") # Separador visual
+        with st.container(border=True): # Container para agrupar visualmente
+            st.subheader("Preparar Análise com Gemini (Externo)")
+            st.info("Siga estes passos:\n1. Copie o prompt abaixo.\n2. Descarregue o PDF com os resultados.\n3. Clique no link 'Abrir Gemini' (abrirá numa nova aba).\n4. No Gemini, cole o prompt e faça upload do PDF descarregado.")
 
-                pdf_generated = False
-                pdf_bytes_modal = None
-                prompt_text = ""
+            pdf_generated = False
+            pdf_bytes_context = None
+            prompt_text = ""
+            error_generating = None
 
-                # Tenta gerar o PDF e o Prompt dentro da modal
+            # Tenta gerar o PDF e o Prompt
+            # Usar cache aqui pode acelerar se os dados não mudaram desde a última vez que abriu
+            @st.cache_data(show_spinner="Preparando dados para IA...")
+            def prepare_ai_data():
+                _pdf_bytes = None
+                _prompt = "# Erro ao gerar prompt #"
+                _pdf_ok = False
+                _error = None
                 try:
                     # Gerar PDF
-                    with st.spinner("Gerando PDF dos resultados..."):
-                         plots_pre = st.session_state.plots_pre_mining
-                         tables_pre = st.session_state.tables_pre_mining
-                         plots_post = st.session_state.plots_post_mining
-                         plots_eda = st.session_state.plots_eda
-                         tables_eda = st.session_state.tables_eda
-                         pdf_bytes_modal = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
-                         if pdf_bytes_modal and len(pdf_bytes_modal) > 100:
-                             pdf_generated = True
-                         else:
-                             st.error("Falha ao gerar o PDF para a análise.")
+                    _plots_pre = st.session_state.plots_pre_mining
+                    _tables_pre = st.session_state.tables_pre_mining
+                    _plots_post = st.session_state.plots_post_mining
+                    _plots_eda = st.session_state.plots_eda
+                    _tables_eda = st.session_state.tables_eda
+                    _pdf_bytes = generate_pdf_report(_plots_pre, _tables_pre, _plots_post, _plots_eda, _tables_eda)
+                    if _pdf_bytes and len(_pdf_bytes) > 100:
+                        _pdf_ok = True
+                    else: _error = "Falha ao gerar conteúdo do PDF."
+
 
                     # Gerar Prompt (Ler Código)
-                    app_code = "# Não foi possível ler o código da aplicação #"
+                    _app_code = "# Erro ao ler código #"
                     try:
-                         script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
-                         app_code = script_path.read_text(encoding='utf-8')
-                    except Exception as e1:
-                         print(f"Erro ao ler código com Path: {e1}. Tentando com inspect.getsource...")
-                         try: app_code = inspect.getsource(sys.modules[__name__])
-                         except Exception as e2: print(f"Erro ao ler código com inspect.getsource: {e2}")
+                         _script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
+                         _app_code = _script_path.read_text(encoding='utf-8')
+                    except Exception as _e1:
+                         print(f"Erro AI Prep - Ler código Path: {_e1}")
+                         try: _app_code = inspect.getsource(sys.modules[__name__])
+                         except Exception as _e2: print(f"Erro AI Prep - Ler código Inspect: {_e2}")
 
-                    prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como um PDF com os resultados das análises obtidas (gráficos/tabelas), e preciso que me analises em detalhe cada cartão (gráfico ou tabela) presente no PDF."
-                    prompt_text = f"{prompt_instruction}\n\n**Código da Aplicação Streamlit:**\n```python\n{app_code}\n```"
+                    _prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como um PDF com os resultados das análises obtidas (gráficos/tabelas), e preciso que me analises em detalhe cada cartão (gráfico ou tabela) presente no PDF."
+                    _prompt = f"{_prompt_instruction}\n\n**Código da Aplicação Streamlit:**\n```python\n{_app_code}\n```"
 
                 except Exception as e:
-                    st.error(f"Erro ao preparar dados para a IA: {e}")
+                    print(f"Erro geral em prepare_ai_data: {e}")
+                    _error = f"Erro ao preparar dados: {e}"
 
-                # Mostrar Prompt e Botões
-                st.text_area("1. Prompt para Gemini:", prompt_text, height=250)
+                return _prompt, _pdf_bytes, _pdf_ok, _error
 
-                if pdf_generated:
-                    st.download_button(
-                        label="2. Descarregar PDF com Resultados",
-                        data=pdf_bytes_modal,
-                        file_name="relatorio_process_mining_analise.pdf", # Nome diferente para clareza
-                        mime="application/pdf",
-                        key="pdf_download_modal_ai"
-                    )
-                else:
-                    st.warning("Geração do PDF falhou. O Gemini não poderá analisar os gráficos.")
+            # Chama a função cacheada para obter os dados
+            prompt_text, pdf_bytes_context, pdf_generated, error_generating = prepare_ai_data()
 
-                st.link_button("3. Abrir Gemini (Nova Aba)", "https://gemini.google.com/", target="_blank", use_container_width=True)
+            if error_generating:
+                st.error(error_generating)
 
-                if st.button("Fechar", key="close_external_ai"):
-                    st.session_state.show_external_ai_modal = False
-                    st.rerun() # Fecha a modal
+            # Mostrar Prompt e Botões
+            st.text_area("1. Prompt para Gemini:", prompt_text, height=250, key="ai_prompt_text_area")
 
-            # Chama a função para mostrar a modal
-            external_ai_modal()
-        ### END PDF/AI BUTTONS & MODAL ###
+            if pdf_generated and pdf_bytes_context:
+                st.download_button(
+                    label="2. Descarregar PDF com Resultados",
+                    data=pdf_bytes_context,
+                    file_name="relatorio_process_mining_analise.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_context_ai"
+                )
+            else:
+                st.warning("Geração do PDF falhou ou PDF está vazio. O Gemini não poderá analisar os gráficos.")
+
+            # --- Link Corrigido usando st.markdown ---
+            st.markdown('[3. Abrir Gemini (Nova Aba)](https://gemini.google.com/)', unsafe_allow_html=True)
+            # ----------------------------------------
+
+        st.markdown("---") # Separador visual no fim
+        ### END AI CONTEXT AREA ###
     
     if st.session_state.get('show_welcome_message', False):
         st.success(f"Bem-vindo, {st.session_state.user_name}!")
