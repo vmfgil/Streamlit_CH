@@ -251,8 +251,8 @@ if 'dfs' not in st.session_state:
     st.session_state.dfs = {'projects': None, 'tasks': None, 'resources': None, 'resource_allocations': None, 'dependencies': None}
 if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
 if 'rl_analysis_run' not in st.session_state: st.session_state.rl_analysis_run = False
-if 'rl_params_expanded' not in st.session_state: st.session_state.rl_params_expanded = True
-if 'project_id_simulated' not in st.session_state: st.session_state.project_id_simulated = "25"
+if 'rl_params_expanded' not in st.session_state: st.session_state.rl_params_expanded = True# Alteração Sugerida
+if 'project_id_simulated' not in st.session_state: st.session_state.project_id_simulated = None
 if 'plots_pre_mining' not in st.session_state: st.session_state.plots_pre_mining = {}
 if 'plots_post_mining' not in st.session_state: st.session_state.plots_post_mining = {}
 if 'tables_pre_mining' not in st.session_state: st.session_state.tables_pre_mining = {}
@@ -551,19 +551,17 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 5)); sns.boxplot(data=df_perf_full, x='team_size_bin_dynamic', y='avg_throughput_hours', ax=ax, hue='team_size_bin_dynamic', legend=False, palette='plasma'); ax.set_title("Benchmark de Throughput por Tamanho da Equipa")
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
-    def get_phase(task_type):
-        if task_type in ['Onboarding', 'Validação KYC e Conformidade', 'Análise Documental']:
-            return '1. Onboarding, KYC e Documentação'
-        elif task_type in ['Análise de Risco e Proposta']:
-            return '2. Análise de Risco'
-        elif task_type in ['Avaliação da Imóvel']:
-            return '3. Avaliação de imóvel'
-        elif task_type in ['Decisão de Crédito e Condições']:
-            return '4. Decisão de crédito'
-        elif task_type in ['Fecho', 'Preparação Legal']:
-            return '5. Contratação e Desembolso'
-        return task_type
-    df_tasks['phase'] = df_tasks['task_type'].apply(get_phase)
+    # Agrupa por 'task_type' em vez de 'phase'
+    phase_times = df_tasks.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
+    phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
+    avg_cycle_time_by_task_type = phase_times.groupby('task_type')['cycle_time_days'].mean()
+    # Guarda a tabela com o novo nome
+    tables['avg_cycle_time_by_task_type_data'] = avg_cycle_time_by_task_type.reset_index() 
+    fig, ax = plt.subplots(figsize=(8, 4)); 
+    avg_cycle_time_by_task_type.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); 
+    ax.set_title("Duração Média por Tipo de Tarefa"); # Altera o título
+    plt.xticks(rotation=45,ha='right')
+    plots['cycle_time_breakdown'] = convert_fig_to_bytes(fig)
     phase_times = df_tasks.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
     avg_cycle_time_by_phase = phase_times.groupby('phase')['cycle_time_days'].mean()
@@ -665,13 +663,13 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     G = nx.DiGraph();
     for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
 
-        # Filtrar o grafo para mostrar apenas os nós mais relevantes
-    recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
+    # Filtrar o grafo para mostrar apenas os nós mais relevantes
+    # A linha 'recursos_importantes' foi removida
     node_degrees = dict(G.degree())
     recursos_ordenados = sorted(node_degrees, key=node_degrees.get, reverse=True)
     top_recursos = set(recursos_ordenados[:30])
-    nos_para_manter = top_recursos.union(recursos_importantes)
-    G_filtrado = G.subgraph(nos_para_manter).copy()
+    # nos_para_manter = top_recursos.union(recursos_importantes) # Linha removida
+    G_filtrado = G.subgraph(top_recursos).copy() # Lógica simplificada
     
     # Desenhar o grafo filtrado
     if G_filtrado.nodes():
@@ -688,7 +686,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
                                      ax=ax_net, font_color='#dc3545', font_size=8,
                                      bbox={'facecolor': 'white', 'alpha': 0.6, 'edgecolor': 'none'})
     
-        ax_net.set_title('Rede Social de Recursos (Top 30 por Conexões + Principais)')
+        ax_net.set_title('Rede Social de Recursos (Top 30 por Conexões)')
         plots['resource_network_adv'] = convert_fig_to_bytes(fig_net)
     
 
@@ -703,11 +701,10 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         resource_role_counts = _df_full_context.groupby(['resource_name', 'skill_level']).size().reset_index(name='count')
 
         # Filtrar o dataframe antes de construir o grafo
-        recursos_importantes = {"ExCo", "Comité de Crédito", "Diretor de Risco"}
         recursos_ordenados_df = resource_role_counts.sort_values('count', ascending=False)
         top_30_recursos = set(recursos_ordenados_df['resource_name'].head(30))
-        recursos_para_manter = top_30_recursos.union(recursos_importantes)
-        df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(recursos_para_manter)]
+        # recursos_para_manter = top_30_recursos.union(recursos_importantes) # Linha removida
+        df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(top_30_recursos)] # Lógica simplificada
         
         # Construir o grafo bipartido a partir dos dados JÁ FILTRADOS
         G_bipartite = nx.Graph()
@@ -730,7 +727,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         edge_labels = nx.get_edge_attributes(G_bipartite, 'weight')
         nx.draw_networkx_edge_labels(G_bipartite, pos, edge_labels=edge_labels, ax=ax, font_color='#dc3545', font_size=8)
-        ax.set_title('Rede de Top 30 Recursos por Função (Atividade + Principais)')
+        ax.set_title('Rede de Top 30 Recursos por Função (Atividade)')
         plots['resource_network_bipartite'] = convert_fig_to_bytes(fig)
 
     variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('time:timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
@@ -825,20 +822,51 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         return fig
     plots['custom_variants_sequence_plot'] = convert_fig_to_bytes(generate_custom_variants_plot(log_full_pm4py))
     
-    milestones = ['Onboarding/Recolha de Dados', 'Análise de Risco e Proposta', 'Decisão de Crédito e Condições', 'Fecho/Desembolso']
-    df_milestones = _df_tasks_raw[_df_tasks_raw['task_name'].isin(milestones)].copy()
+    # --- INÍCIO: Análise de Tempo entre Tipos de Tarefa (Milestones Dinâmicos) ---
+    # 1. Obter o início/fim de cada 'task_type' dentro de cada projeto
+    df_task_type_times = _df_tasks_raw.groupby(['project_id', 'task_type']).agg(
+        type_start=('start_date', 'min'),
+        type_end=('end_date', 'max')
+    ).reset_index()
+    
+    # 2. Ordenar por projeto e data de início para obter a sequência
+    df_task_type_times.sort_values(['project_id', 'type_start'], inplace=True)
+    
     milestone_pairs = []
-    if not df_milestones.empty:
-        for project_id, group in df_milestones.groupby('project_id'):
-            sorted_tasks = group.sort_values('start_date')
-            for i in range(len(sorted_tasks) - 1):
-                duration = (sorted_tasks.iloc[i+1]['start_date'] - sorted_tasks.iloc[i]['end_date']).total_seconds() / 3600
-                if duration >= 0: milestone_pairs.append({'transition': f"{sorted_tasks.iloc[i]['task_name']} -> {sorted_tasks.iloc[i+1]['task_name']}", 'duration_hours': duration})
+    if not df_task_type_times.empty:
+        # 3. Iterar sobre cada projeto para encontrar as transições
+        for project_id, group in df_task_type_times.groupby('project_id'):
+            for i in range(len(group) - 1):
+                current_task_type = group.iloc[i]
+                next_task_type = group.iloc[i+1]
+    
+                # Calcular a duração entre o fim de um tipo e o início do seguinte
+                duration_sec = (next_task_type['type_start'] - current_task_type['type_end']).total_seconds()
+                duration_hours = duration_sec / 3600
+    
+                # Apenas contam tempos de espera positivos
+                if duration_hours >= 0: 
+                    milestone_pairs.append({
+                        'transition': f"{current_task_type['task_type']} -> {next_task_type['task_type']}", 
+                        'duration_hours': duration_hours
+                    })
+    
     df_milestone_pairs = pd.DataFrame(milestone_pairs)
+    
     if not df_milestone_pairs.empty:
-        fig, ax = plt.subplots(figsize=(10, 6)); sns.boxplot(data=df_milestone_pairs, x='duration_hours', y='transition', ax=ax, orient='h', hue='transition', legend=False, palette='coolwarm'); ax.set_title('Análise de Tempo entre Marcos do Processo'); fig.tight_layout()
+        # 4. Calcular a média de espera para as N piores transições
+        top_transitions_by_wait = df_milestone_pairs.groupby('transition')['duration_hours'].mean().nlargest(15).reset_index()
+    
+        fig, ax = plt.subplots(figsize=(10, 8)); # Aumentar tamanho para legibilidade
+        # Usar barplot da média em vez de boxplot
+        sns.barplot(data=top_transitions_by_wait, x='duration_hours', y='transition', ax=ax, orient='h', hue='transition', legend=False, palette='coolwarm')
+        ax.set_title('Análise de Tempo entre Tipos de Tarefa (Top 15 Esperas Médias em Horas)'); 
+        fig.tight_layout()
         plots['milestone_time_analysis_plot'] = convert_fig_to_bytes(fig)
-
+    else:
+        plots['milestone_time_analysis_plot'] = None # Define como None se não houver dados
+    # --- FIM: Análise de Tempo entre Tipos de Tarefa ---
+    
     df_tasks_sorted = _df_tasks_raw.sort_values(['project_id', 'start_date']); df_tasks_sorted['previous_end_date'] = df_tasks_sorted.groupby('project_id')['end_date'].shift(1)
     df_tasks_sorted['waiting_time_days'] = (df_tasks_sorted['start_date'] - df_tasks_sorted['previous_end_date']).dt.total_seconds() / (24 * 3600)
     df_tasks_sorted.loc[df_tasks_sorted['waiting_time_days'] < 0, 'waiting_time_days'] = 0
@@ -975,24 +1003,50 @@ def run_eda_analysis(dfs):
     # ... (linha que cria df_full_context)
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
     
-    # --- INÍCIO DA NOVA LÓGICA DE COMPLEXIDADE ---
-    # 1. Mapear o Risco para um valor numérico
-    risk_map = {'A': 1, 'B': 2, 'C': 3, 'D': 4}
-    df_full_context['risk_score'] = df_full_context['risk_rating'].map(risk_map)
+    # --- INÍCIO DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
+    if 'complexity_score' not in df_projects.columns:
+        st.warning("Coluna 'complexity_score' não encontrada. A calcular dinamicamente...")
     
-    # 2. Calcular o número de funções únicas e o risco por projeto
-    project_complexity_metrics = df_full_context.groupby('project_id').agg(
-        num_unique_roles=('resource_type', 'nunique'),
-        risk_score=('risk_score', 'first') # O risco é o mesmo para todo o projeto
-    ).reset_index()
+        # 1. Contar tarefas por projeto
+        tasks_per_project = df_tasks.groupby('project_id').size().reset_index(name='calc_num_tasks')
     
-    # 3. Criar o novo Índice de Complexidade (Risco * Nº de Funções)
-    project_complexity_metrics['complexity_score'] = project_complexity_metrics['num_unique_roles'] * project_complexity_metrics['risk_score']
+        # 2. Contar tipos de recursos únicos por projeto (requer merge)
+        alloc_with_types = df_resource_allocations.merge(df_resources[['resource_id', 'resource_type']], on='resource_id', how='left')
+        roles_per_project = alloc_with_types.groupby('project_id')['resource_type'].nunique().reset_index(name='calc_num_roles')
     
-    # 4. Juntar o novo índice ao dataframe principal de projetos
-    df_projects = df_projects.merge(project_complexity_metrics[['project_id', 'complexity_score']], on='project_id', how='left')
-    df_projects['complexity_score'] = df_projects['complexity_score'].fillna(0)
-    # --- FIM DA NOVA LÓGICA DE COMPLEXIDADE ---   
+        # 3. 'dependency_count' já foi calculada e mergeada (Linha ~1045)
+    
+        # Juntar tudo em df_projects
+        df_projects = df_projects.merge(tasks_per_project, on='project_id', how='left')
+        df_projects = df_projects.merge(roles_per_project, on='project_id', how='left')
+    
+        # Preencher NaNs com 0 para o cálculo
+        df_projects['calc_num_tasks'] = df_projects['calc_num_tasks'].fillna(0)
+        df_projects['calc_num_roles'] = df_projects['calc_num_roles'].fillna(0)
+        df_projects['dependency_count'] = df_projects['dependency_count'].fillna(0)
+    
+        # Função de normalização Min-Max (escala 0-1)
+        def min_max_scale(series):
+            if series.max() == series.min(): return pd.Series(0.0, index=series.index)
+            return (series - series.min()) / (series.max() - series.min())
+    
+        if not df_projects.empty:
+            # Calcular scores normalizados
+            score_tasks = min_max_scale(df_projects['calc_num_tasks'])
+            score_roles = min_max_scale(df_projects['calc_num_roles'])
+            score_deps = min_max_scale(df_projects['dependency_count'])
+    
+            # Score final (média ponderada ou soma) e escalar para 0-100
+            # Damos peso igual a cada componente
+            df_projects['complexity_score'] = min_max_scale(score_tasks + score_roles + score_deps) * 100
+        else:
+            df_projects['complexity_score'] = 0.0
+    
+    else:
+        st.info("Info: Coluna 'complexity_score' encontrada. A usar dados fornecidos.")
+        df_projects['complexity_score'] = pd.to_numeric(df_projects['complexity_score'], errors='coerce').fillna(0)
+    # --- FIM DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
+    
     tables['stats_table'] = df_projects[['actual_duration_days', 'days_diff', 'budget_impact', 'total_actual_cost', 'cost_diff', 'num_resources', 'avg_hourly_rate', 'complexity_score']].describe().round(2)
     
 
@@ -1103,12 +1157,17 @@ def run_eda_analysis(dfs):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7)); predecessor_counts.plot(kind='bar', color=sns.color_palette("Paired")[1], title='Mais Comuns como Predecessoras', ax=ax1); successor_counts.plot(kind='bar', color=sns.color_palette("Paired")[3], title='Mais Comuns como Sucessoras', ax=ax2);
     plots['plot_25'] = convert_fig_to_bytes(fig)
 
-    PROJECT_ID_EXAMPLE = "25"
-    project_deps = df_dependencies[df_dependencies['project_id'] == PROJECT_ID_EXAMPLE]
-    if not project_deps.empty:
-        G = nx.from_pandas_edgelist(project_deps, 'task_id_predecessor', 'task_id_successor', create_using=nx.DiGraph()); pos = nx.spring_layout(G, seed=42)
-        fig, ax = plt.subplots(figsize=(14, 9)); nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, ax=ax); ax.set_title(f'Gráfico de Dependências: Processo {PROJECT_ID_EXAMPLE}')
-        plots['plot_26'] = convert_fig_to_bytes(fig)
+    if not df_dependencies.empty:
+        # Pega o primeiro project_id que tem pelo menos uma dependência
+        PROJECT_ID_EXAMPLE = df_dependencies['project_id'].iloc[0] 
+        project_deps = df_dependencies[df_dependencies['project_id'] == PROJECT_ID_EXAMPLE]
+        if not project_deps.empty:
+            G = nx.from_pandas_edgelist(project_deps, 'task_id_predecessor', 'task_id_successor', create_using=nx.DiGraph()); pos = nx.spring_layout(G, seed=42)
+            fig, ax = plt.subplots(figsize=(14, 9)); nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, ax=ax); 
+            ax.set_title(f'Gráfico de Dependências (Exemplo: Proc {PROJECT_ID_EXAMPLE})') # Título dinâmico
+            plots['plot_26'] = convert_fig_to_bytes(fig)
+    else:
+        plots['plot_26'] = None # Define como None se não houver dependências
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='complexity_score', y='days_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Complexidade e Atraso')
     plots['plot_27'] = convert_fig_to_bytes(fig)
@@ -1218,6 +1277,31 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.df_projects = dfs['projects'].sort_values('start_date').reset_index(drop=True)
             self.df_resources = dfs['resources']
             self.df_dependencies = dfs['dependencies']
+            self.df_tasks = dfs['tasks']
+            self.df_allocations = dfs['resource_allocations']
+            
+            # --- NOVO BLOCO DINÂMICO ---
+            # 1. Juntar alocações, tarefas e recursos para saber "quem fez o quê"
+            # Assegura que os IDs são strings para o merge
+            self.df_allocations['task_id'] = self.df_allocations['task_id'].astype(str)
+            self.df_allocations['resource_id'] = self.df_allocations['resource_id'].astype(str)
+            self.df_tasks['task_id'] = self.df_tasks['task_id'].astype(str)
+            self.df_resources['resource_id'] = self.df_resources['resource_id'].astype(str)
+            
+            df_merged_logic = self.df_allocations.merge(self.df_tasks[['task_id', 'task_type']], on='task_id')
+            df_merged_logic = df_merged_logic.merge(self.df_resources[['resource_id', 'resource_type']], on='resource_id')
+            
+            # 2. Agrupar para encontrar as combinações únicas
+            df_map = df_merged_logic[['task_type', 'resource_type']].drop_duplicates().dropna()
+            
+            # 3. Construir o TASK_TYPE_RESOURCE_MAP dinamicamente
+            self.TASK_TYPE_RESOURCE_MAP = {}
+            for task_type, group in df_map.groupby('task_type'):
+                self.TASK_TYPE_RESOURCE_MAP[task_type] = group['resource_type'].tolist()
+            
+            print("--- MAPA DE RECURSOS/TAREFAS GERADO DINAMICAMENTE ---")
+            print(self.TASK_TYPE_RESOURCE_MAP)
+            # --- FIM DO NOVO BLOCO ---
             
             # 2. Criar dicionários para acesso rápido (MUITO mais rápido que filtrar DataFrames em loop)
             self.tasks_by_project = {pid: df_group.to_dict('records') for pid, df_group in dfs['tasks'].groupby('project_id')}
@@ -1226,17 +1310,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist())
             self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
             self.resource_capacity_map = pd.Series(self.df_resources.daily_capacity.values, index=self.df_resources.resource_id).to_dict()
-            self.TASK_TYPE_RESOURCE_MAP = {
-                'Onboarding': ['Analista Comercial', 'Gerente Comercial'],
-                'Validação KYC e Conformidade': ['Analista de Risco', 'Analista Operações/Legal'],
-                'Análise Documental': ['Analista Comercial', 'Gerente Comercial'],
-                'Análise de Risco e Proposta': ['Analista de Risco'],
-                'Avaliação da Imóvel': ['Avaliador Externo'],
-                'Preparação Legal': ['Analista Operações/Legal'],
-                'Fecho': ['Analista Operações/Legal']
-            }
-            self.RISK_ESCALATION_MAP = {'A': ['Analista de Risco'], 'B': ['Analista de Risco', 'Diretor de Risco'],'C': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito'],'D': ['Analista de Risco', 'Diretor de Risco', 'Comité de Crédito', 'ExCo']}
-        
+            
         def reset(self):
             # 3. Reset GERAL da simulação
             self.current_date = self.df_projects['start_date'].min()
@@ -1321,12 +1395,9 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             # Se a verificação for para um tipo de recurso específico
             if check_resource_type:
                 task_type = task['task_type']
-                if task_type == 'Decisão de Crédito e Condições':
-                    required_resources = self.RISK_ESCALATION_MAP.get(risk_rating, [])
-                    return check_resource_type in required_resources
-                else:
-                    allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
-                    return check_resource_type in allowed_resources
+                # O bloco 'if task_type == Decisão...' foi removido.
+                allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
+                return check_resource_type in allowed_resources
             
             return True # Retorna True se não estiver a verificar um recurso específico (elegibilidade geral)
 
@@ -1874,18 +1945,35 @@ class DiagnosticEngineV5:
         self.df_efficiency_metrics = self.metrics_orig.get('resource_efficiency_data', pd.DataFrame())
 
         # Mapeamento robusto da ordem das tarefas
-        self.task_order_map = {
-            'Onboarding/Recolha de Dados': 1,
-            'Validação KYC e Conformidade': 2,
-            'Análise Documental': 3,
-            'Análise de Risco e Proposta': 4,
-            'Avaliação da Imóvel': 5,
-            'Decisão de Crédito e Condições': 6,
-            'Preparação Legal': 7,
-            'Fecho/Desembolso': 8,
-            # Fallbacks para nomes comuns
-            'Onboarding': 1, 'KYC': 2, 'Risco': 4, 'Avaliação': 5, 'Decisão': 6, 'Legal': 7, 'Fecho': 8
-        }
+        # --- INÍCIO: Descoberta Dinâmica da Ordem das Tarefas ---
+        self.task_order_map = {}
+        if not self.df_tasks_base.empty and not self.df_projects_base.empty and 'start_date' in self.df_projects_base.columns and 'start_date' in self.df_tasks_base.columns:
+            try:
+                # Juntar tarefas com data de início do projeto
+                df_tasks_merged = self.df_tasks_base.merge(
+                    self.df_projects_base[['project_id', 'start_date']], 
+                    on='project_id', 
+                    suffixes=('_task', '_project')
+                )
+        
+                # Calcular dias desde o início do projeto
+                df_tasks_merged['days_from_start'] = (
+                    df_tasks_merged['start_date_task'] - df_tasks_merged['start_date_project']
+                ).dt.total_seconds() / (24 * 3600)
+        
+                # Calcular a média de 'dias_from_start' para cada task_type
+                avg_start_days = df_tasks_merged.groupby('task_type')['days_from_start'].mean().sort_values()
+        
+                # Criar o mapa de ordem
+                self.task_order_map = {task_type: i for i, task_type in enumerate(avg_start_days.index)}
+                print("--- ORDEM DE TAREFAS GERADA DINAMICAMENTE ---")
+                print(self.task_order_map)
+        
+            except Exception as e:
+                print(f"Erro ao gerar task_order_map dinâmico: {e}")
+                # Fallback: cria um mapa vazio se falhar
+                self.task_order_map = {} 
+        # --- FIM: Descoberta Dinâmica ---
 
         self.insights = { k: [] for k in ['saude_geral'] + list(SECTION_MAP.keys()) }
         self.narrative_flags = {} # O cérebro da V10
@@ -1999,11 +2087,15 @@ class DiagnosticEngineV5:
 
                  if 'task_type' in self.df_tasks_base.columns:
                      df_ph = self.df_tasks_base.dropna(subset=['project_id', 'start_date', 'end_date', 'task_type']).copy()
-                     df_ph['phase'] = df_ph['task_type'].apply(get_phase)
-                     ph_times = df_ph.groupby(['project_id', 'phase']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
+                     # df_ph['phase'] = ... (linha removida)
+            
+                     # Substituir 'phase' por 'task_type'
+                     ph_times = df_ph.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
                      ph_times['cycle_time_days'] = (ph_times['end'] - ph_times['start']).dt.days
                      ph_times = ph_times[ph_times['cycle_time_days'] >= 0]
-                     if not ph_times.empty: self.df_avg_cycle_time_phase = ph_times.groupby('phase')['cycle_time_days'].mean().reset_index()
+                     if not ph_times.empty: 
+                         # A variável de classe é preenchida com os dados de task_type
+                         self.df_avg_cycle_time_phase = ph_times.groupby('task_type')['cycle_time_days'].mean().reset_index()
             except Exception as e: print(f"Erro _prepare: Duração Fase: {e}")
 
         # --- Cálculos de Handoffs e Rede Social (log reconstruído) ---
@@ -2248,46 +2340,44 @@ class DiagnosticEngineV5:
         self.narrative_flags = flags
 
     def _find_rework_in_wait_matrix(self):
-        # (Mantém-se igual à V8)
         rework_loops = []
-        if self.df_wait_matrix.empty:
+        # Verifica se o mapa dinâmico foi criado
+        if self.df_wait_matrix.empty or not self.task_order_map:
             return rework_loops
-
+    
         wait_matrix_flat = self.df_wait_matrix.stack().reset_index()
         wait_matrix_flat.columns = ['previous_task_name', 'task_name', 'wait_days']
         wait_matrix_flat = wait_matrix_flat[wait_matrix_flat['wait_days'] > 0]
-
+    
         if wait_matrix_flat.empty:
             return rework_loops
-
-        def get_order(task_name_str):
-            if not isinstance(task_name_str, str): return 99
-            task_name_lower = task_name_str.lower()
-            # Tenta encontrar correspondência exata primeiro
-            for key, order in self.task_order_map.items():
-                if key.lower() == task_name_lower:
-                    return order
-            # Tenta encontrar correspondência parcial (ex: "Análise de Risco e Proposta" -> "Risco")
-            for key_part, order in self.task_order_map.items():
-                 if key_part.lower() in task_name_lower:
-                     return order
-            return 99
-
-        wait_matrix_flat['from_order'] = wait_matrix_flat['previous_task_name'].apply(get_order)
-        wait_matrix_flat['to_order'] = wait_matrix_flat['task_name'].apply(get_order)
-
+    
+        # Mapear 'task_name' (das colunas da matriz) para 'task_type'
+        task_name_to_type_map = self.df_tasks_base[['task_name', 'task_type']].drop_duplicates().set_index('task_name')['task_type']
+    
+        wait_matrix_flat['from_type'] = wait_matrix_flat['previous_task_name'].map(task_name_to_type_map)
+        wait_matrix_flat['to_type'] = wait_matrix_flat['task_name'].map(task_name_to_type_map)
+    
+        # Usar o mapa de ordem dinâmico (self.task_order_map) que é baseado em task_type
+        wait_matrix_flat['from_order'] = wait_matrix_flat['from_type'].map(self.task_order_map).fillna(99)
+        wait_matrix_flat['to_order'] = wait_matrix_flat['to_type'].map(self.task_order_map).fillna(99)
+    
+        # Rework é quando a ordem 'from' é maior que a 'to' (fluxo para trás)
         df_rework = wait_matrix_flat[
             (wait_matrix_flat['from_order'] > wait_matrix_flat['to_order']) &
             (wait_matrix_flat['from_order'] != 99) &
             (wait_matrix_flat['to_order'] != 99)
         ]
-
+    
         if not df_rework.empty:
-            df_rework_sorted = df_rework.sort_values('wait_days', ascending=False)
-            for _, row in df_rework_sorted.head(3).iterrows():
-                loop_str = f"{row['previous_task_name']} -> {row['task_name']}"
+            # Agrupa por tipo de transição para consolidar
+            df_rework_agg = df_rework.groupby(['from_type', 'to_type'])['wait_days'].mean().reset_index().sort_values('wait_days', ascending=False)
+    
+            for _, row in df_rework_agg.head(3).iterrows():
+                # O loop agora é entre *tipos* de tarefa
+                loop_str = f"{row['from_type']} -> {row['to_type']}"
                 rework_loops.append({'loop': loop_str, 'wait_days': row['wait_days']})
-
+    
         return rework_loops
 
     def _build_executive_summary(self):
@@ -2485,12 +2575,16 @@ class DiagnosticEngineV5:
         try:
             if not self.df_resources_base.empty and 'resource_type' in self.df_resources_base.columns:
                  resource_counts = self.df_resources_base['resource_type'].value_counts()
-                 specialists = resource_counts[resource_counts <= 2]
+                 specialists = resource_counts[resource_counts <= 2] # Encontra funções com 1 ou 2 pessoas
                  if not specialists.empty:
-                     critical_roles = ['Comité de Crédito', 'Diretor de Risco', 'ExCo'] # Definir papéis críticos
-                     critical_specialists = specialists[specialists.index.isin(critical_roles)]
-                     if not critical_specialists.empty:
-                         self._add_insight(section, 'Observação: Função Crítica com Poucos Recursos', f"Funções de decisão ({', '.join(critical_specialists.index)}) dependem de <= 2 pessoas.", "Cartão 26", level='facto', priority=11)
+                     # Remove a lógica de 'critical_roles'
+                     # O insight agora reporta sobre os especialistas encontrados
+                     specialist_names = specialists.index.tolist()
+                     # Limita a 3 nomes para não poluir o insight
+                     display_names = ', '.join(specialist_names[:3]) 
+                     if len(specialist_names) > 3: display_names += "..."
+            
+                     self._add_insight(section, 'Observação: Funções Especializadas (Potencial Risco)', f"Funções como '{display_names}' dependem de <= 2 pessoas, criando potenciais pontos de falha ou gargalos.", "Cartão 26", level='facto', priority=11)
         except Exception as e: print(f"Erro Regra [26]: {e}")
 
         # Cartão 31 & 40: "Heróis" e "Hubs"
@@ -2814,11 +2908,11 @@ def settings_page():
     st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
     # Dicionário com os textos para as tooltips
     tooltips = {
-        'projects': "Ficheiro mestre que define cada processo. Colunas: project_id (ID único do processo), project_name (Nome descritivo), path_name (Tipo de processo, ex: CH_Jovem), start_date (Início real), end_date (Fim real), planned_end_date (Fim planeado), total_duration_days (Duração real em dias úteis), project_status (Estado final), loan_amount_eur (Valor do crédito), risk_rating (Nível de risco A-D), budget_impact (Orçamento total estimado).",
-        'tasks': "O log de eventos, onde cada linha é uma tarefa executada. Colunas: task_id (ID único da tarefa), project_id (ID do processo-pai), task_name (Nome da atividade, ex: Análise Documental), task_type (Categoria da atividade), estimated_effort (Duração planeada em dias), actual_effort (Duração real em dias), task_status (Estado final, ex: Concluída), priority (Prioridade 1-5), start_date (Início real), end_date (Fim real).",
-        'resources': "Define quem executa o trabalho. Colunas: resource_id (ID único do recurso), resource_name (Nome do colaborador/equipa), resource_type (Função, ex: Analista de Risco), skill_level (Nível de competência), daily_capacity (Horas de trabalho por dia), cost_per_hour (Custo por hora).",
-        'resource_allocations': "Registo detalhado do trabalho diário, ligando recursos a tarefas. Colunas: allocation_id (ID único do registo de trabalho), task_id (ID da tarefa executada), resource_id (ID de quem executou), allocation_date (Data do trabalho), hours_worked (Horas trabalhadas nesse dia), project_id (ID do processo global).",
-        'dependencies': "Mapeia a sequência e as regras do fluxo de trabalho. Colunas: dependency_id (ID único da regra de sequência), project_id (ID do processo), task_id_predecessor (ID da tarefa que deve ser concluída primeiro), task_id_successor (ID da tarefa que depende da anterior)."
+        'projects': "Ficheiro mestre (1 linha por processo). Colunas essenciais: project_id (ID único), start_date, end_date. Colunas recomendadas: project_name, planned_end_date, budget_impact (custo planeado), project_status. Colunas opcionais: complexity_score (numérico), ou outras métricas.",
+        'tasks': "Log de eventos (1 linha por tarefa). Colunas essenciais: task_id (ID único), project_id (liga ao processo), task_name (nome da atividade), start_date, end_date. Colunas recomendadas: task_type (categoria da tarefa), priority (numérico 1-5), estimated_effort (em dias).",
+        'resources': "Tabela de recursos (1 linha por recurso). Colunas essenciais: resource_id (ID único), resource_name, resource_type (função, ex: 'Analista'), cost_per_hour (numérico), daily_capacity (numérico, horas/dia).",
+        'resource_allocations': "Registo de trabalho diário (liga recursos a tarefas). Colunas essenciais: allocation_id (ID único), task_id, resource_id, project_id, allocation_date (data do trabalho), hours_worked (numérico).",
+        'dependencies': "Define a sequência do fluxo. Colunas essenciais: dependency_id (ID único), project_id, task_id_predecessor (ID da tarefa anterior), task_id_successor (ID da tarefa seguinte)."
     }
     file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
     
@@ -3546,7 +3640,7 @@ def dashboard_page():
             create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'), tooltip="Mostra a distribuição dos atrasos para processos agrupados por diferentes faixas de orçamento.")
 
         if 'milestone_time_analysis_plot' in plots_post:
-            create_card("Análise de Tempo entre Marcos do Processo", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'), tooltip="Mede o tempo de espera entre as fases mais importantes do processo (marcos). Dá uma visão de alto nível sobre onde o processo fica parado por mais tempo entre etapas críticas.")
+            create_card("Análise de Tempo entre Tipos de Tarefa", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'), tooltip="Mede o tempo médio de espera (em horas) entre o fim de um 'tipo' de tarefa e o início do 'tipo' seguinte. Mostra as 15 transições de tipo mais lentas, identificando gargalos de alto nível.")
         
         c3, c4 = st.columns(2)
         with c3:
@@ -3587,7 +3681,7 @@ def dashboard_page():
         c5, c6 = st.columns(2)
         with c5:
             create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'), tooltip="Mostra a distribuição do 'índice de complexidade' calculado para os processos. Este índice combina o risco do projeto com o número de funções diferentes envolvidas.")
-            create_card("Gráfico de Dependências: Processo 25", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'), tooltip="Exemplo visual da rede de dependências entre as tarefas de um único processo. Ajuda a entender o caminho crítico e a estrutura de um projeto específico.")
+            create_card("Gráfico de Dependências (Exemplo)", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'), tooltip="Exemplo visual da rede de dependências entre as tarefas de um único processo (retirado da amostra). Ajuda a entender o caminho crítico.")
         with c6:
             create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'), tooltip="Analisa se processos considerados mais 'complexos' (maior score de complexidade) tendem a ter maiores atrasos.")
             create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-arrows-expand"></i>', chart_bytes=plots_eda.get('plot_28'), tooltip="Analisa se processos com maior número de dependências entre tarefas tendem a ter maiores desvios de custo.")
