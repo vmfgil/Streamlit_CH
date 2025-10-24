@@ -17,6 +17,17 @@ import html # <--- ADICIONADO PARA CORRIGIR O ERRO
 from scipy import stats
 import google.generativeai as genai
 import PIL.Image # Para lidar com imagens para a API
+from fpdf import FPDF
+from io import BytesIO
+import inspect
+import base64
+import tempfile
+import os
+from pathlib import Path
+import google.generativeai as genai
+import PIL.Image
+import sys # Necessário para inspect em alguns ambientes
+# ---------------------------------
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -2881,10 +2892,391 @@ def settings_page():
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
 
 
+# --- FUNÇÃO AUXILIAR PARA GERAR O PDF ---
+def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Relatório de Análise de Processos", 0, 1, "C")
+    pdf.ln(10)
+
+    # --- ATENÇÃO: Verifique se as chaves correspondem exatamente às geradas nas suas funções de análise ---
+    sections_data = {
+        "1. Visão Geral e Custos": {
+            'plots': [
+                (plots_pre.get('performance_matrix'), "Matriz de Performance (Custo vs Prazo) (PM)"),
+                (plots_pre.get('cost_by_resource_type'), "Custo por Tipo de Recurso"),
+                (plots_post.get('kpi_time_series'), "Séries Temporais de KPIs de Performance"),
+                (plots_post.get('cost_per_day_time_series'), "Custo Médio por Dia ao Longo do Tempo"),
+                (plots_eda.get('plot_01'), "Distribuição do Status dos Processos"),
+                (plots_eda.get('plot_06'), "Custo Médio dos Processos por Trimestre"),
+                (plots_eda.get('plot_16'), "Distribuição do Custo por Dia (Eficiência)"),
+                (plots_eda.get('plot_04'), "Custo Real vs. Orçamento por Processo"),
+                (plots_eda.get('plot_17'), "Alocação de Custos por Orçamento e Recurso"),
+                (plots_eda.get('plot_31'), "Evolução do Volume e Tamanho dos Processos"),
+            ],
+            'tables': [
+                (tables_pre.get('outlier_cost'), "Top 5 Processos Mais Caros"),
+                (tables_pre.get('outlier_duration'), "Top 5 Processos Mais Longos"),
+            ]
+        },
+        "2. Performance e Prazos": {
+            'plots': [
+                 (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
+                 (plots_pre.get('lead_time_hist'), "Distribuição do Lead Time"),
+                 (plots_pre.get('case_durations_boxplot'), "Distribuição da Duração dos Processos (PM)"),
+                 (plots_post.get('cumulative_throughput_plot'), "Gráfico Acumulado de Throughput"),
+                 (plots_eda.get('plot_05'), "Performance de Prazos por Trimestre"),
+                 (plots_pre.get('cycle_time_breakdown'), "Duração Média por Fase do Processo"),
+                 (plots_pre.get('throughput_hist'), "Distribuição do Throughput (horas)"),
+                 (plots_pre.get('throughput_boxplot'), "Boxplot do Throughput (horas)"),
+                 (plots_post.get('temporal_heatmap_fixed'), "Atividades por Dia da Semana"),
+                 (plots_eda.get('plot_30'), "Evolução da Performance (Prazo e Custo)"),
+                 (plots_eda.get('plot_03'), "Diferença entre Data Real e Planeada"),
+                 (plots_post.get('gantt_chart_all_projects'), "Linha do Tempo (Gantt Chart) - Amostra"),
+            ],
+            'tables': [
+                 (tables_pre.get('perf_stats'), "Estatísticas de Performance"),
+            ]
+        },
+        "3. Recursos e Equipa": {
+            'plots': [
+                (plots_eda.get('plot_12'), "Distribuição de Recursos por Tipo"),
+                (plots_pre.get('resource_avg_events'), "Recursos por Média de Tarefas/Processo"),
+                (plots_pre.get('weekly_efficiency'), "Eficiência Semanal (Horas Trabalhadas)"),
+                (plots_pre.get('delay_by_teamsize'), "Impacto do Tamanho da Equipa no Atraso (PM)"),
+                (plots_pre.get('throughput_benchmark_by_teamsize'), "Benchmark de Throughput por Equipa"), # Verifique se esta chave existe
+                (plots_pre.get('resource_workload'), "Top 10 Recursos por Horas Trabalhadas (PM)"),
+                (plots_pre.get('resource_handoffs'), "Top 10 Handoffs entre Recursos"),
+                (plots_post.get('resource_efficiency_plot'), "Métricas de Eficiência: Top Recursos"),
+                (plots_pre.get('median_duration_by_teamsize'), "Duração Mediana por Tamanho da Equipa"),
+                (plots_eda.get('plot_07'), "Nº Médio de Recursos por Processo a Cada Trimestre"),
+                (plots_eda.get('plot_14'), "Atraso Médio por Recurso"),
+                (plots_post.get('skill_vs_performance_adv'), "Relação entre Skill e Performance"),
+                (plots_eda.get('plot_23'), "Atraso por Nível de Competência"),
+                (plots_post.get('resource_network_bipartite'), "Rede de Recursos por Função"),
+                (plots_post.get('resource_network_adv'), "Rede Social de Recursos (Handovers)"),
+                (plots_pre.get('resource_activity_matrix'), "Heatmap de Esforço (Recurso vs Atividade)"),
+            ],
+            'tables': []
+        },
+        "4. Gargalos e Espera": {
+             'plots': [
+                (plots_post.get('performance_heatmap'), "Heatmap de Performance no Processo (Gargalos)"),
+                (plots_pre.get('top_activities_plot'), "Atividades Mais Frequentes"),
+                (plots_pre.get('service_vs_wait_stacked'), "Gargalos: Tempo de Serviço vs. Espera"),
+                (plots_pre.get('top_handoffs_cost'), "Top 10 Handoffs por Custo de Espera"),
+                (plots_pre.get('bottleneck_by_resource'), "Top Recursos por Tempo de Espera Gerado"),
+                (plots_eda.get('plot_18'), "Custo Real vs. Atraso"),
+                (plots_eda.get('plot_20'), "Nº de Recursos vs. Custo Total"),
+                (plots_pre.get('activity_service_times'), "Tempo Médio de Execução por Atividade"),
+                (plots_pre.get('wait_vs_service_scatter'), "Espera vs. Execução (Dispersão)"),
+                (plots_pre.get('wait_time_evolution'), "Evolução do Tempo Médio de Espera"),
+                (plots_pre.get('top_handoffs'), "Top 10 Handoffs por Tempo de Espera"),
+                (plots_eda.get('plot_19'), "Rate Horário Médio vs. Atraso"),
+                (plots_eda.get('plot_22'), "Atraso por Faixa de Orçamento"),
+                (plots_post.get('milestone_time_analysis_plot'), "Análise de Tempo entre Marcos do Processo"),
+                (plots_eda.get('plot_29'), "Matriz de Correlação"),
+                (plots_post.get('avg_waiting_time_by_activity_plot'), "Tempo Médio de Espera por Atividade"),
+                (plots_post.get('waiting_time_matrix_plot'), "Matriz de Tempo de Espera entre Atividades (horas)"),
+            ],
+            'tables': []
+        },
+         "5. Fluxo e Conformidade": {
+            'plots': [
+                (plots_post.get('model_inductive_petrinet'), "Modelo - Inductive Miner"),
+                (plots_post.get('model_heuristic_petrinet'), "Modelo - Heuristics Miner"),
+                (plots_post.get('metrics_inductive'), "Métricas (Inductive Miner)"),
+                (plots_post.get('metrics_heuristic'), "Métricas (Heuristics Miner)"),
+                (plots_post.get('custom_variants_sequence_plot'), "Sequência de Atividades das 10 Variantes Mais Comuns"),
+                (plots_post.get('variant_duration_plot'), "Duração Média das Variantes Mais Comuns"),
+                (plots_pre.get('variants_frequency'), "Top 10 Variantes de Processo por Frequência"),
+                (plots_eda.get('plot_08'), "Distribuição de Tarefas por Tipo"),
+                (plots_eda.get('plot_10'), "Distribuição da Duração das Tarefas"),
+                (plots_eda.get('plot_25'), "Centralidade dos Tipos de Tarefa"),
+                (plots_post.get('conformance_over_time_plot'), "Score de Conformidade ao Longo do Tempo"),
+                (plots_eda.get('plot_09'), "Distribuição de Tarefas por Prioridade"),
+                (plots_eda.get('plot_11'), "Top 10 Tarefas Específicas Mais Demoradas"),
+                (plots_eda.get('plot_24'), "Distribuição da Complexidade dos Processos"),
+                (plots_eda.get('plot_26'), "Gráfico de Dependências: Processo Exemplo"),
+                (plots_eda.get('plot_27'), "Relação entre Complexidade e Atraso"),
+                (plots_eda.get('plot_28'), "Relação entre Dependências e Desvio de Custo"),
+            ],
+            'tables': [
+                (tables_pre.get('variants_table'), "Frequência das 10 Principais Variantes"),
+                (tables_pre.get('rework_loops_table'), "Principais Loops de Rework (Tabela)"),
+            ]
+        },
+    }
+
+    max_width = 190 # Largura útil da página A4 em mm (210 - 10 - 10)
+
+    for section_title, data in sections_data.items():
+        # Adiciona nova página apenas se não for a primeira secção
+        if section_title != list(sections_data.keys())[0]:
+            pdf.add_page()
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, section_title, 0, 1, "L")
+        pdf.ln(5)
+
+        pdf.set_font("Arial", "", 10)
+
+        # Adicionar Tabelas
+        for table_df, table_title in data['tables']:
+            if table_df is not None and isinstance(table_df, pd.DataFrame) and not table_df.empty:
+                pdf.set_font("Arial", "B", 11)
+                pdf.cell(0, 10, table_title, 0, 1, "L")
+                pdf.set_font("Arial", "", 8)
+                # Formata todas as colunas como string para evitar problemas de tipo
+                table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
+                pdf.multi_cell(0, 5, table_string)
+                pdf.ln(5)
+            elif table_df is not None and isinstance(table_df, dict): # Tratar dicionários (KPIs)
+                 pdf.set_font("Arial", "B", 11)
+                 pdf.cell(0, 10, table_title, 0, 1, "L")
+                 pdf.set_font("Arial", "", 8)
+                 for k, v in table_df.items():
+                     pdf.multi_cell(0, 5, f"{k}: {v}")
+                 pdf.ln(5)
+
+        # Adicionar Gráficos
+        for plot_bytes, plot_title in data['plots']:
+            if plot_bytes and isinstance(plot_bytes, BytesIO): # Verifica se são bytes
+                pdf.set_font("Arial", "B", 11)
+                pdf.cell(0, 10, plot_title, 0, 1, "L")
+                pdf.set_font("Arial", "", 10)
+                try:
+                    # Salvar bytes temporariamente para fpdf ler
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
+                        temp_img.write(plot_bytes.getvalue())
+                        temp_img_path = temp_img.name
+
+                    # Adicionar imagem ao PDF, tentando escalar para a largura da página
+                    pdf.image(temp_img_path, w=max_width)
+                    os.remove(temp_img_path) # Limpar ficheiro temporário
+                    pdf.ln(5)
+                except Exception as e:
+                    pdf.set_text_color(255, 0, 0) # Vermelho para erro
+                    pdf.multi_cell(0, 5, f"Erro ao adicionar gráfico '{plot_title}': {e}")
+                    pdf.set_text_color(0, 0, 0) # Reset cor
+                    pdf.ln(5)
+            elif plot_bytes is None:
+                 print(f"Aviso: Gráfico '{plot_title}' não encontrado ou vazio.") # Log para debug
+            elif not isinstance(plot_bytes, BytesIO):
+                 print(f"Aviso: Gráfico '{plot_title}' não é um objeto BytesIO.") # Log para debug
+
+
+    # Retorna os bytes do PDF (codificados corretamente)
+    try:
+        pdf_output_bytes = pdf.output(dest='S').encode('latin-1', errors='replace') # Usa replace para caracteres inválidos
+        return pdf_output_bytes
+    except Exception as e:
+        print(f"Erro final na codificação do PDF: {e}")
+        return b"" # Retorna bytes vazios em caso de erro
+
+# --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
+@st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
+def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
+    """Faz a chamada à API Gemini com texto, código e imagens PIL."""
+    try:
+        genai.configure(api_key=_api_key)
+        # Usa um modelo recente que suporte multimodalidade
+        model = genai.GenerativeModel('gemini-1.5-flash') # Ou 'gemini-pro-vision'
+
+        # Constrói o conteúdo multimodal
+        prompt_parts = [
+            _prompt_instruction,
+            "\n\n**Código da Aplicação Streamlit:**\n```python\n",
+            _app_code,
+            "\n```\n\n**Resultados Visuais (Gráficos):**\n"
+        ]
+
+        # Adiciona as imagens PIL válidas
+        if _image_list_pil:
+             prompt_parts.extend(_image_list_pil)
+             prompt_parts.append("\n**Fim dos Resultados Visuais. Por favor, analise cada cartão/imagem.**")
+        else:
+             prompt_parts.append("\n[Nenhuma imagem válida foi fornecida para análise.]\n")
+
+        # Faz a chamada à API
+        # Aumenta o timeout e adiciona safety settings se necessário
+        generation_config = genai.types.GenerationConfig(
+            # response_mime_type="text/plain", # Descomentar se a resposta vier mal formatada
+            temperature=0.7 # Ajustar a criatividade/factualidade
+        )
+        safety_settings = [ # Ajustar níveis de segurança se bloquear respostas legítimas
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        ]
+
+        # Use request_options para definir timeout (em segundos)
+        response = model.generate_content(
+             prompt_parts,
+             generation_config=generation_config,
+             safety_settings=safety_settings,
+             request_options={"timeout": 600} # Timeout de 10 minutos
+        )
+
+        # Tratar casos onde a resposta pode ser bloqueada por segurança
+        if not response.parts:
+             # Tenta obter o motivo do bloqueio, se disponível
+             block_reason = "Desconhecido (possivelmente filtros de segurança)"
+             if response.prompt_feedback and response.prompt_feedback.block_reason:
+                 block_reason = response.prompt_feedback.block_reason.name
+             return f"⚠️ A resposta da IA foi bloqueada. Motivo: {block_reason}. Tente refazer a análise ou ajustar os filtros de segurança (se aplicável)."
+
+        return response.text
+    except Exception as e:
+        # Tenta fornecer mais detalhes sobre o erro
+        error_message = f"Erro ao chamar a API Gemini: {e}\n"
+        if "API key not valid" in str(e):
+            error_message += "Verifique se a sua GOOGLE_API_KEY nos Secrets está correta e ativa.\n"
+        elif "retrying" in str(e).lower() or "timeout" in str(e).lower():
+             error_message += "O pedido excedeu o tempo limite ou falhou após tentativas. Tente novamente mais tarde ou com menos imagens.\n"
+        elif "billing" in str(e).lower():
+             error_message += "Verifique se a faturação está ativa no seu projeto Google Cloud e associada à API Key.\n"
+        else:
+             error_message += "Consulte a documentação da API Gemini para mais detalhes sobre o erro.\n"
+        return error_message
+
 # --- PÁGINA DO DASHBOARD ---
 def dashboard_page():
     st.title("🏠 Process Mining")
 
+    # (Adicione estas linhas DENTRO da função dashboard_page, APÓS st.title)
+    ### START PDF/AI STATE INIT (if not global) ###
+    if 'show_ai_modal' not in st.session_state: st.session_state.show_ai_modal = False
+    if 'gemini_analysis' not in st.session_state: st.session_state.gemini_analysis = None
+    if 'pdf_bytes_ready' not in st.session_state: st.session_state.pdf_bytes_ready = None
+    ### END PDF/AI STATE INIT ###
+
+    ### START PDF/AI BUTTONS & MODAL ###
+    if st.session_state.analysis_run:
+        col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
+    
+        with col_pdf:
+            # Botão para gerar PDF
+            if st.button("📄", help="Exportar relatório completo em PDF", use_container_width=True):
+                with st.spinner("Gerando PDF... Este processo pode demorar."):
+                    try:
+                        # Reúne os dados necessários DENTRO do clique
+                        plots_pre = st.session_state.plots_pre_mining
+                        tables_pre = st.session_state.tables_pre_mining
+                        plots_post = st.session_state.plots_post_mining
+                        plots_eda = st.session_state.plots_eda
+                        tables_eda = st.session_state.tables_eda
+                        pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
+                        st.session_state.pdf_bytes_ready = pdf_bytes_output # Guarda para o download button
+                        # Força rerun para mostrar o botão de download
+                        time.sleep(0.1) # Pequeno delay
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao gerar PDF: {e}")
+                        st.session_state.pdf_bytes_ready = None
+    
+            # Botão de download condicional (aparece abaixo do botão de gerar)
+            if 'pdf_bytes_ready' in st.session_state and st.session_state.pdf_bytes_ready:
+                st.download_button(
+                    label="Download PDF",
+                    data=st.session_state.pdf_bytes_ready,
+                    file_name="relatorio_process_mining.pdf",
+                    mime="application/pdf",
+                    key="pdf_download_button_final",
+                    use_container_width=True,
+                    # Limpa os bytes após o clique para esconder o botão de download
+                    on_click=lambda: st.session_state.update({'pdf_bytes_ready': None})
+                )
+    
+        with col_ai:
+            # Botão para abrir a modal da IA
+            if st.button("🤖", help="Analisar resultados com IA (Gemini)", use_container_width=True):
+                st.session_state.show_ai_modal = True
+                st.session_state.gemini_analysis = None # Limpa análise anterior
+                st.rerun()
+    
+        # --- Modal para o Chat AI (Fora das colunas) ---
+        if st.session_state.get("show_ai_modal", False):
+            @st.dialog("Análise com Inteligência Artificial")
+            def ai_modal():
+                st.info("A IA (Gemini) irá analisar o código da aplicação e as imagens dos resultados. Clique abaixo para iniciar.")
+                st.write("Isto pode demorar alguns minutos...")
+    
+                if st.button("🚀 Iniciar Análise com Gemini", key="start_gemini_analysis"):
+                    if 'GOOGLE_API_KEY' not in st.secrets:
+                        st.error("API Key do Google não configurada (GOOGLE_API_KEY).")
+                        return
+    
+                    google_api_key = st.secrets["GOOGLE_API_KEY"]
+    
+                    try:
+                        # Recolhe dados DENTRO do clique
+                        plots_pre = st.session_state.plots_pre_mining
+                        plots_post = st.session_state.plots_post_mining
+                        plots_eda = st.session_state.plots_eda
+    
+                        # Cria lista de imagens (BytesIO) - INCLUI APENAS GRÁFICOS IMPORTANTES (reduzido para performance)
+                        image_keys_to_send = [
+                            ('pre', 'performance_matrix'), ('pre', 'cost_by_resource_type'), ('post', 'kpi_time_series'),
+                            ('eda', 'plot_30'), ('post', 'performance_heatmap'), ('pre', 'service_vs_wait_stacked'),
+                            ('post', 'waiting_time_matrix_plot'), ('pre', 'resource_workload'), ('post', 'resource_network_adv'),
+                            ('post', 'metrics_inductive'), ('pre', 'variants_frequency')
+                        ]
+                        image_list_bytesio_filtered = []
+                        plot_sources = {'pre': plots_pre, 'post': plots_post, 'eda': plots_eda}
+    
+                        for src_key, plot_key in image_keys_to_send:
+                            plot_obj = plot_sources[src_key].get(plot_key)
+                            if isinstance(plot_obj, BytesIO):
+                                image_list_bytesio_filtered.append(plot_obj)
+    
+                        # Converte BytesIO para PIL Images
+                        image_list_pil = []
+                        for img_bytes in image_list_bytesio_filtered:
+                             try:
+                                 img_bytes.seek(0)
+                                 img = PIL.Image.open(img_bytes)
+                                 image_list_pil.append(img)
+                             except Exception as img_err:
+                                 print(f"Erro ao converter BytesIO para PIL: {img_err}")
+    
+                        # Lê o código da app
+                        try:
+                             script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
+                             app_code = script_path.read_text(encoding='utf-8')
+                        except Exception as e1:
+                             print(f"Erro ao ler código com Path: {e1}. Tentando com inspect.getsource...")
+                             try: app_code = inspect.getsource(sys.modules[__name__])
+                             except Exception as e2: print(f"Erro ao ler código com inspect.getsource: {e2}"); app_code = f"# Erro: {e2}"
+    
+                        prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como os resultados das análises obtidas (imagens dos gráficos principais), e preciso que me analises em detalhe cada cartão (imagem)."
+    
+                        # Chama a API
+                        with st.spinner("A IA está a analisar os dados e imagens... 🤖"):
+                            analysis_result = call_gemini_api(google_api_key, app_code, image_list_pil, prompt_instruction)
+    
+                        st.session_state.gemini_analysis = analysis_result
+                        st.session_state.show_ai_modal = False
+                        st.rerun()
+    
+                    except Exception as e:
+                        st.error(f"Erro ao preparar ou enviar dados para IA: {e}")
+    
+                if st.button("Cancelar", key="cancel_gemini_analysis"):
+                    st.session_state.show_ai_modal = False
+                    st.rerun()
+    
+            # Chama a função para mostrar a modal (se show_ai_modal for True)
+            ai_modal()
+    
+        # --- Área para mostrar a Análise da IA (Fora das colunas e da modal) ---
+        if "gemini_analysis" in st.session_state and st.session_state.gemini_analysis:
+            with st.expander("🤖 Análise da Inteligência Artificial (Gemini)", expanded=True):
+                st.markdown(st.session_state.gemini_analysis)
+    ### END PDF/AI BUTTONS & MODAL ###
+    
     if st.session_state.get('show_welcome_message', False):
         st.success(f"Bem-vindo, {st.session_state.user_name}!")
         st.session_state.show_welcome_message = False
