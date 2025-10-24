@@ -998,8 +998,6 @@ def run_eda_analysis(dfs):
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
     
     # --- INÍCIO DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
-    if 'complexity_score' not in df_projects.columns:
-        st.warning("Coluna 'complexity_score' não encontrada. A calcular dinamicamente...")
     
         # 1. Contar tarefas por projeto
         tasks_per_project = df_tasks.groupby('project_id').size().reset_index(name='calc_num_tasks')
@@ -1037,7 +1035,7 @@ def run_eda_analysis(dfs):
             df_projects['complexity_score'] = 0.0
     
     else:
-        st.info("Info: Coluna 'complexity_score' encontrada. A usar dados fornecidos.")
+        
         df_projects['complexity_score'] = pd.to_numeric(df_projects['complexity_score'], errors='coerce').fillna(0)
     # --- FIM DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
     
