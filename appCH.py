@@ -28,6 +28,7 @@ import google.generativeai as genai
 import PIL.Image
 from fpdf.enums import XPos, YPos # <--- ADICIONE ESTE IMPORT NO TOPO DO FICHEIRO JUNTO AOS OUTROS fpdf
 import sys # Necessário para inspect em alguns ambientes
+from fpdf.enums import XPos, YPos
 # ---------------------------------
 
 # Imports de Process Mining (PM4PY)
@@ -2899,22 +2900,27 @@ def settings_page():
 # --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V12 - Sintaxe Atualizada e Mais Debugging) ---
 
 
+# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V15 - Layout e KPIs Corrigidos) ---
 def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
-    print("\n--- Iniciando Geração do PDF V12 ---")
-    try: # Try geral para toda a função
+    print("\n--- Iniciando Geração do PDF V15 ---")
+    try:
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
-        # --- ATUALIZAÇÃO fpdf: Usar fontes core (Helvetica é substituto de Arial) ---
         pdf.set_font("Helvetica", "B", 16)
-        # --- ATUALIZAÇÃO fpdf: Usar new_x/new_y em vez de ln=1 ---
         pdf.cell(0, 10, "Relatório de Análise de Processos", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(10)
 
-        # (Estrutura sections_data como na V10)
+        # --- ADICIONADO: Incluir KPIs na primeira secção ---
         sections_data = {
             "1. Visão Geral e Custos": {
-                'plots': [
+                'tables': [ # KPIs primeiro
+                    (tables_pre.get('kpi_data'), "KPIs de Baseline"),
+                    (tables_pre.get('cost_of_delay_kpis'), "KPIs de Custo de Atraso"),
+                    (tables_pre.get('outlier_cost'), "Top 5 Processos Mais Caros"),
+                    (tables_pre.get('outlier_duration'), "Top 5 Processos Mais Longos"),
+                ],
+                'plots': [ # Gráficos depois
                     (plots_pre.get('performance_matrix'), "Matriz de Performance (Custo vs Prazo) (PM)"),
                     (plots_pre.get('cost_by_resource_type'), "Custo por Tipo de Recurso"),
                     (plots_post.get('kpi_time_series'), "Séries Temporais de KPIs de Performance"),
@@ -2925,22 +2931,23 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                     (plots_eda.get('plot_04'), "Custo Real vs. Orçamento por Processo"),
                     (plots_eda.get('plot_17'), "Alocação de Custos por Orçamento e Recurso"),
                     (plots_eda.get('plot_31'), "Evolução do Volume e Tamanho dos Processos"),
-                ], 'tables': [(tables_pre.get('outlier_cost'), "Top 5 Processos Mais Caros"),(tables_pre.get('outlier_duration'), "Top 5 Processos Mais Longos"),]
+                ]
             },
+             # --- O resto da estrutura sections_data permanece igual à V10/V12 ---
             "2. Performance e Prazos": {
                 'plots': [
-                    (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
-                    (plots_pre.get('lead_time_hist'), "Distribuição do Lead Time"),
-                    (plots_pre.get('case_durations_boxplot'), "Distribuição da Duração dos Processos (PM)"),
-                    (plots_post.get('cumulative_throughput_plot'), "Gráfico Acumulado de Throughput"),
-                    (plots_eda.get('plot_05'), "Performance de Prazos por Trimestre"),
-                    (plots_pre.get('cycle_time_breakdown'), "Duração Média por Fase do Processo"),
-                    (plots_pre.get('throughput_hist'), "Distribuição do Throughput (horas)"),
-                    (plots_pre.get('throughput_boxplot'), "Boxplot do Throughput (horas)"),
-                    (plots_post.get('temporal_heatmap_fixed'), "Atividades por Dia da Semana"),
-                    (plots_eda.get('plot_30'), "Evolução da Performance (Prazo e Custo)"),
-                    (plots_eda.get('plot_03'), "Diferença entre Data Real e Planeada"),
-                    (plots_post.get('gantt_chart_all_projects'), "Linha do Tempo (Gantt Chart) - Amostra"),
+                     (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
+                     (plots_pre.get('lead_time_hist'), "Distribuição do Lead Time"),
+                     (plots_pre.get('case_durations_boxplot'), "Distribuição da Duração dos Processos (PM)"),
+                     (plots_post.get('cumulative_throughput_plot'), "Gráfico Acumulado de Throughput"),
+                     (plots_eda.get('plot_05'), "Performance de Prazos por Trimestre"),
+                     (plots_pre.get('cycle_time_breakdown'), "Duração Média por Fase do Processo"),
+                     (plots_pre.get('throughput_hist'), "Distribuição do Throughput (horas)"),
+                     (plots_pre.get('throughput_boxplot'), "Boxplot do Throughput (horas)"),
+                     (plots_post.get('temporal_heatmap_fixed'), "Atividades por Dia da Semana"),
+                     (plots_eda.get('plot_30'), "Evolução da Performance (Prazo e Custo)"),
+                     (plots_eda.get('plot_03'), "Diferença entre Data Real e Planeada"),
+                     (plots_post.get('gantt_chart_all_projects'), "Linha do Tempo (Gantt Chart) - Amostra"),
                 ], 'tables': [(tables_pre.get('perf_stats'), "Estatísticas de Performance"),]
             },
             "3. Recursos e Equipa": {
@@ -3011,92 +3018,198 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
             },
         }
 
-        max_width = 190
+        # --- ALTERAÇÃO: Largura útil e largura das imagens lado a lado ---
+        page_width = pdf.w - 2 * pdf.l_margin # Largura útil da página
+        col_width = page_width / 2 - 5 # Largura para cada imagem (metade - margem)
+        title_height = 10 # Altura estimada para um título
+        table_line_height = 5 # Altura estimada por linha de tabela
+        img_est_height = col_width / 1.6 # Altura estimada da imagem (assumindo ratio ~1.6)
+        # ---------------------------------------------------------------
 
+        is_first_section = True
         for section_title, data in sections_data.items():
             print(f"Adding section: {section_title}")
-            if section_title != list(sections_data.keys())[0]: pdf.add_page()
-            pdf.set_font("Helvetica", "B", 14); pdf.cell(0, 10, section_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.ln(5)
+            # Adiciona linha e página antes das secções (exceto a primeira)
+            if not is_first_section:
+                pdf.add_page()
+            else:
+                 is_first_section = False
+
+            pdf.set_draw_color(200, 200, 200) # Cor cinza para a linha
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y()) # Linha horizontal
+            pdf.ln(2) # Pequeno espaço após a linha
+            pdf.set_font("Helvetica", "B", 14); pdf.cell(0, title_height, section_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.ln(5)
             pdf.set_font("Helvetica", "", 10)
 
-            # Adicionar Tabelas
+            plot_pair_buffer = [] # Buffer para guardar plots para layout lado a lado
+
+            # --- Processa tabelas PRIMEIRO ---
             for table_df, table_title in data['tables']:
                 print(f"  Attempting to add table: {table_title}")
+                start_y = pdf.get_y() # Posição Y antes de adicionar
+                border_color = (220, 220, 220) # Cinza claro para a borda
+
+                # --- Lógica para desenhar uma caixa ---
+                pdf.set_draw_color(border_color[0], border_color[1], border_color[2])
+                pdf.rect(pdf.l_margin - 2 , start_y - 2, page_width + 4, 1) # Placeholder height
+
+                pdf.set_font("Helvetica", "B", 11); pdf.cell(0, title_height, table_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_font("Helvetica", "", 8)
+
                 if table_df is not None and isinstance(table_df, pd.DataFrame) and not table_df.empty:
                     try:
-                        pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, table_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                        pdf.set_font("Helvetica", "", 8); table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=120)
-                        # --- ATUALIZAÇÃO fpdf: Usar write() para texto longo ---
-                        pdf.write(5, table_string); pdf.ln(5) # write() lida melhor com multi-linhas
+                        table_string = table_df.astype(str).to_string(index=False, justify='left', line_width=100) # Ajuste line_width
+                        pdf.write(table_line_height, table_string); pdf.ln(2)
                         print(f"    Success adding table: {table_title}")
                     except Exception as table_err:
                         print(f"    ERROR adding table '{table_title}': {table_err}")
-                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar tabela '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                        pdf.set_text_color(255, 0, 0); pdf.write(table_line_height, f"[Erro ao adicionar tabela '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(2)
                 elif table_df is not None and isinstance(table_df, dict):
                      try:
-                         pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, table_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                         pdf.set_font("Helvetica", "", 8)
-                         for k, v in table_df.items(): pdf.write(5, f"{k}: {v}\n") # Adiciona \n para nova linha
-                         pdf.ln(5)
+                         for k, v in table_df.items(): pdf.write(table_line_height, f"{k}: {v}\n")
+                         pdf.ln(2)
                          print(f"    Success adding dict table: {table_title}")
                      except Exception as dict_err:
                         print(f"    ERROR adding dict table '{table_title}': {dict_err}")
-                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar tabela dict '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
+                        pdf.set_text_color(255, 0, 0); pdf.write(table_line_height, f"[Erro ao adicionar tabela dict '{table_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(2)
                 else:
+                     pdf.write(table_line_height, "[Dados não disponíveis]")
+                     pdf.ln(2)
                      print(f"    Skipping table '{table_title}': None, not DataFrame/Dict, or empty.")
 
-            # Adicionar Gráficos
-            for plot_bytes, plot_title in data['plots']:
+                # Desenha a caixa completa agora que sabemos a altura
+                end_y = pdf.get_y()
+                box_height = end_y - start_y + 4 # Adiciona padding
+                pdf.rect(pdf.l_margin - 2 , start_y - 2, page_width + 4, box_height)
+                pdf.set_y(end_y + 3) # Define posição Y após a caixa + margem
+
+
+            # --- Processa Gráficos (tentativa de layout lado a lado) ---
+            valid_plots = [(p, t) for p, t in data['plots'] if p and isinstance(p, BytesIO)]
+
+            for i, (plot_bytes, plot_title) in enumerate(valid_plots):
                 print(f"  Attempting to add plot: {plot_title}")
-                if plot_bytes and isinstance(plot_bytes, BytesIO):
-                    pdf.set_font("Helvetica", "B", 11); pdf.cell(0, 10, plot_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                    pdf.set_font("Helvetica", "", 10)
-                    temp_img_path = None
-                    try:
-                        plot_bytes.seek(0)
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
-                            temp_img.write(plot_bytes.getvalue())
-                            temp_img_path = temp_img.name
+                plot_pair_buffer.append((plot_bytes, plot_title))
 
-                        pdf.image(temp_img_path, w=max_width); pdf.ln(5)
-                        print(f"    Success adding plot: {plot_title}")
-                    except Exception as img_err:
-                        print(f"    ERROR adding plot '{plot_title}': {img_err}")
-                        pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro ao adicionar gráfico '{plot_title}']"); pdf.set_text_color(0, 0, 0); pdf.ln(5)
-                    finally:
-                        if temp_img_path and os.path.exists(temp_img_path):
-                            try:
-                                os.remove(temp_img_path); print(f"    Removed temp file: {temp_img_path}")
-                            except Exception as rm_err: print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
-                else:
-                     status = "None" if plot_bytes is None else f"Type {type(plot_bytes)}"
-                     print(f"    Skipping plot '{plot_title}': Data is {status}")
+                # Se temos um par ou é o último gráfico da lista
+                if len(plot_pair_buffer) == 2 or i == len(valid_plots) - 1:
+                    start_y_plots = pdf.get_y()
+                    current_x = pdf.l_margin
+                    max_h_in_pair = 0
 
-        # --- FINALIZAÇÃO MAIS ROBUSTA (V13) ---
-        print("--- Attempting to finalize PDF generation ---")
-        pdf_output_bytes = b"" # Inicializa como bytes vazios
+                    # --- Verifica page break ANTES de adicionar o par/single ---
+                    estimated_pair_height = title_height + img_est_height + 10 # Title + img + padding
+                    if pdf.will_page_break(estimated_pair_height):
+                        print(f"    Page break predicted before plots: {[p[1] for p in plot_pair_buffer]}. Adding new page.")
+                        pdf.add_page()
+                        start_y_plots = pdf.get_y() # Atualiza Y inicial
+                    # ---------------------------------------------------------
+
+                    # Desenha a caixa (placeholder)
+                    box_start_y = start_y_plots - 2
+                    pdf.set_draw_color(220, 220, 220)
+                    pdf.rect(pdf.l_margin - 2 , box_start_y, page_width + 4, 1) # Placeholder height
+
+
+                    for pb, pt in plot_pair_buffer:
+                        pdf.set_xy(current_x, start_y_plots) # Define posição X,Y
+                        pdf.set_font("Helvetica", "B", 11); pdf.cell(col_width, title_height, pt, new_x=XPos.LEFT, new_y=YPos.NEXT) # Título dentro da coluna
+                        pdf.set_font("Helvetica", "", 10)
+                        temp_img_path = None
+                        try:
+                            pb.seek(0)
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
+                                temp_img.write(pb.getvalue())
+                                temp_img_path = temp_img.name
+
+                            # Adiciona imagem na posição atual com largura de coluna
+                            pdf.image(temp_img_path, x=current_x, w=col_width)
+                            plot_end_y = pdf.get_y() # Captura Y após a imagem (pode não ser útil se a imagem for alta)
+                            max_h_in_pair = max(max_h_in_pair, plot_end_y - start_y_plots) # Tenta rastrear altura máxima na linha
+                            print(f"    Success adding plot: {pt}")
+                        except Exception as img_err:
+                            print(f"    ERROR adding plot '{pt}': {img_err}")
+                            pdf.set_xy(current_x, pdf.get_y() + 5) # Move para baixo para erro
+                            pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro gráfico '{pt}']"); pdf.set_text_color(0, 0, 0)
+                            max_h_in_pair = max(max_h_in_pair, 20) # Assume altura mínima para erro
+                        finally:
+                            if temp_img_path and os.path.exists(temp_img_path):
+                                try: os.remove(temp_img_path); print(f"    Removed temp file: {temp_img_path}")
+                                except Exception as rm_err: print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
+
+                        current_x += col_width + 10 # Move para a próxima coluna (largura + margem)
+
+                    # Move para a linha abaixo após adicionar o par ou o último single
+                    final_y_plots = start_y_plots + max_h_in_pair + 5 # Usa a altura máxima estimada + margem
+                    if final_y_plots < pdf.get_y(): # Se o write do erro foi mais baixo
+                        final_y_plots = pdf.get_y() + 5
+
+                    # Desenha a caixa completa
+                    box_height_plots = final_y_plots - start_y_plots + 4 # Adiciona padding
+                    pdf.rect(pdf.l_margin - 2 , box_start_y, page_width + 4, box_height_plots)
+
+                    pdf.set_y(final_y_plots + 3) # Define Y após a caixa + margem
+
+                    plot_pair_buffer = [] # Limpa o buffer
+
+            # Limpa buffer no final da secção (caso haja um número ímpar de gráficos)
+            if plot_pair_buffer:
+                 # Processa o último gráfico sozinho (código similar ao loop acima, mas só para um)
+                 pb, pt = plot_pair_buffer[0]
+                 start_y_plots = pdf.get_y()
+                 estimated_single_height = title_height + img_est_height + 10
+                 if pdf.will_page_break(estimated_single_height):
+                     print(f"    Page break predicted before last single plot: {pt}. Adding new page.")
+                     pdf.add_page()
+                     start_y_plots = pdf.get_y()
+
+                 box_start_y = start_y_plots - 2
+                 pdf.set_draw_color(220, 220, 220)
+                 pdf.rect(pdf.l_margin - 2 , box_start_y, page_width + 4, 1)
+
+                 pdf.set_xy(pdf.l_margin, start_y_plots)
+                 pdf.set_font("Helvetica", "B", 11); pdf.cell(page_width, title_height, pt, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                 pdf.set_font("Helvetica", "", 10)
+                 temp_img_path = None
+                 plot_end_y = start_y_plots + title_height # Y inicial para cálculo da altura
+                 try:
+                     pb.seek(0)
+                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
+                         temp_img.write(pb.getvalue())
+                         temp_img_path = temp_img.name
+                     pdf.image(temp_img_path, x=pdf.l_margin, w=col_width) # Usa largura de coluna mesmo para single
+                     plot_end_y = pdf.get_y() # Atualiza Y após imagem
+                     print(f"    Success adding last single plot: {pt}")
+                 except Exception as img_err:
+                     print(f"    ERROR adding last single plot '{pt}': {img_err}")
+                     pdf.set_text_color(255, 0, 0); pdf.write(5, f"[Erro gráfico '{pt}']"); pdf.set_text_color(0, 0, 0)
+                     plot_end_y = pdf.get_y() + 5 # Atualiza Y após erro
+                 finally:
+                     if temp_img_path and os.path.exists(temp_img_path):
+                         try: os.remove(temp_img_path); print(f"    Removed temp file: {temp_img_path}")
+                         except Exception as rm_err: print(f"    ERROR removing temp file '{temp_img_path}': {rm_err}")
+
+                 box_height_plots = plot_end_y - start_y_plots + 4
+                 pdf.rect(pdf.l_margin - 2 , box_start_y, page_width + 4, box_height_plots)
+                 pdf.set_y(plot_end_y + 3) # Move para baixo
+                 plot_pair_buffer = []
+
+
+        print(f"--- Finalizing PDF Generation Attempt ---")
+        pdf_output_bytes = b""
         try:
-            # Gera a saída do PDF. O 'S' pode retornar str ou bytes.
-            pdf_output = pdf.output(dest='S') # Removida a antiga flag 'name'
-            print(f"    pdf.output(dest='S') returned type: {type(pdf_output)}") # DEBUG type
+            pdf_output = pdf.output(dest='S')
+            print(f"    pdf.output(dest='S') returned type: {type(pdf_output)}")
 
-            # Verifica o tipo de retorno e converte para bytes se necessário
             if isinstance(pdf_output, str):
                 print("    Output is string, attempting to encode to latin-1...")
-                try:
-                    # Tenta codificar para latin-1 com substituição
-                    pdf_output_bytes = pdf_output.encode('latin-1', errors='replace')
-                    print(f"    Successfully encoded string PDF to latin-1. Size: {len(pdf_output_bytes)} bytes.")
-                except Exception as encode_err:
-                    print(f"    ERROR encoding PDF string to latin-1: {encode_err}")
-                    st.error(f"Erro ao codificar o PDF: {encode_err}")
-                    return None # Retorna None em caso de falha na codificação
+                pdf_output_bytes = pdf_output.encode('latin-1', errors='replace')
+                print(f"    Successfully encoded string PDF. Size: {len(pdf_output_bytes)} bytes.")
             elif isinstance(pdf_output, (bytes, bytearray)):
                 print("    Output is already bytes/bytearray. Using directly.")
-                pdf_output_bytes = bytes(pdf_output) # Garante que é do tipo 'bytes'
+                pdf_output_bytes = bytes(pdf_output)
                 print(f"    PDF bytes size: {len(pdf_output_bytes)} bytes.")
             else:
-                # Caso inesperado
                 print(f"    ERROR: pdf.output(dest='S') returned unexpected type: {type(pdf_output)}")
                 st.error(f"Tipo inesperado retornado pela geração do PDF: {type(pdf_output)}")
                 return None
@@ -3104,11 +3217,10 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
         except Exception as pdf_err:
             print(f"    ERROR during final pdf.output() call: {pdf_err}")
             st.error(f"Erro crítico ao finalizar o PDF: {pdf_err}")
-            return None # Retorna None em caso de falha na geração
+            return None
 
-        # Verifica se os bytes gerados são válidos antes de retornar
-        if not pdf_output_bytes or len(pdf_output_bytes) < 1000: # Se for muito pequeno, algo correu mal
-             print(f"    WARNING: PDF output size ({len(pdf_output_bytes)} bytes) seems too small. Returning None.")
+        if not pdf_output_bytes or len(pdf_output_bytes) < 1000:
+             print(f"    WARNING: PDF output size ({len(pdf_output_bytes)} bytes) too small. Returning None.")
              st.warning("O PDF gerado parece estar vazio ou incompleto.")
              return None
 
@@ -3116,12 +3228,12 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
         return pdf_output_bytes
 
     except Exception as general_err:
-         # Captura qualquer outro erro inesperado na função
          print(f"--- UNEXPECTED ERROR during PDF generation: {general_err} ---")
          st.error(f"Erro inesperado ao gerar PDF: {general_err}")
          import traceback
          traceback.print_exc()
          return None
+
 # --- NOVA FUNÇÃO PARA CHAMAR A API GEMINI ---
 @st.cache_data(show_spinner=False) # Cache para evitar chamadas repetidas com os mesmos dados
 def call_gemini_api(_api_key, _app_code, _image_list_pil, _prompt_instruction):
