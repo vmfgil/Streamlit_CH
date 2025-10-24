@@ -2111,7 +2111,7 @@ class DiagnosticEngineV5:
         
         # 5. Ordena os insights para priorizar o Resumo Executivo
         for section in self.insights:
-            if self.insights[section]:
+            if section != 'saude_geral' and self.insights[section]:
                 self.insights[section] = sorted(self.insights[section], key=lambda x: x['priority'])
                 
         return self.insights
