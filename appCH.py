@@ -3358,8 +3358,8 @@ def dashboard_page():
                          try: _app_code = inspect.getsource(sys.modules[__name__])
                          except Exception as _e2: print(f"Erro AI Prep - Ler código Inspect: {_e2}")
 
-                    _prompt_instruction = "Coloco em anexo o código da minha App em streamlit, assim como um PDF com os resultados das análises obtidas (gráficos/tabelas), e preciso que considerando todas a análises constantes do PDF, me faças um resumo dos principais aspetos, conclusões, problemas ou insights sobre o meu processo, e isto deve incluir mas não se resumir a recursos, atrasos, custos, gargalos, tempos de espera, tempos de execução, rework, entre outros aspetos."
-                    _prompt = f"{_prompt_instruction}\n\n**Código da Aplicação Streamlit:**\n```python\n{_app_code}\n```"
+                    _prompt_instruction = "Coloco em anexo o Relatório em PDF com os resultados das análises obtidas (gráficos/tabelas) sobre o meu processo, e preciso que considerando todas a análises constantes do PDF, me faças um resumo alargado dos principais aspetos, conclusões, problemas ou insights sobre o meu processo, e isto deve incluir mas não se resumir a recursos, atrasos, custos, gargalos, tempos de espera, tempos de execução, rework, entre outros aspetos."
+                    _prompt = f"{_prompt_instruction}" # REMOVIDA a parte que adicionava o _app_code
 
                 except Exception as e:
                     print(f"Erro geral em prepare_ai_data: {e}")
