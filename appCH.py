@@ -2430,14 +2430,14 @@ class DiagnosticEngineV5:
 
     def _check_recursos_equipas_facts(self):
         section = 'diagnostico_recursos_equipas'
-        
+
         # Cartão 26: Distribuição Recursos
         try:
             if not self.df_resources_base.empty and 'resource_type' in self.df_resources_base.columns:
                  resource_counts = self.df_resources_base['resource_type'].value_counts()
                  specialists = resource_counts[resource_counts <= 2]
                  if not specialists.empty:
-                     critical_roles = ['Comité de Crédito', 'Diretor de Risco', 'ExCo']
+                     critical_roles = ['Comité de Crédito', 'Diretor de Risco', 'ExCo'] # Definir papéis críticos
                      critical_specialists = specialists[specialists.index.isin(critical_roles)]
                      if not critical_specialists.empty:
                          self._add_insight(section, 'Observação: Função Crítica com Poucos Recursos', f"Funções de decisão ({', '.join(critical_specialists.index)}) dependem de <= 2 pessoas.", "Cartão 26", level='facto', priority=11)
@@ -2448,7 +2448,7 @@ class DiagnosticEngineV5:
             if self.narrative_flags.get('has_pareto_herois'):
                 top_1 = self.df_workload.iloc[0]
                 self._add_insight(section, "Observação: Concentração de Esforço (Pareto)", f"Existe uma alta concentração de trabalho: o Top 20% dos recursos faz > 80% das horas. '{top_1['resource_name']}' é o recurso mais ativo.", "Cartão 31", level='facto')
-            
+
             if self.narrative_flags.get('has_resource_hub'):
                 hub_str = self.narrative_flags.get('resource_hub_names', 'N/A')
                 self._add_insight(section, 'Observação: Hub de Comunicação', f"A interação '{hub_str}' é a mais frequente, funcionando como um hub (e potencial gargalo) de comunicação.", "Cartão 32, 40", level='facto', priority=11)
@@ -2462,12 +2462,13 @@ class DiagnosticEngineV5:
                     melhor = df_effic.iloc[0]; pior = df_effic.iloc[-1]
                     ratio = pior['avg_hours_per_task'] / max(melhor['avg_hours_per_task'], 0.1)
                     if not pd.isna(ratio) and ratio > 4:
-                        self._add_insight(section, 'Observação: Disparidade de Performance', f"Recurso mais lento ({pior['resource_name']}) demora {ratio:.1f}x mais por tarefa que o mais rápido ({melhor['resource_name']}).", "Cartão 33", level='facto')
+                        self._add_insight(section, 'Observação: Disparidade de Performance', f"Recurso mais lento ('{pior['resource_name']}') demora {ratio:.1f}x mais por tarefa que o mais rápido ('{melhor['resource_name']}').", "Cartão 33", level='facto') # Corrigido para incluir nomes
         except Exception as e: print(f"Erro Regra [33]: {e}")
 
         # Cartão 37: Skill vs Performance
         try:
             if not self.df_full_context_base.empty and 'skill_level' in self.df_full_context_base.columns and 'hours_worked' in self.df_full_context_base.columns:
+                # (Lógica da V8 para calcular corr skill/performance)
                 task_counts = self.df_full_context_base.groupby('resource_name')['task_id'].nunique()
                 hours_sum = self.df_full_context_base.groupby('resource_name')['hours_worked'].sum()
                 perf_df = pd.DataFrame({'hours_per_task': hours_sum / task_counts.replace(0, np.nan)}).dropna().reset_index()
@@ -2478,17 +2479,18 @@ class DiagnosticEngineV5:
                     if not pd.isna(corr) and abs(corr) < 0.2:
                         self._add_insight(section, 'Observação: Métrica de "Skill" Irrelevante?', f"O 'Nível de Competência' (skill) não tem correlação ({corr:.2f}) com a rapidez de execução das tarefas.", "Cartão 37", level='facto')
         except Exception as e: print(f"Erro Regra [37]: {e}")
-        
+
         # Cartão 29: Lei de Brooks
         try:
             if not self.df_projects_base.empty and 'num_resources' in self.df_projects_base.columns and 'days_diff' in self.df_projects_base.columns:
                  df_corr = self.df_projects_base[['num_resources', 'days_diff']].apply(pd.to_numeric, errors='coerce').dropna()
-                 if len(df_corr['num_resources'].unique()) > 2 and len(df_corr) > 5:
+                 if len(df_corr['num_resources'].unique()) > 2 and len(df_corr) > 5: # Aumentado para >5 para mais robustez
                      corr = df_corr['num_resources'].corr(df_corr['days_diff'])
                      if not pd.isna(corr) and corr > 0.3:
                          self._add_insight(section, 'Observação: Custo de Coordenação (Lei de Brooks?)', f"Equipas maiores tendem a ter MAIS atrasos (Corr: {corr:.2f}). Adicionar mais pessoas parece piorar a performance.", "Cartão 29", level='facto')
         except Exception as e: print(f"Erro Regra [29]: {e}")
-
+        # A linha 2114 com 'self.' foi removida daqui.
+    
     def _check_gargalos_esperas_facts(self):
         section = 'diagnostico_gargalos_esperas'
         
