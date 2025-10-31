@@ -1457,8 +1457,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 
                 self.detailed_logs[proj_id].append({
                     'date': self.current_date,
-                    'day': np.busday_count(proj_state['start_date'].date(), self.current_date.date()), # <-- Mude esta linha
-                    'cumulative_cost': proj_state['current_cost'], # <-- Mude esta linha
+                    'day': np.busday_count(proj_state['start_date'].date(), self.current_date.date()), 
+                    'cumulative_cost': proj_state['current_cost'], 
                     'cumulative_hours': last_log['cumulative_hours'] + daily_hours_by_project[proj_id]
                 })
 
