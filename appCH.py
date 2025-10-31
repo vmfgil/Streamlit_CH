@@ -1199,7 +1199,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     ids_amostra = st.session_state['rl_sample_ids']
     dfs_rl = {}
     ids_amostra = [str(i) for i in ids_amostra]  # garante tipo string
-    dfs_rl = {}
     for nome_df, df in dfs.items():
         if 'project_id' in df.columns:
             dfs_rl[nome_df] = df[df['project_id'].astype(str).isin(ids_amostra)].copy()
@@ -1538,7 +1537,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     # 1. Instanciar o novo ambiente de portfólio.
     # Amostra completa de projetos para simular o portfólio.
-    env = PortfolioManagementEnv(dfs={'projects': df_projects, 'tasks': df_tasks, 'resources': df_resources, 'dependencies': df_dependencies}, reward_config=reward_config)
+    env = PortfolioManagementEnv(dfs={'projects': df_projects, 'tasks': df_tasks, 'resources': df_resources, 'dependencies': df_dependencies, 'resource_allocations': df_resource_allocations}, reward_config=reward_config)
 
     # 2. Simplificar as ações para o agente.
     # Mantémm a Q-Table com um tamanho gerenciável.
@@ -2474,7 +2473,7 @@ class DiagnosticEngineV5:
         try:
             if not self.df_avg_cycle_time_phase.empty:
                 top_2 = self.df_avg_cycle_time_phase.nlargest(2, 'cycle_time_days')
-                fases_str = [f"'{r['phase']}' ({r['cycle_time_days']:.1f} dias)" for _, r in top_2.iterrows()]
+                fases_str = [f"'{r['task_type']}' ({r['cycle_time_days']:.1f} dias)" for _, r in top_2.iterrows()]
                 self._add_insight(section, 'Facto: Fases Mais Longas', f"As fases que consomem mais tempo são: {', '.join(fases_str)}.", "Cartão 18", level='facto')
         except Exception as e: print(f"Erro Regra [18]: {e}")
 
