@@ -13,7 +13,7 @@ import time
 import random
 from datetime import timedelta
 import textwrap
-import html # <--- ADICIONADO PARA CORRIGIR O ERRO
+import html
 from scipy import stats
 from fpdf import FPDF
 from io import BytesIO
@@ -24,10 +24,8 @@ import os
 from pathlib import Path
 import google.generativeai as genai
 import PIL.Image
-from fpdf.enums import XPos, YPos # <--- ADICIONE ESTE IMPORT NO TOPO DO FICHEIRO JUNTO AOS OUTROS fpdf
-import sys # Necessário para inspect em alguns ambientes
 from fpdf.enums import XPos, YPos
-# ---------------------------------
+import sys 
 
 # Imports de Process Mining (PM4PY)
 import pm4py
@@ -55,7 +53,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ESTILO CSS REFORMULADO (NOVO ESQUEMA DE CORES) ---
+# --- ESTILO CSS ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
@@ -197,7 +195,7 @@ def convert_fig_to_bytes(fig, format='png'):
         if ax.get_legend() is not None:
             plt.setp(ax.get_legend().get_texts(), color='#212529')
             ax.get_legend().get_frame().set_facecolor('#ffffff')
-            ax.get_legend().get_frame().set_edgecolor('#dee2e6') # Cor da borda
+            ax.get_legend().get_frame().set_edgecolor('#dee2e6')
             
     fig.savefig(buf, format=format, bbox_inches='tight', dpi=150)
     buf.seek(0)
@@ -207,7 +205,6 @@ def convert_fig_to_bytes(fig, format='png'):
 def convert_gviz_to_bytes(gviz, format='png'):
     return io.BytesIO(gviz.pipe(format=format))
 
-# --- FUNÇÃO CORRIGIDA ---
 def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_container_width=False, tooltip=None):
     # Gera o HTML do ícone da tooltip, se um texto for fornecido
     tooltip_html = ""
@@ -411,8 +408,6 @@ def run_pre_mining_analysis(dfs):
     sns.barplot(data=cost_by_resource_type, x='cost_of_work', y='resource_type', ax=ax, hue='resource_type', legend=False, palette='magma')
     ax.set_title("Custo por Tipo de Recurso")
 
-    # --- NOVO BLOCO DE CÓDIGO PARA FORMATAÇÃO ---
-    # Formata o eixo do x para mostrar os números por extenso (ex: €1.500.000)
     formatter = FuncFormatter(lambda x, pos: f'€{x:,.0f}')
     ax.xaxis.set_major_formatter(formatter)
     plt.xticks(rotation=30, ha='right') # Roda os labels para evitar sobreposição
@@ -427,7 +422,6 @@ def run_pre_mining_analysis(dfs):
     variant_analysis['percentage'] = (variant_analysis['frequency'] / variant_analysis['frequency'].sum()) * 100
     tables['variants_table'] = variant_analysis.head(10)
     
-    # --- CORREÇÃO PARA O GRÁFICO DE FREQUÊNCIA ---
     data_plot_freq = variant_analysis.head(10).copy()
     data_plot_freq['variant_str_wrapped'] = data_plot_freq['variant_str'].apply(
         lambda x: textwrap.fill(x, width=90)
@@ -442,11 +436,9 @@ def run_pre_mining_analysis(dfs):
     ax.set_xlabel("Frequência (Nº de Casos)")
     ax.set_ylabel("Variante do Processo")
     fig.tight_layout()
-    # --- FIM DA CORREÇÃO ---
     
     plots['variants_frequency'] = convert_fig_to_bytes(fig)
     
-    # --- INÍCIO DA CORREÇÃO: Lógica de Deteção de Rework Melhorada ---
     rework_loops = Counter()
     for trace in variants_df['trace']:
         # Encontra todas as atividades que se repetem na mesma trace
@@ -474,7 +466,6 @@ def run_pre_mining_analysis(dfs):
                     rework_loops[loop_str] += 1
     
     tables['rework_loops_table'] = pd.DataFrame(rework_loops.most_common(10), columns=['rework_loop', 'frequency'])
-    # --- FIM DA CORREÇÃO ---
 
     delayed_projects = df_projects[df_projects['days_diff'] > 0].copy()
 
@@ -494,7 +485,6 @@ def run_pre_mining_analysis(dfs):
             .mean()
         )
     
-    # GUARDA NÚMEROS (nota: chave EXACTA com A maiúscula para casar com o dashboard)
     tables['cost_of_delay_kpis'] = {
         'Custo Total Processos Atrasados': total_cost_delay,
         'Atraso Médio (dias)': mean_delay_days,
@@ -551,11 +541,9 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 5)); sns.boxplot(data=df_perf_full, x='team_size_bin_dynamic', y='avg_throughput_hours', ax=ax, hue='team_size_bin_dynamic', legend=False, palette='plasma'); ax.set_title("Benchmark de Throughput por Tamanho da Equipa")
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
-    # Agrupa por 'task_type' em vez de 'phase'
     phase_times = df_tasks.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
     phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
     avg_cycle_time_by_task_type = phase_times.groupby('task_type')['cycle_time_days'].mean()
-    # Guarda a tabela com o novo nome
     tables['avg_cycle_time_by_task_type_data'] = avg_cycle_time_by_task_type.reset_index() 
     fig, ax = plt.subplots(figsize=(8, 4)); 
     avg_cycle_time_by_task_type.plot(kind='bar', color=sns.color_palette('tab10'), ax=ax); 
@@ -578,13 +566,13 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     log_df_full_lifecycle = pd.concat([df_start_events, df_complete_events]).sort_values('time:timestamp')
     log_full_pm4py = pm4py.convert_to_event_log(log_df_full_lifecycle)
 
-    # 2. Descoberta de Modelos e Métricas (usando uma amostra das 3 variantes principais para performance)
+    # 2. Descoberta de Modelos e Métricas (usando uma amostra das 10 variantes principais para performance)
     variants_dict = variants_filter.get_variants(_event_log_pm4py)
     top_variants_list = sorted(variants_dict.items(), key=lambda x: len(x[1]), reverse=True)[:10]
     top_variant_names = [v[0] for v in top_variants_list]
-    log_top_3_variants = variants_filter.apply(_event_log_pm4py, top_variant_names)
+    log_top_10_variants = variants_filter.apply(_event_log_pm4py, top_variant_names)
     
-    pt_inductive = inductive_miner.apply(log_top_3_variants)
+    pt_inductive = inductive_miner.apply(log_top_10_variants)
     net_im, im_im, fm_im = pt_converter.apply(pt_inductive)
     gviz_im = pn_visualizer.apply(net_im, im_im, fm_im)
     plots['model_inductive_petrinet'] = convert_gviz_to_bytes(gviz_im)
@@ -595,19 +583,19 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         for p in barplot.patches: ax.annotate(f'{p.get_height():.2f}', (p.get_x() + p.get_width() / 2., p.get_height()), ha='center', va='center', xytext=(0, 9), textcoords='offset points', color='#E5E7EB')
         ax.set_title(title); ax.set_ylim(0, 1.05); return fig
         
-    metrics_im = {"Fitness": replay_fitness_evaluator.apply(log_top_3_variants, net_im, im_im, fm_im, variant=replay_fitness_evaluator.Variants.TOKEN_BASED).get('average_trace_fitness', 0), "Precisão": precision_evaluator.apply(log_top_3_variants, net_im, im_im, fm_im), "Generalização": generalization_evaluator.apply(log_top_3_variants, net_im, im_im, fm_im), "Simplicidade": simplicity_evaluator.apply(net_im)}
+    metrics_im = {"Fitness": replay_fitness_evaluator.apply(log_top_10_variants, net_im, im_im, fm_im, variant=replay_fitness_evaluator.Variants.TOKEN_BASED).get('average_trace_fitness', 0), "Precisão": precision_evaluator.apply(log_top_10_variants, net_im, im_im, fm_im), "Generalização": generalization_evaluator.apply(log_top_10_variants, net_im, im_im, fm_im), "Simplicidade": simplicity_evaluator.apply(net_im)}
     plots['metrics_inductive'] = convert_fig_to_bytes(plot_metrics_chart(metrics_im, 'Métricas de Qualidade (Inductive Miner)'))
     metrics['inductive_miner'] = metrics_im
 
-    net_hm, im_hm, fm_hm = heuristics_miner.apply(log_top_3_variants, parameters={heuristics_miner.Variants.CLASSIC.value.Parameters.DEPENDENCY_THRESH: 0.5})
+    net_hm, im_hm, fm_hm = heuristics_miner.apply(log_top_10_variants, parameters={heuristics_miner.Variants.CLASSIC.value.Parameters.DEPENDENCY_THRESH: 0.5})
     gviz_hm = pn_visualizer.apply(net_hm, im_hm, fm_hm)
     plots['model_heuristic_petrinet'] = convert_gviz_to_bytes(gviz_hm)
     
-    metrics_hm = {"Fitness": replay_fitness_evaluator.apply(log_top_3_variants, net_hm, im_hm, fm_hm, variant=replay_fitness_evaluator.Variants.TOKEN_BASED).get('average_trace_fitness', 0), "Precisão": precision_evaluator.apply(log_top_3_variants, net_hm, im_hm, fm_hm), "Generalização": generalization_evaluator.apply(log_top_3_variants, net_hm, im_hm, fm_hm), "Simplicidade": simplicity_evaluator.apply(net_hm)}
+    metrics_hm = {"Fitness": replay_fitness_evaluator.apply(log_top_10_variants, net_hm, im_hm, fm_hm, variant=replay_fitness_evaluator.Variants.TOKEN_BASED).get('average_trace_fitness', 0), "Precisão": precision_evaluator.apply(log_top_10_variants, net_hm, im_hm, fm_hm), "Generalização": generalization_evaluator.apply(log_top_10_variants, net_hm, im_hm, fm_hm), "Simplicidade": simplicity_evaluator.apply(net_hm)}
     plots['metrics_heuristic'] = convert_fig_to_bytes(plot_metrics_chart(metrics_hm, 'Métricas de Qualidade (Heuristics Miner)'))
     metrics['heuristics_miner'] = metrics_hm
     
-    # 3. Análises de Performance Rápidas (correm com todos os dados)
+    # 3. Análises de Performance 
     kpi_temporal = _df_projects.groupby('completion_month').agg(avg_lead_time=('actual_duration_days', 'mean'), throughput=('project_id', 'count')).reset_index()
     fig, ax1 = plt.subplots(figsize=(12, 6)); ax1.plot(kpi_temporal['completion_month'], kpi_temporal['avg_lead_time'], marker='o', color='#2563EB', label='Lead Time'); ax2 = ax1.twinx(); ax2.bar(kpi_temporal['completion_month'], kpi_temporal['throughput'], color='#06B6D4', alpha=0.6, label='Throughput'); fig.suptitle('Séries Temporais de KPIs de Performance')
     fig.legend(loc='upper left', bbox_to_anchor=(0.15, 0.9)); ax1.tick_params(axis='x', rotation=45)
@@ -622,7 +610,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     heatmap_data = log_df_full_lifecycle.groupby('weekday')['case:concept:name'].count().reindex(weekday_order).fillna(0); sns.barplot(x=heatmap_data.index, y=heatmap_data.values, ax=ax, hue=heatmap_data.index, legend=False, palette='coolwarm'); ax.set_title('Ocorrências de Atividades por Dia da Semana'); plt.xticks(rotation=45)
     plots['temporal_heatmap_fixed'] = convert_fig_to_bytes(fig)
 
-    # 4. Otimização do Gantt Chart (usa amostra de 50 se os dados forem grandes)
+    # 4. Gantt Chart (usa amostra de 50 se os dados forem grandes)
     if len(_df_projects) > 50:
         ids_amostra_gantt = _df_projects['project_id'].sample(n=50, random_state=42).tolist()
         df_projects_gantt = _df_projects[_df_projects['project_id'].isin(ids_amostra_gantt)]
@@ -648,24 +636,21 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ax_gantt.set_title(gantt_title); fig_gantt.tight_layout()
     plots['gantt_chart_all_projects'] = convert_fig_to_bytes(fig_gantt)
     
-    # 5. Análises de Recursos (correm com todos os dados)
+    # 5. Análises de Recursos
     log_df_complete = pm4py.convert_to_dataframe(_event_log_pm4py)
     handover_edges = Counter((log_df_complete.iloc[i]['org:resource'], log_df_complete.iloc[i+1]['org:resource']) for i in range(len(log_df_complete)-1) if log_df_complete.iloc[i]['case:concept:name'] == log_df_complete.iloc[i+1]['case:concept:name'] and log_df_complete.iloc[i]['org:resource'] != log_df_complete.iloc[i+1]['org:resource'])
-    
-    # 1. CRIAÇÃO DO GRAFO (G) e FIGURA: Estas linhas têm de estar sempre aqui
+        
     fig_net, ax_net = plt.subplots(figsize=(18, 12)); 
     G = nx.DiGraph();
     for (source, target), weight in handover_edges.items(): G.add_edge(str(source), str(target), weight=weight)
 
-    # Filtrar o grafo para mostrar apenas os nós mais relevantes
-    # A linha 'recursos_importantes' foi removida
+    # Filtrar o gráfico para mostrar apenas os nós mais relevantes
     node_degrees = dict(G.degree())
     recursos_ordenados = sorted(node_degrees, key=node_degrees.get, reverse=True)
     top_recursos = set(recursos_ordenados[:30])
-    # nos_para_manter = top_recursos.union(recursos_importantes) # Linha removida
+    
     G_filtrado = G.subgraph(top_recursos).copy() # Lógica simplificada
     
-    # Desenhar o grafo filtrado
     if G_filtrado.nodes():
         pos = nx.spring_layout(G_filtrado, k=0.8, iterations=50, seed=42)
         weights = [G_filtrado[u][v]['weight'] for u, v in G_filtrado.edges()]
@@ -694,13 +679,12 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         
         resource_role_counts = _df_full_context.groupby(['resource_name', 'skill_level']).size().reset_index(name='count')
 
-        # Filtrar o dataframe antes de construir o grafo
+        # Filtrar o dataframe antes de construir o gráfico
         recursos_ordenados_df = resource_role_counts.sort_values('count', ascending=False)
         top_30_recursos = set(recursos_ordenados_df['resource_name'].head(30))
-        # recursos_para_manter = top_30_recursos.union(recursos_importantes) # Linha removida
         df_filtrado = resource_role_counts[resource_role_counts['resource_name'].isin(top_30_recursos)] # Lógica simplificada
         
-        # Construir o grafo bipartido a partir dos dados JÁ FILTRADOS
+        # Construir o gráfico bipartido a partir dos dados já filtrados
         G_bipartite = nx.Graph()
         resources_nodes = df_filtrado['resource_name'].unique()
         roles_nodes = df_filtrado['skill_level'].unique()
@@ -710,7 +694,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         for _, row in df_filtrado.iterrows():
             G_bipartite.add_edge(row['resource_name'], row['skill_level'], weight=row['count'])
         
-        # Desenhar o grafo filtrado
+        # Desenhar o gráfico filtrado
         fig, ax = plt.subplots(figsize=(12, max(8, len(resources_nodes) * 0.3))) # Altura dinâmica
         pos = nx.bipartite_layout(G_bipartite, resources_nodes)
         
@@ -728,7 +712,6 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     variants_df['duration_hours'] = (variants_df['end_timestamp'] - variants_df['start_timestamp']).dt.total_seconds() / 3600
     variant_durations = variants_df.groupby('variant').agg(count=('case:concept:name', 'count'), avg_duration_hours=('duration_hours', 'mean')).reset_index().sort_values(by='count', ascending=False).head(10)
     
-    # --- CORREÇÃO FINAL PARA O GRÁFICO DE DURAÇÃO ---
     variant_durations['variant_str_wrapped'] = variant_durations['variant'].apply(
         lambda x: textwrap.fill(' -> '.join(map(str, x)), width=90) # Aumentado para 90
     )
@@ -739,7 +722,6 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
                 data=variant_durations.astype({'avg_duration_hours':'float'}),
                 ax=ax, hue='variant_str_wrapped', legend=False, palette='plasma')
     
-    # Diminuir ainda mais o tamanho da fonte
     ax.tick_params(axis='y', labelsize=5) 
     
     ax.set_title('Duração Média das 10 Variantes Mais Comuns')
@@ -747,7 +729,6 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ax.set_xlabel('Duração Média (horas)')
     fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
-    # --- FIM DA CORREÇÃO FINAL ---
     
     ax.set_title('Duração Média das 10 Variantes Mais Comuns')
     ax.set_ylabel('Variante do Processo')
@@ -755,7 +736,6 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     fig.tight_layout()
     plots['variant_duration_plot'] = convert_fig_to_bytes(fig)
     
-    # 6. ABORDAGEM DEFINITIVA PARA ANÁLISE DE ALINHAMENTOS (usa amostra de 50 se os dados forem grandes)
     log_df_para_alinhar = pm4py.convert_to_dataframe(log_full_pm4py)
     num_cases = log_df_para_alinhar['case:concept:name'].nunique()
     
@@ -786,7 +766,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         fig, ax = plt.subplots(figsize=(10, 5)); sns.lineplot(data=monthly_fitness, x='end_month', y='fitness', marker='o', ax=ax, color='#2563EB'); ax.set_title(f'Score de Conformidade ao Longo do Tempo{align_title_suffix}'); ax.set_ylim(0, 1.05); ax.tick_params(axis='x', rotation=45); fig.tight_layout()
         plots['conformance_over_time_plot'] = convert_fig_to_bytes(fig)
 
-    # 7. Análises Finais (correm com todos os dados)
+    # 7. Análises Finais
     kpi_daily = _df_projects.groupby(_df_projects['end_date'].dt.date).agg(avg_cost_per_day=('cost_per_day', 'mean')).reset_index()
     kpi_daily.rename(columns={'end_date': 'completion_date'}, inplace=True)
     kpi_daily['completion_date'] = pd.to_datetime(kpi_daily['completion_date'])
@@ -816,7 +796,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         return fig
     plots['custom_variants_sequence_plot'] = convert_fig_to_bytes(generate_custom_variants_plot(log_full_pm4py))
     
-    # --- INÍCIO: Análise de Tempo entre Tipos de Tarefa (Milestones Dinâmicos) ---
+    # Análise de Tempo entre Tipos de Tarefa (Milestones Dinâmicos) ---
     # 1. Obter o início/fim de cada 'task_type' dentro de cada projeto
     df_task_type_times = _df_tasks_raw.groupby(['project_id', 'task_type']).agg(
         type_start=('start_date', 'min'),
@@ -859,7 +839,6 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         plots['milestone_time_analysis_plot'] = convert_fig_to_bytes(fig)
     else:
         plots['milestone_time_analysis_plot'] = None # Define como None se não houver dados
-    # --- FIM: Análise de Tempo entre Tipos de Tarefa ---
     
     df_tasks_sorted = _df_tasks_raw.sort_values(['project_id', 'start_date']); df_tasks_sorted['previous_end_date'] = df_tasks_sorted.groupby('project_id')['end_date'].shift(1)
     df_tasks_sorted['waiting_time_days'] = (df_tasks_sorted['start_date'] - df_tasks_sorted['previous_end_date']).dt.total_seconds() / (24 * 3600)
@@ -875,7 +854,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ).reset_index()
     resource_efficiency['avg_hours_per_task'] = resource_efficiency['total_hours_worked'] / resource_efficiency['total_tasks_completed']
     
-    # --- INÍCIO DA NOVA LÓGICA: TOP 10 MELHORES E PIORES ---
+    # --- TOP 10 MELHORES E PIORES ---
     # Garantir que temos pelo menos 20 recursos para mostrar
     if len(resource_efficiency) > 20:
         # Piores: os que demoram MAIS horas por tarefa
@@ -917,13 +896,14 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     plots['avg_waiting_time_by_activity_plot'] = convert_fig_to_bytes(fig)
 
     return plots, metrics
-# --- NOVA FUNÇÃO DE ANÁLISE (EDA) ---
+
+# ---  FUNÇÃO DE ANÁLISE (EDA) ---
 #@st.cache_data
 def run_eda_analysis(dfs):
     plots = {}
     tables = {}
     
-    # --- Pré-processamento e Feature Engineering (da célula 6 do notebook) ---
+    # --- Pré-processamento e Feature Engineering ---
     df_projects = dfs['projects'].copy()
     df_tasks = dfs['tasks'].copy()
     df_resources = dfs['resources'].copy()
@@ -935,7 +915,7 @@ def run_eda_analysis(dfs):
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    # --- Normalizar project_id e remover duplicados por project_id para evitar contagens infladas ---
+    
     if 'project_id' in df_projects.columns:
         # força project_id para string em todos os dataframes relevantes
         df_projects['project_id'] = df_projects['project_id'].astype(str)
@@ -943,11 +923,11 @@ def run_eda_analysis(dfs):
         if 'project_id' in tmp_df.columns:
             tmp_df['project_id'] = tmp_df['project_id'].astype(str)
     
-    # Remove duplicados por project_id em df_projects mantendo a primeira ocorrência
+    
     df_projects = df_projects.drop_duplicates(subset=['project_id']).reset_index(drop=True)
     
     # --- Calcular days_diff de forma robusta (mantém NaN para inspeção) ---
-    # garante parsing consistente (usa o parsing que aplicaste acima na função; se trocaste dayfirst, fica consistente)
+    
     df_projects['end_date'] = pd.to_datetime(df_projects['end_date'], errors='coerce')
     df_projects['planned_end_date'] = pd.to_datetime(df_projects['planned_end_date'], errors='coerce')
     
@@ -957,7 +937,7 @@ def run_eda_analysis(dfs):
     # coluna indicadora de validade (para usar nas visualizações e evitar mascarar NaNs)
     df_projects['days_diff_valid'] = df_projects['days_diff'].notna()
     
-    # opcional: coluna auxiliar com módulo do desvio (para detectar outliers sem os mascarar)
+    
     df_projects['days_diff_abs'] = df_projects['days_diff'].abs()
     df_projects['actual_duration_days'] = (df_projects['end_date'] - df_projects['start_date']).dt.days
     df_projects['project_type'] = df_projects['path_name']
@@ -968,8 +948,6 @@ def run_eda_analysis(dfs):
     df_alloc_costs = df_resource_allocations.merge(df_resources, on='resource_id')
     df_alloc_costs['cost_of_work'] = df_alloc_costs['hours_worked'] * df_alloc_costs['cost_per_hour']
 
-    # --- CORREÇÃO DEFINITIVA ---
-    # Este bloco, que existe na outra função, estava em falta aqui.
     project_aggregates = df_alloc_costs.groupby('project_id').agg(
         total_actual_cost=('cost_of_work', 'sum'),
         avg_hourly_rate=('cost_per_hour', 'mean'),
@@ -978,13 +956,10 @@ def run_eda_analysis(dfs):
     
     df_projects = df_projects.merge(project_aggregates, on='project_id', how='left')
     df_projects['total_actual_cost'] = df_projects['total_actual_cost'].fillna(0)
-    # --- FIM DA CORREÇÃO ---
 
-    # --- NOVA CORREÇÃO: Restaurar a coluna 'dependency_count' ---
     dep_counts = df_dependencies.groupby('project_id').size().reset_index(name='dependency_count')
     df_projects = df_projects.merge(dep_counts, on='project_id', how='left')
     df_projects['dependency_count'] = df_projects['dependency_count'].fillna(0)
-    # --- FIM DA NOVA CORREÇÃO ---
     
     df_projects['cost_diff'] = df_projects['total_actual_cost'] - df_projects['budget_impact']
     df_projects['cost_per_day'] = df_projects['total_actual_cost'] / df_projects['actual_duration_days'].replace(0, np.nan)
@@ -994,7 +969,6 @@ def run_eda_analysis(dfs):
     df_full_context = df_full_context.merge(df_resources, on='resource_id')
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
 
-    # ... (linha que cria df_full_context)
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
     
     # --- INÍCIO DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
@@ -1006,9 +980,6 @@ def run_eda_analysis(dfs):
         alloc_with_types = df_resource_allocations.merge(df_resources[['resource_id', 'resource_type']], on='resource_id', how='left')
         roles_per_project = alloc_with_types.groupby('project_id')['resource_type'].nunique().reset_index(name='calc_num_roles')
     
-        # 3. 'dependency_count' já foi calculada e mergeada (Linha ~1045)
-    
-        # Juntar tudo em df_projects
         df_projects = df_projects.merge(tasks_per_project, on='project_id', how='left')
         df_projects = df_projects.merge(roles_per_project, on='project_id', how='left')
     
@@ -1037,12 +1008,8 @@ def run_eda_analysis(dfs):
     else:
         
         df_projects['complexity_score'] = pd.to_numeric(df_projects['complexity_score'], errors='coerce').fillna(0)
-    # --- FIM DA LÓGICA DE COMPLEXIDADE DINÂMICA ---
     
     tables['stats_table'] = df_projects[['actual_duration_days', 'days_diff', 'budget_impact', 'total_actual_cost', 'cost_diff', 'num_resources', 'avg_hourly_rate', 'complexity_score']].describe().round(2)
-    
-
-    # --- Geração dos Gráficos (da célula 6 do notebook) ---
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.countplot(data=df_projects, x='project_status', ax=ax, palette='viridis'); ax.set_title('Distribuição do Status dos Processos')
     plots['plot_01'] = convert_fig_to_bytes(fig)
@@ -1068,7 +1035,7 @@ def run_eda_analysis(dfs):
     ax.tick_params(axis='x', rotation=90)
     ax.legend()
     ax.set_title(titulo_grafico)
-    fig.tight_layout() # Adicionado para garantir que os labels do eixo X não são cortados
+    fig.tight_layout() 
     plots['plot_04'] = convert_fig_to_bytes(fig)
     
     df_projects_q = df_projects.dropna(subset=['completion_quarter']).copy()
@@ -1129,8 +1096,6 @@ def run_eda_analysis(dfs):
     fig, ax = plt.subplots(figsize=(10, 6)); sns.histplot(data=df_projects, x='complexity_score', kde=True, color='darkslateblue', ax=ax); ax.set_title('Distribuição da Complexidade dos Processos')
     plots['plot_24'] = convert_fig_to_bytes(fig)
     
-    # ======= Normalizar tipos antes do merge (corrige ValueError int64 vs object) =======
-    # Garante que task_id em df_tasks e task_id_predecessor / task_id_successor em df_dependencies têm o mesmo dtype (string)
     if 'task_id' in df_tasks.columns:
         df_tasks['task_id'] = df_tasks['task_id'].astype(str)
     if 'task_id_predecessor' in df_dependencies.columns:
@@ -1138,10 +1103,8 @@ def run_eda_analysis(dfs):
     if 'task_id_successor' in df_dependencies.columns:
         df_dependencies['task_id_successor'] = df_dependencies['task_id_successor'].astype(str)
     
-    # Remove linhas inválidas/NaN nas colunas de ligação para evitar merges indesejados
     df_dependencies = df_dependencies.dropna(subset=[c for c in ['task_id_predecessor', 'task_id_successor'] if c in df_dependencies.columns])
     
-    # Agora os merges funcionam sem erro de dtype
     predecessor_counts = df_dependencies.merge(df_tasks, left_on='task_id_predecessor', right_on='task_id', how='left')['task_type'].value_counts()
     successor_counts = df_dependencies.merge(df_tasks, left_on='task_id_successor', right_on='task_id', how='left')['task_type'].value_counts()
     # ====================================================================================
@@ -1159,7 +1122,7 @@ def run_eda_analysis(dfs):
             ax.set_title(f'Gráfico de Dependências (Exemplo: Proc {PROJECT_ID_EXAMPLE})') # Título dinâmico
             plots['plot_26'] = convert_fig_to_bytes(fig)
     else:
-        plots['plot_26'] = None # Define como None se não houver dependências
+        plots['plot_26'] = None 
     
     fig, ax = plt.subplots(figsize=(10, 6)); sns.regplot(data=df_projects, x='complexity_score', y='days_diff', scatter_kws={'alpha':0.5}, line_kws={'color':'red'}, ax=ax); ax.set_title('Relação entre Complexidade e Atraso')
     plots['plot_27'] = convert_fig_to_bytes(fig)
@@ -1185,14 +1148,14 @@ def run_eda_analysis(dfs):
 
     return plots, tables
 
-# --- NOVA FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
+# --- FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
 #@st.cache_data # Removido para permitir interatividade e barra de progresso
 def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
     if agent_params is None:
         agent_params = {}    
     dfs = {key: df.copy() for key, df in dfs.items()}
     
-    # --- PASSO 1 (CORREÇÃO): CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
+    # --- PASSO 1: CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
     for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
         df = dfs[df_name]
         for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
@@ -1260,7 +1223,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     df_projects['planned_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['planned_end_date']), axis=1)
     df_projects['total_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['end_date']), axis=1)
     
-    # --- AMBIENTE E AGENTE (CLASSES) --- (VERSÃO PORTFÓLIO)
+    # --- AMBIENTE E AGENTE (CLASSES) --- 
     class PortfolioManagementEnv:
         def __init__(self, dfs, reward_config):
             self.rewards = reward_config
@@ -1272,8 +1235,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.df_tasks = dfs['tasks']
             self.df_allocations = dfs['resource_allocations']
             
-            # --- NOVO BLOCO DINÂMICO ---
-            # 1. Juntar alocações, tarefas e recursos para saber "quem fez o quê"
+            # 2. Juntar alocações, tarefas e recursos para saber "quem fez o quê"
             # Assegura que os IDs são strings para o merge
             self.df_allocations['task_id'] = self.df_allocations['task_id'].astype(str)
             self.df_allocations['resource_id'] = self.df_allocations['resource_id'].astype(str)
@@ -1283,19 +1245,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             df_merged_logic = self.df_allocations.merge(self.df_tasks[['task_id', 'task_type']], on='task_id')
             df_merged_logic = df_merged_logic.merge(self.df_resources[['resource_id', 'resource_type']], on='resource_id')
             
-            # 2. Agrupar para encontrar as combinações únicas
+            # 3. Agrupar para encontrar as combinações únicas
             df_map = df_merged_logic[['task_type', 'resource_type']].drop_duplicates().dropna()
             
-            # 3. Construir o TASK_TYPE_RESOURCE_MAP dinamicamente
+            # 4. Construir o TASK_TYPE_RESOURCE_MAP dinamicamente
             self.TASK_TYPE_RESOURCE_MAP = {}
             for task_type, group in df_map.groupby('task_type'):
                 self.TASK_TYPE_RESOURCE_MAP[task_type] = group['resource_type'].tolist()
             
             print("--- MAPA DE RECURSOS/TAREFAS GERADO DINAMICAMENTE ---")
             print(self.TASK_TYPE_RESOURCE_MAP)
-            # --- FIM DO NOVO BLOCO ---
-            
-            # 2. Criar dicionários para acesso rápido (MUITO mais rápido que filtrar DataFrames em loop)
+                        
+            # 5. Criar dicionários para acesso rápido
             self.tasks_by_project = {pid: df_group.to_dict('records') for pid, df_group in dfs['tasks'].groupby('project_id')}
             self.dependencies_by_project = {pid: {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in df_group.iterrows()} for pid, df_group in self.df_dependencies.groupby('project_id')}
             
@@ -1304,7 +1265,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             self.resource_capacity_map = pd.Series(self.df_resources.daily_capacity.values, index=self.df_resources.resource_id).to_dict()
             
         def reset(self):
-            # 3. Reset GERAL da simulação
+            # 6. Reset GERAL da simulação
             self.current_date = self.df_projects['start_date'].min()
             self.resource_calendar = {} # Calendário de ocupação de recursos (essencial para a contenção)
             
@@ -1318,15 +1279,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return self.get_state()
 
         def get_state(self):
-            # 4. O estado agora descreve o PORTFÓLIO, não um projeto
+            # 7. O estado descreve o PORTFÓLIO, não um projeto
             num_active = len(self.active_projects)
             pending_tasks_count = 0
             high_prio_tasks_count = 0
         
-            # --- INÍCIO CÁLCULO max_pending_days ---
             max_pending_days = 0 
-            # ---------------------------------------
-        
+            
             # Calcular tarefas pendentes, alta prioridade e idade máxima
             for proj in self.active_projects.values():
                 for task in proj['tasks'].values():
@@ -1370,9 +1329,8 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 else:
                     utilization = 0.0
                 utilization_rates.append(round(utilization, 1)) 
-            # --- Fim Lógica Utilização ---
-        
-            # O novo estado inclui max_pending_days ANTES das taxas de utilização
+                    
+            # Estado para o RL
             new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week, max_pending_days) + tuple(utilization_rates)
         
             return new_state_tuple
@@ -1387,14 +1345,13 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             # Se a verificação for para um tipo de recurso específico
             if check_resource_type:
                 task_type = task['task_type']
-                # O bloco 'if task_type == Decisão...' foi removido.
                 allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
                 return check_resource_type in allowed_resources
             
             return True # Retorna True se não estiver a verificar um recurso específico (elegibilidade geral)
 
         def get_possible_actions_for_state(self):
-            # 5. Procura tarefas elegíveis em TODOS os projetos ativos
+            # 8. Procura tarefas elegíveis em TODOS os projetos ativos
             possible_actions = set()
             for proj_id, proj_state in self.active_projects.items():
                 for task_id, task_data in proj_state['tasks'].items():
@@ -1412,7 +1369,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             return list(possible_actions)
 
         def step(self, action_list):
-            # 6. O 'step' agora representa um DIA de trabalho para a empresa inteira
             # Guarda as horas do dia ANTERIOR antes de calcular as de hoje
             self.last_day_hours_worked_per_resource = getattr(self, 'current_day_hours_worked_per_resource', defaultdict(float))
             # 6a. Ativar novos projetos que começam hoje
@@ -1440,7 +1396,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             daily_cost_by_project = defaultdict(float) # Necessário para os logs detalhados
             daily_hours_by_project = defaultdict(float) # Necessário para os logs detalhados
 
-            # O loop agora processa a lista de ações detalhada
+            # O loop  processa a lista de ações detalhada
             for res_type, task_type, proj_id, task_id, res_id, hours_to_work in action_list:
                 
                 task_data = self.active_projects[proj_id]['tasks'][task_id]
@@ -1472,7 +1428,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     task_data['completion_date'] = self.current_date
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
 
-                    # --- INÍCIO DO NOVO BLOCO: Atualizar Elegibilidade de Sucessoras ---
+                    # --- Atualizar Elegibilidade de Sucessoras ---
                     completed_task_id = task_id # ID da tarefa que acabou de ser concluída
                     # Iterar sobre todos os projetos ativos para encontrar sucessoras
                     for check_proj_id, check_proj_state in self.active_projects.items():
@@ -1483,7 +1439,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                                 # Se a tarefa sucessora ainda não tinha data de elegibilidade, define-a para hoje
                                 if check_task_data['eligibility_date'] is None:
                                     check_task_data['eligibility_date'] = self.current_date
-                    # --- FIM DO NOVO BLOCO ---
                 
                 # Para os logs detalhados
                 daily_cost_by_project[proj_id] += cost_today
@@ -1494,7 +1449,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                     task_data['completion_date'] = self.current_date
                     reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
                     
-            # NOVO BLOCO PARA LOGGING DETALHADO
             for proj_id, proj_state in self.active_projects.items():
                 if proj_id not in self.detailed_logs:
                     self.detailed_logs[proj_id] = []
@@ -1533,7 +1487,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
             # 6d. Finalizar o dia
             self.current_date += timedelta(days=1)
-            # --- Alterado: Calcular Penalização DINÂMICA por Tarefas Pendentes/Atrasadas ---
+            # Calcular Penalização DINÂMICA por Tarefas Pendentes/Atrasadas ---
             pending_penalty = 0
             for proj in self.active_projects.values():
                 for task in proj['tasks'].values():
@@ -1548,7 +1502,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                             # Penalização aumenta linearmente com os dias pendente (mínimo 0)
                             penalty_for_this_task = self.rewards['pending_task_penalty_factor'] * max(0, pending_days_calendar)
                             pending_penalty += penalty_for_this_task
-            # --- Fim Alterado ---
         
             total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - pending_penalty # Modificado para incluir a nova penalização
             
@@ -1577,23 +1530,18 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
         def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
     
-    # --- INÍCIO DO NOVO BLOCO ---
     # Calcular o total de horas reais trabalhadas por tarefa a partir das alocações
-    # Usamos df_resource_allocations (que já é a cópia filtrada da amostra)
     real_hours_per_task_series = df_resource_allocations.groupby('task_id')['hours_worked'].sum()
     real_hours_per_task = real_hours_per_task_series.to_dict()
-    # --- FIM DO NOVO BLOCO ---
-            
-    # --- INÍCIO DO NOVO BLOCO ---
+                
     # --- Lógica de Simulação de Portfólio ---
     
     # 1. Instanciar o novo ambiente de portfólio.
-    # Usamos a amostra completa de projetos para simular o portfólio.
+    # Amostra completa de projetos para simular o portfólio.
     env = PortfolioManagementEnv(dfs={'projects': df_projects, 'tasks': df_tasks, 'resources': df_resources, 'dependencies': df_dependencies}, reward_config=reward_config)
 
     # 2. Simplificar as ações para o agente.
-    # O agente aprende uma política geral (ex: 'para um Analista de Risco, é melhor focar em Análise de Risco').
-    # Isto mantém a Q-Table com um tamanho gerenciável.
+    # Mantémm a Q-Table com um tamanho gerenciável.
     simplified_actions = set()
     for res_type in env.resource_types:
         simplified_actions.add((res_type, 'idle'))
@@ -1623,7 +1571,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             
             action_list_for_step = []
             
-            # --- NOVA LÓGICA DE ALOCAÇÃO DIÁRIA ---
+            # ---  LÓGICA DE ALOCAÇÃO DIÁRIA ---
             # 1. Obter todas as tarefas de trabalho possíveis para hoje
             work_actions = [a for a in possible_actions_full if a[1] != 'idle']
             simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
@@ -1696,7 +1644,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                 break
 
         agent.decay_epsilon()
-        # As métricas de duração e custo agora referem-se ao desempenho do portfólio inteiro.
+        # As métricas de duração e custo referem-se ao desempenho do portfólio inteiro.
         total_duration = sum(p['simulated_duration'] for p in env.completed_projects.values())
         total_cost = sum(p['simulated_cost'] for p in env.completed_projects.values())
         agent.episode_rewards.append(episode_reward)
@@ -1709,12 +1657,10 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
 
     status_text.success("Treino concluído!")
     status_text.info("A preparar os gráficos e análises finais...")
-    
-    # --- INÍCIO DO BLOCO DE CÓDIGO FINAL ---
 
     # 5. Geração de Gráficos de Treino
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    # ... (O código para gerar os 4 gráficos de treino permanece o mesmo, por isso não o vou repetir aqui, apenas a sua continuação)
+    
     rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
     rolling_avg_window = 50
     axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio'); axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[0, 0].set_title('Recompensa por Episódio'); axes[0, 0].set_xlabel('Episódio'); axes[0, 0].set_ylabel('Recompensa Total'); axes[0, 0].legend(); axes[0, 0].grid(True, linestyle='--', alpha=0.6)
@@ -1724,7 +1670,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     fig.tight_layout()
     plots['training_metrics'] = convert_fig_to_bytes(fig)
 
-    # 6. AVALIAÇÃO OTIMIZADA FINAL
+    # 6. AVALIAÇÃO FINAL
     status_text.info("A correr a simulação final otimizada para avaliação...")
     agent.epsilon = 0
     state = env.reset()
@@ -1776,13 +1722,11 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
             action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
             
             available_hours_per_resource[chosen_res_id] -= hours_to_assign
-            # --- LINHA DE CORREÇÃO CRÍTICA (AVALIAÇÃO) ---
             # Remove a tarefa escolhida da lista de trabalho para este dia.
             work_actions.remove(best_task_action)
             simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
             
             # Se a tarefa ficar sem esforço restante, removemo-la das opções para o resto do dia
-            # (Pequena otimização para não continuar a tentar atribuir uma tarefa "quase completa")
             task_state = env.active_projects[proj_id]['tasks'][task_id]
             if (task_state['estimated_effort'] - task_state['progress']) < 1:
                  work_actions = [a for a in work_actions if a[3] != task_id]
@@ -1823,7 +1767,6 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
         return pd.DataFrame(perf_data)
     tables['global_performance_test'] = get_global_performance_df(test_results_df)
 
-    # 8. REINTRODUÇÃO DA ANÁLISE DETALHADA
     project_info_real = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
     project_info_sim = test_results_df.loc[test_results_df['project_id'] == project_id_to_simulate].iloc[0]
     
@@ -1862,7 +1805,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
     
     return plots, tables, logs
     
-# --- INÍCIO DO NOVO MOTOR DE DIAGNÓSTICO (V10 - CORREÇÕES FINAIS E REFINAMENTO) ---
+# --- MOTOR DE DIAGNÓSTICO ---
 from scipy import stats
 import matplotlib.dates as mdates
 from collections import Counter
@@ -1872,7 +1815,7 @@ import streamlit as st
 import math # Para verificar isnan
 import re # Para extrair IDs de cartão
 
-# --- MAPEAMENTO DE REFERÊNCIAS (MANUAL - ATUALIZADO) ---
+# --- MAPEAMENTO DE REFERÊNCIAS ---
 CARD_TITLE_MAP = {
     "Cartão 1": "Matriz de Performance (Custo vs Prazo)", "Cartão 2": "Top 5 Processos Mais Caros",
     "Cartão 3": "Séries Temporais de KPIs de Performance", "Cartão 4": "Distribuição do Status dos Processos",
@@ -1915,7 +1858,7 @@ SECTION_MAP = {
 }
 
 class DiagnosticEngineV5:
-    """ Motor V10: Lógica de investigação flexível, com correções finais e refinamento de insights. """
+    """ Lógica de investigação flexível"""
 
     def __init__(self, tables_pre, metrics, data_frames, tables_eda):
         self.tables_pre_orig = tables_pre if tables_pre else {}
@@ -1936,7 +1879,6 @@ class DiagnosticEngineV5:
         self.metrics_im = self.metrics_orig.get('inductive_miner', {})
         self.df_efficiency_metrics = self.metrics_orig.get('resource_efficiency_data', pd.DataFrame())
 
-        # Mapeamento robusto da ordem das tarefas
         # --- INÍCIO: Descoberta Dinâmica da Ordem das Tarefas ---
         self.task_order_map = {}
         if not self.df_tasks_base.empty and not self.df_projects_base.empty and 'start_date' in self.df_projects_base.columns and 'start_date' in self.df_tasks_base.columns:
@@ -1965,15 +1907,13 @@ class DiagnosticEngineV5:
                 print(f"Erro ao gerar task_order_map dinâmico: {e}")
                 # Fallback: cria um mapa vazio se falhar
                 self.task_order_map = {} 
-        # --- FIM: Descoberta Dinâmica ---
-
+        
         self.insights = { k: [] for k in ['saude_geral'] + list(SECTION_MAP.keys()) }
         self.narrative_flags = {} # O cérebro da V10
 
         self._preprocess_data()
         self._prepare_aggregated_data()
 
-    # --- Funções Auxiliares (Mantidas) ---
     def _initialize_aggregated_dfs(self):
         attrs = [
             'df_handoffs', 'df_resource_avg_events', 'df_workload', 'df_bottleneck_res',
@@ -2022,7 +1962,6 @@ class DiagnosticEngineV5:
         except Exception as e: print(f"Erro _preprocess_data: {e}")
 
     def _prepare_aggregated_data(self):
-        # (Mantém-se igual à V8 - já corrigido)
          # --- Cálculos baseados em df_full_context_base ---
         if not self.df_full_context_base.empty:
             try: self.df_cost_by_resource_type = self.df_full_context_base.groupby('resource_type')['cost_of_work'].sum().reset_index()
@@ -2065,7 +2004,7 @@ class DiagnosticEngineV5:
 
             except Exception as e: print(f"Erro _prepare: Cálculos Tempo Espera: {e}")
 
-            # --- Duração Média por Fase (Regra 18) ---
+            # --- Duração Média por Fase ---
             try:
                  def get_phase(task_type):
                      if not isinstance(task_type, str): return 'Fase Desconhecida'
@@ -2126,7 +2065,7 @@ class DiagnosticEngineV5:
              else: print("Aviso _prepare: df_full_context vazio ou sem project_id.")
         except Exception as e: print(f"Erro _prepare: Cálculos Log: {e}")
 
-        # --- Obter dados pré-calculados que não são recalculados (Garantindo ordenação V9) ---
+        # --- Obter dados pré-calculados que não são recalculados  ---
         try:
              # Tenta obter dos dados processados pela EDA, garantindo a ordenação
              if not self.df_projects_base.empty and 'completion_month' in self.df_projects_base.columns:
@@ -2172,7 +2111,7 @@ class DiagnosticEngineV5:
              if self.df_wait_by_activity.empty: self.df_wait_by_activity = self.metrics_orig.get('wait_by_activity_data', pd.DataFrame())
         except Exception as e: print(f"Erro _prepare: Obter dados pré-calculados: {e}")
 
-    # --- NOVA FUNÇÃO AUXILIAR PARA MAPEAR REFERÊNCIAS ---
+    # ---  MAPEAR REFERÊNCIAS ---
     def _map_card_keys_to_names(self, card_keys_str):
         """ Mapeia uma string de chaves de cartão (ex: 'Cartão 1, Cartão 22') para nomes. """
         if not isinstance(card_keys_str, str):
@@ -2226,10 +2165,7 @@ class DiagnosticEngineV5:
         except ValueError: return 0
         except Exception as e: print(f"Erro inesperado em _get_trend: {e}"); return 0
 
-    # --- MOTOR DE ANÁLISE (V10) ---
-
     def run(self):
-        # (Mantém-se igual à V8)
         self._check_kpis()
         self._run_contextual_analysis()
         self._build_executive_summary()
@@ -2246,7 +2182,6 @@ class DiagnosticEngineV5:
         return self.insights
 
     def _run_contextual_analysis(self):
-        # (Mantém-se igual à V8)
         flags = {}
 
         # --- 1. Análise de Eficiência (Baseline) ---
@@ -2373,7 +2308,6 @@ class DiagnosticEngineV5:
         return rework_loops
 
     def _build_executive_summary(self):
-        # (Mantém-se igual à V8 - usa a função _add_insight corrigida)
         f = self.narrative_flags
 
         # --- Cenário 1: O Paradoxo da Eficiência ---
@@ -2448,10 +2382,9 @@ class DiagnosticEngineV5:
                               "Recomendamos focar nos maiores gargalos de tempo ('Análise: Gargalos e Rework') e nos recursos menos eficientes ('Análise: Recursos e Equipas').",
                               "Cartão 42, Cartão 33", level='problema', priority=1)
 
-    # --- (V10) Funções de Recolha de Factos (Refinadas e sem críticas) ---
+    # --- Funções de Recolha de Factos ---
 
     def _check_kpis(self):
-        # (Mantém-se igual à V8)
         try:
             dur_media = self.kpis.get('Duração Média Num', 0)
             espera_media = self.kpis.get('Espera Média (dias)', 0)
@@ -2480,7 +2413,6 @@ class DiagnosticEngineV5:
         except Exception as e: print(f"Erro em _check_kpis: {e}")
 
     def _check_custos_atrasos_facts(self):
-        # (Mantém-se igual à V8)
         section = 'diagnostico_custos_atrasos'
         if self.df_projects_base.empty: return
 
@@ -2536,7 +2468,6 @@ class DiagnosticEngineV5:
         except Exception as e: print(f"Erro Regra [22, 3, 12]: {e}")
 
     def _check_performance_prazos_facts(self):
-        # (Mantém-se igual à V8)
         section = 'diagnostico_custos_atrasos' # Adiciona a esta secção para consolidar
 
         # Cartão 18: Duração Média por Fase
@@ -2560,7 +2491,6 @@ class DiagnosticEngineV5:
         except Exception as e: print(f"Erro Regra [14, 15]: {e}")
 
     def _check_recursos_equipas_facts(self):
-        # (Mantém-se igual à V8)
         section = 'diagnostico_recursos_equipas'
 
         # Cartão 26: Distribuição Recursos
@@ -2630,7 +2560,7 @@ class DiagnosticEngineV5:
     def _check_gargalos_esperas_facts(self):
         section = 'diagnostico_gargalos_esperas'
 
-        # Insight sobre KPI de Espera (V10 - Explica a limitação)
+        # Insight sobre KPI de Espera
         try:
             # Usa o valor calculado e guardado em _check_kpis
             perc_espera = self.kpis.get('% Tempo em Espera', None)
@@ -2716,7 +2646,7 @@ class DiagnosticEngineV5:
 
         except Exception as e: print(f"Erro Regra [61, 65]: {e}")
 
-        # Cartão 70 vs 58: Rework (V10 - Sem criticar)
+        # Cartão 70 vs 58: Rework
         try:
             df_rework_table = self.tables_pre_orig.get('rework_loops_table', pd.DataFrame())
             rework_detected_in_matrix = self.narrative_flags.get('has_rework', False)
@@ -2769,13 +2699,12 @@ class DiagnosticEngineV5:
         except Exception as e: print(f"Erro Regra [76]: {e}")
 
 
-# --- FUNÇÃO DE RENDERIZAÇÃO DA PÁGINA DE DIAGNÓSTICO (V10 - SEM EXPANDERS) ---
+# --- FUNÇÃO DE RENDERIZAÇÃO DA PÁGINA DE DIAGNÓSTICO ---
 def render_diagnostics_page():
-    """ Renderiza V10: Resumo Executivo, seguido de factos de suporte SEM expanders. """
     st.subheader("💡 Diagnóstico Automático e Insights")
     st.markdown("Análise automática dos principais indicadores, destacando pontos fortes, problemas e ineficiências para orientar a sua investigação.")
 
-    # --- Obtenção de Dados (igual) ---
+    # --- Obtenção de Dados ---
     tables_pre = st.session_state.get('tables_pre_mining', {})
     metrics = st.session_state.get('metrics', {})
     data_frames = st.session_state.get('data_frames_processed', {})
@@ -2785,7 +2714,7 @@ def render_diagnostics_page():
         st.error("Dados essenciais da análise (projetos, tarefas) não encontrados. Execute a análise em 'Configurações'.")
         return
 
-    # --- Execução do Motor V10 (igual) ---
+    # --- Execução do Motor ---
     try:
         engine = DiagnosticEngineV5(tables_pre, metrics, data_frames, tables_eda)
         report = engine.run()
@@ -2824,7 +2753,7 @@ def render_diagnostics_page():
             elif item['level'] == 'facto': # Caso de processo saudável ou destaque positivo
                 st.success(icon="✅", body=f"**{item['titulo']}**\n\n{item['detalhe']}\n\n*Evidência principal: {item.get('cartao_ref', 'N/A')}*")
 
-    # --- Bloco 3: Factos de Suporte e Observações Detalhadas (SEM EXPANDERS) ---
+    # --- Bloco 3: Factos de Suporte e Observações Detalhadas ---
     st.markdown("---")
     st.markdown("<h4>3. Análise Detalhada por Área</h4>", unsafe_allow_html=True)
     st.markdown("Factos, alertas e observações detalhadas que suportam o diagnóstico principal.")
@@ -2841,10 +2770,8 @@ def render_diagnostics_page():
         items = report.get(key, [])
         if items:
             found_any_fact = True
-            # --- ALTERAÇÃO: Título da secção visível ---
             st.markdown(f"<h5 style='margin-top: 25px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 5px;'><i class='bi {icon}'></i> {title}</h5>", unsafe_allow_html=True)
-            # --- FIM DA ALTERAÇÃO ---
-
+            
             cols = st.columns(2)
             for i, item in enumerate(items):
                 with cols[i % 2]:
@@ -2864,8 +2791,6 @@ def render_diagnostics_page():
 
     if not found_any_fact:
          st.info("Nenhum facto de suporte detalhado foi gerado.")
-
-# --- FIM DO BLOCO DE DIAGNÓSTICO V10 ---
 
 
 # --- PÁGINA DE LOGIN ---
@@ -2911,12 +2836,11 @@ def settings_page():
     upload_cols = st.columns(5)
     for i, name in enumerate(file_names):
         with upload_cols[i]:
-            # A alteração está na linha seguinte, com a adição do parâmetro 'help'
             uploaded_file = st.file_uploader(
                 f"Carregar `{name}.csv`", 
                 type="csv", 
                 key=f"upload_{name}",
-                help=tooltips[name]  # <-- LINHA ADICIONADA
+                help=tooltips[name]
             )
             if uploaded_file:
                 # normalização mínima após upload
@@ -2932,7 +2856,7 @@ def settings_page():
                     if num_col in df.columns:
                         df[num_col] = pd.to_numeric(df[num_col], errors='coerce').fillna(0)
                 
-                # [CORREÇÃO PONTO 10] Adiciona performance_factor se não existir
+                # Adiciona performance_factor se não existir
                 if name == 'resources' and 'performance_factor' not in df.columns:
                     df['performance_factor'] = 1.0
 
@@ -2983,10 +2907,6 @@ def settings_page():
         st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
 
 # --- FUNÇÃO AUXILIAR PARA GERAR O PDF ---
-# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V12 - Sintaxe Atualizada e Mais Debugging) ---
-
-
-# --- FUNÇÃO AUXILIAR PARA GERAR O PDF (V15 - Layout e KPIs Corrigidos) ---
 def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
     print("\n--- Iniciando Geração do PDF V15 ---")
     try:
@@ -3019,7 +2939,6 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                     (plots_eda.get('plot_31'), "Evolução do Volume e Tamanho dos Processos"),
                 ]
             },
-             # --- O resto da estrutura sections_data permanece igual à V10/V12 ---
             "2. Performance e Prazos": {
                 'plots': [
                      (plots_pre.get('lead_time_vs_throughput'), "Relação Lead Time vs Throughput"),
@@ -3104,13 +3023,11 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
             },
         }
 
-        # --- ALTERAÇÃO: Largura útil e largura das imagens lado a lado ---
         page_width = pdf.w - 2 * pdf.l_margin # Largura útil da página
         col_width = page_width / 2 - 5 # Largura para cada imagem (metade - margem)
         title_height = 10 # Altura estimada para um título
         table_line_height = 5 # Altura estimada por linha de tabela
         img_est_height = col_width / 1.6 # Altura estimada da imagem (assumindo ratio ~1.6)
-        # ---------------------------------------------------------------
 
         is_first_section = True
         for section_title, data in sections_data.items():
@@ -3129,7 +3046,6 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
 
             plot_pair_buffer = [] # Buffer para guardar plots para layout lado a lado
 
-            # --- Processa tabelas PRIMEIRO ---
             for table_df, table_title in data['tables']:
                 print(f"  Attempting to add table: {table_title}")
                 start_y = pdf.get_y() # Posição Y antes de adicionar
@@ -3163,7 +3079,6 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                      pdf.ln(2)
                      print(f"    Skipping table '{table_title}': None, not DataFrame/Dict, or empty.")
 
-                # Desenha a caixa completa agora que sabemos a altura
                 end_y = pdf.get_y()
                 box_height = end_y - start_y + 4 # Adiciona padding
                 pdf.rect(pdf.l_margin - 2 , start_y - 2, page_width + 4, box_height)
@@ -3177,7 +3092,7 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                 print(f"  Attempting to add plot: {plot_title}")
                 plot_pair_buffer.append((plot_bytes, plot_title))
 
-                # Se temos um par ou é o último gráfico da lista
+                # Se existe um par ou é o último gráfico da lista
                 if len(plot_pair_buffer) == 2 or i == len(valid_plots) - 1:
                     start_y_plots = pdf.get_y()
                     current_x = pdf.l_margin
@@ -3207,8 +3122,7 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_img:
                                 temp_img.write(pb.getvalue())
                                 temp_img_path = temp_img.name
-
-                            # Adiciona imagem na posição atual com largura de coluna
+    
                             pdf.image(temp_img_path, x=current_x, w=col_width)
                             plot_end_y = pdf.get_y() # Captura Y após a imagem (pode não ser útil se a imagem for alta)
                             max_h_in_pair = max(max_h_in_pair, plot_end_y - start_y_plots) # Tenta rastrear altura máxima na linha
@@ -3325,7 +3239,6 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
 def dashboard_page():
     st.title("🏠 Process Mining")
 
-    # (Adicione estas linhas DENTRO da função dashboard_page, APÓS st.title)
     ### START PDF/AI STATE INIT (if not global) ###
     if 'show_ai_modal' not in st.session_state: st.session_state.show_ai_modal = False
     if 'gemini_analysis' not in st.session_state: st.session_state.gemini_analysis = None
@@ -3337,8 +3250,6 @@ def dashboard_page():
         col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
     
         with col_pdf:
-            # --- BLOCO PDF REVISADO V14 (Geração Direta no Download Button) ---
-
             # Flag para controlar se o botão de download deve ser mostrado
             show_download = st.session_state.get('pdf_ready_for_download', False)
 
@@ -3390,9 +3301,8 @@ def dashboard_page():
                         'pdf_ready_for_download': False
                     })
                 )
-            # --- FIM DO BLOCO PDF REVISADO V14 ---
         
-        # --- NOVO BLOCO AI (V15) - Botão Toggle + Área de Contexto ---
+        # --- Botão Toggle + Área de Contexto ---
         with col_ai:
             # Botão para MOSTRAR/ESCONDER a área de preparação
             button_label = "🤖 Esconder AI Prep" if st.session_state.get("show_ai_prep_area", False) else "🤖 AI Prep"
@@ -3401,7 +3311,7 @@ def dashboard_page():
                 st.session_state.show_ai_prep_area = not st.session_state.get("show_ai_prep_area", False)
                 st.rerun() # Rerun para mostrar/esconder a área abaixo
 
-    # --- Área Condicional para Preparar Contexto (Substitui a Modal) ---
+    # --- Área Condicional para Preparar Contexto ---
     if st.session_state.get("show_ai_prep_area", False):
         st.markdown("---") # Separador visual
         with st.container(border=True): # Container para agrupar visualmente
@@ -3413,8 +3323,8 @@ def dashboard_page():
             prompt_text = ""
             error_generating = None
 
-            # Tenta gerar o PDF e o Prompt
-            # Usar cache aqui pode acelerar se os dados não mudaram desde a última vez que abriu
+            # Gerar o PDF e o Prompt
+            
             @st.cache_data(show_spinner="Preparando dados para IA...")
             def prepare_ai_data():
                 _pdf_bytes = None
@@ -3434,7 +3344,7 @@ def dashboard_page():
                     else: _error = "Falha ao gerar conteúdo do PDF."
 
 
-                    # Gerar Prompt (Ler Código)
+                    # Gerar Prompt
                     _app_code = "# Erro ao ler código #"
                     try:
                          _script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
@@ -3473,11 +3383,11 @@ def dashboard_page():
             else:
                 st.warning("Geração do PDF falhou ou PDF está vazio. O Gemini não poderá analisar os gráficos.")
 
-            # --- Link Corrigido usando st.markdown ---
+            ---
             st.markdown('[3. Abrir Gemini (Nova Aba)](https://gemini.google.com/)', unsafe_allow_html=True)
             # ----------------------------------------
 
-        st.markdown("---") # Separador visual no fim
+        st.markdown("---") 
         ### END AI CONTEXT AREA ###
     
     if st.session_state.get('show_welcome_message', False):
@@ -3578,7 +3488,6 @@ def dashboard_page():
     elif st.session_state.current_section == "recursos":
         st.subheader("3. Recursos e Equipa")
         
-        # Primeira linha de cartões
         c1, c2 = st.columns(2)
         with c1:
             create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'), tooltip="Mostra quantos colaboradores existem em cada função. Ajuda a entender a composição da equipa.")
@@ -3594,7 +3503,6 @@ def dashboard_page():
             create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'), tooltip="Analisa a evolução do tamanho médio das equipas alocadas aos processos ao longo do tempo.")
             create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'), tooltip="Lista os 20 recursos associados ao maior atraso médio nos processos em que participaram.")
 
-        # Segunda linha de cartões, para os gráficos de análise de Skill
         c3, c4 = st.columns(2)
         with c3:
             if 'skill_vs_performance_adv' in plots_post:
@@ -3604,9 +3512,9 @@ def dashboard_page():
 
         # Gráficos complexos que ocupam a largura total
         if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="Grafo que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
+            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="gráfico que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
 
-        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="Grafo onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
+        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="gráfico onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
         
         create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'), tooltip="Matriz que cruza recursos com atividades, mostrando as horas totais trabalhadas. Permite identificar rapidamente quem são os especialistas em cada tipo de tarefa.")
     
@@ -3678,7 +3586,7 @@ def dashboard_page():
             create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'), tooltip="Analisa se processos considerados mais 'complexos' (maior score de complexidade) tendem a ter maiores atrasos.")
             create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-arrows-expand"></i>', chart_bytes=plots_eda.get('plot_28'), tooltip="Analisa se processos com maior número de dependências entre tarefas tendem a ter maiores desvios de custo.")
 
-# --- NOVA PÁGINA (REINFORCEMENT LEARNING) ---
+# --- (REINFORCEMENT LEARNING) ---
 def rl_page():
     st.title("🤖 Simulação com Reinforcement Learning")
 
@@ -3686,7 +3594,7 @@ def rl_page():
         st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Configurações' para carregar os dados.")
         return
 
-    # --- LÓGICA CORRIGIDA: CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
+    #  CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
     # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
     if 'rl_sample_ids' not in st.session_state:
         proj_ids = st.session_state.dfs['projects']['project_id'].astype(str)
@@ -3700,7 +3608,7 @@ def rl_page():
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
         
-        # As opções agora vêm da amostra que acabámos de criar.
+        # As opções vêm da amostra que acabou de ser criada.
         project_ids_elegiveis = st.session_state.get('rl_sample_ids', [])
         
         c1, c2 = st.columns(2)
@@ -3743,7 +3651,7 @@ def rl_page():
     if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
         st.session_state.rl_params_expanded = False
         
-        # CORREÇÃO: Criar reward_config DENTRO do botão para usar valores atuais
+        # Criar reward_config DENTRO do botão para usar valores atuais
         reward_config = {
             'cost_impact_factor': cost_impact_factor, 'daily_time_penalty': daily_time_penalty, 'idle_penalty': idle_penalty,
             'per_day_early_bonus': per_day_early_bonus, 'completion_base': completion_base, 'per_day_late_penalty': per_day_late_penalty,
@@ -3772,7 +3680,6 @@ def rl_page():
                 }
             )
             
-            # Localização Correta das Novas Linhas
             
     
         st.session_state.plots_rl = plots_rl
@@ -3781,7 +3688,7 @@ def rl_page():
         st.session_state.rl_analysis_run = True
         st.rerun()
     if st.session_state.rl_analysis_run:
-        # (O resto da sua função rl_page para mostrar os resultados continua aqui, sem alterações)
+
         st.markdown("---")
         st.subheader("Resultados da Simulação")
         
