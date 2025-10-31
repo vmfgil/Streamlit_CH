@@ -3383,7 +3383,7 @@ def dashboard_page():
             else:
                 st.warning("Geração do PDF falhou ou PDF está vazio. O Gemini não poderá analisar os gráficos.")
 
-            ---
+            
             st.markdown('[3. Abrir Gemini (Nova Aba)](https://gemini.google.com/)', unsafe_allow_html=True)
             # ----------------------------------------
 
