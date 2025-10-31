@@ -2017,9 +2017,6 @@ class DiagnosticEngineV5:
 
                  if 'task_type' in self.df_tasks_base.columns:
                      df_ph = self.df_tasks_base.dropna(subset=['project_id', 'start_date', 'end_date', 'task_type']).copy()
-                     # df_ph['phase'] = ... (linha removida)
-            
-                     # Substituir 'phase' por 'task_type'
                      ph_times = df_ph.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
                      ph_times['cycle_time_days'] = (ph_times['end'] - ph_times['start']).dt.days
                      ph_times = ph_times[ph_times['cycle_time_days'] >= 0]
@@ -3022,11 +3019,11 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
             },
         }
 
-        page_width = pdf.w - 2 * pdf.l_margin # Largura útil da página
-        col_width = page_width / 2 - 5 # Largura para cada imagem (metade - margem)
-        title_height = 10 # Altura estimada para um título
-        table_line_height = 5 # Altura estimada por linha de tabela
-        img_est_height = col_width / 1.6 # Altura estimada da imagem (assumindo ratio ~1.6)
+        page_width = pdf.w - 2 * pdf.l_margin 
+        col_width = page_width / 2 - 5 
+        title_height = 10 
+        table_line_height = 5 
+        img_est_height = col_width / 1.6 
 
         is_first_section = True
         for section_title, data in sections_data.items():
@@ -3037,9 +3034,9 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
             else:
                  is_first_section = False
 
-            pdf.set_draw_color(200, 200, 200) # Cor cinza para a linha
-            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y()) # Linha horizontal
-            pdf.ln(2) # Pequeno espaço após a linha
+            pdf.set_draw_color(200, 200, 200) 
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y()) 
+            pdf.ln(2) 
             pdf.set_font("Helvetica", "B", 14); pdf.cell(0, title_height, section_title, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.ln(5)
             pdf.set_font("Helvetica", "", 10)
 
@@ -3602,7 +3599,7 @@ def rl_page():
 
     # -----------------------------------------------------------------
 
-    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de processos. O treino e a análise correm sobre uma amostra de 500 processos para garantir a performance.")
+    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de processos. O treino e a análise correm sobre uma amostra de 100 processos para garantir a performance.")
 
     with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
         st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
