@@ -5151,11 +5151,12 @@ def _llm_settings():
             'Google (Gemini)': st.session_state.get('llm_key_gemini') or sec.get('GEMINI_API_KEY') or sec.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')}
     prov = get('provider') or next((p for p in ['Google (Gemini)', 'Anthropic (Claude)'] if keys[p]), 'Google (Gemini)')
     if prov not in keys: prov = 'Anthropic (Claude)' if 'anthropic' in str(prov).lower() or 'claude' in str(prov).lower() else 'Google (Gemini)'
-    default_model = {'Anthropic (Claude)': 'claude-sonnet-5-5', 'Google (Gemini)': 'gemini-2.5-flash'}[prov]
-    model = st.session_state.get('llm_model') or sec.get('ANTHROPIC_MODEL' if prov.startswith('Anthropic') else 'GEMINI_MODEL') or default_model
+    default_model = st.session_state.get(f'auto_model_{prov}') or {'Anthropic (Claude)': 'claude-sonnet-5-5', 'Google (Gemini)': 'gemini-2.5-flash'}[prov]
+    user_model = st.session_state.get('llm_model') or sec.get('ANTHROPIC_MODEL' if prov.startswith('Anthropic') else 'GEMINI_MODEL')
+    model = user_model or default_model
     key = keys[prov]
     bad = bool(key) and st.session_state.get('llm_bad_key') == key
-    return {'provider': prov, 'key': None if bad else key, 'model': model, 'bad_key': bad}
+    return {'provider': prov, 'key': None if bad else key, 'model': model, 'bad_key': bad, 'auto': not user_model}
 
 
 class LLMError(Exception):
@@ -5171,7 +5172,7 @@ def _llm_friendly(status, txt, provider):
     if status == 429 or 'quota' in t or 'rate limit' in t or 'resource_exhausted' in t or 'resource has been exhausted' in t:
         return 'limite', "Limite de utilização atingido (quota ou demasiados pedidos). Aguarde um minuto ou verifique o saldo/plano da conta."
     if status == 404 or ('model' in t and 'not found' in t):
-        return 'modelo', "O modelo indicado não existe ou não está disponível nesta conta. Deixe o campo Modelo vazio (predefinido) ou escolha outro."
+        return 'modelo', "O modelo de IA indicado já não está disponível. Apague o que estiver escrito no campo Modelo e carregue em Testar ligação: a app escolhe automaticamente um modelo disponível."
     if status in (400,) and ('credit' in t or 'billing' in t or 'balance' in t):
         return 'saldo', "A conta não tem saldo/crédito disponível. Carregue saldo na consola do fornecedor."
     if (status and status >= 500) or 'overloaded' in t:
@@ -5198,7 +5199,40 @@ def call_llm(system, messages, json_mode=False, max_tokens=3000):
         raise LLMError(msg)
 
 
-def _call_llm_raw(cfg, system, messages, json_mode, max_tokens):
+def _pick_model(cfg):
+    """Pergunta ao fornecedor que modelos a conta tem e escolhe o mais adequado (os nomes mudam com frequência)."""
+    import requests, re
+    try:
+        if cfg['provider'].startswith('Google'):
+            r = requests.get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', headers={'x-goog-api-key': cfg['key']}, timeout=30)
+            ms = [m['name'].split('/')[-1] for m in r.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            bad = ('lite', 'image', 'tts', 'live', 'audio', 'embedding', 'exp', 'learnlm', 'gemma', 'robotics', 'computer')
+            cand = [m for m in ms if m.startswith('gemini') and 'flash' in m and not any(b in m for b in bad)] or [m for m in ms if m.startswith('gemini')]
+        else:
+            r = requests.get('https://api.anthropic.com/v1/models?limit=100', headers={'x-api-key': cfg['key'], 'anthropic-version': '2023-06-01'}, timeout=30)
+            ms = [m['id'] for m in r.json().get('data', [])]
+            cand = [m for m in ms if 'sonnet' in m] or ms
+        if not cand: return None
+        ver = lambda m: [float(x) for x in re.findall(r'\d+(?:\.\d+)?', m.replace('-', ' ').replace('_', ' '))[:2]] + [0 if 'preview' in m else 1]
+        return sorted(cand, key=ver)[-1]
+    except Exception as e:
+        print(f"[IA] não foi possível listar modelos: {e}")
+        return None
+
+
+def _call_llm_raw(cfg, system, messages, json_mode, max_tokens, _retry=True):
+    try:
+        return _call_llm_once(cfg, system, messages, json_mode, max_tokens)
+    except LLMError as e:
+        if _retry and cfg.get('auto') and getattr(e, 'kind', None) == 'modelo':
+            m = _pick_model(cfg)
+            if m and m != cfg['model']:
+                st.session_state[f"auto_model_{cfg['provider']}"] = m
+                return _call_llm_raw({**cfg, 'model': m}, system, messages, json_mode, max_tokens, _retry=False)
+        raise
+
+
+def _call_llm_once(cfg, system, messages, json_mode, max_tokens):
     if cfg['provider'].startswith('Anthropic'):
         import requests
         r = requests.post('https://api.anthropic.com/v1/messages', timeout=180,
@@ -5208,7 +5242,7 @@ def _call_llm_raw(cfg, system, messages, json_mode, max_tokens):
             kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
             if kind == 'chave': st.session_state['llm_bad_key'] = cfg['key']
             print(f"[IA] erro {r.status_code}: {r.text[:300]}")
-            raise LLMError(msg)
+            err = LLMError(msg); err.kind = kind; raise err
         return ''.join(b.get('text', '') for b in r.json().get('content', []) if b.get('type') == 'text')
     # Gemini por REST (com timeout e erros HTTP claros; a biblioteca google-generativeai está descontinuada)
     import requests
@@ -5221,7 +5255,7 @@ def _call_llm_raw(cfg, system, messages, json_mode, max_tokens):
         kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
         if kind == 'chave' or (r.status_code == 400 and 'api key' in r.text.lower()): st.session_state['llm_bad_key'] = cfg['key']
         print(f"[IA] erro {r.status_code}: {r.text[:300]}")
-        raise LLMError(msg)
+        err = LLMError(msg); err.kind = kind; raise err
     cand = (r.json().get('candidates') or [{}])[0]
     txt = ''.join(pt.get('text', '') for pt in cand.get('content', {}).get('parts', []))
     if not txt:
