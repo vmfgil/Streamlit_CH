@@ -5199,37 +5199,58 @@ def call_llm(system, messages, json_mode=False, max_tokens=3000):
         raise LLMError(msg)
 
 
-def _pick_model(cfg):
-    """Pergunta ao fornecedor que modelos a conta tem e escolhe o mais adequado (os nomes mudam com frequência)."""
+def _show_llm_error(e):
+    st.warning(str(e))
+    d = st.session_state.get('llm_last_detail')
+    if d: st.caption(f"Detalhe técnico (para suporte): {d}")
+
+
+def _ranked_models(cfg):
+    """Modelos disponíveis na conta, do mais adequado para o menos (os nomes mudam com frequência)."""
     import requests, re
+    ver = lambda m: [float(x) for x in re.findall(r'\d+(?:\.\d+)?', m.replace('-', ' ').replace('_', ' '))[:2]] + [0 if 'preview' in m else 1]
     try:
         if cfg['provider'].startswith('Google'):
             r = requests.get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', headers={'x-goog-api-key': cfg['key']}, timeout=30)
             ms = [m['name'].split('/')[-1] for m in r.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-            bad = ('lite', 'image', 'tts', 'live', 'audio', 'embedding', 'exp', 'learnlm', 'gemma', 'robotics', 'computer')
-            cand = [m for m in ms if m.startswith('gemini') and 'flash' in m and not any(b in m for b in bad)] or [m for m in ms if m.startswith('gemini')]
-        else:
-            r = requests.get('https://api.anthropic.com/v1/models?limit=100', headers={'x-api-key': cfg['key'], 'anthropic-version': '2023-06-01'}, timeout=30)
-            ms = [m['id'] for m in r.json().get('data', [])]
-            cand = [m for m in ms if 'sonnet' in m] or ms
-        if not cand: return None
-        ver = lambda m: [float(x) for x in re.findall(r'\d+(?:\.\d+)?', m.replace('-', ' ').replace('_', ' '))[:2]] + [0 if 'preview' in m else 1]
-        return sorted(cand, key=ver)[-1]
+            bad = ('image', 'tts', 'live', 'audio', 'embedding', 'learnlm', 'gemma', 'robotics', 'computer', 'thinking')
+            ms = [m for m in ms if m.startswith('gemini') and not any(b in m for b in bad)]
+            flash = sorted([m for m in ms if 'flash' in m and 'lite' not in m], key=ver, reverse=True)
+            lite = sorted([m for m in ms if 'flash' in m and 'lite' in m], key=ver, reverse=True)
+            other = sorted([m for m in ms if 'flash' not in m], key=ver, reverse=True)
+            return flash + lite + other
+        r = requests.get('https://api.anthropic.com/v1/models?limit=100', headers={'x-api-key': cfg['key'], 'anthropic-version': '2023-06-01'}, timeout=30)
+        ms = [m['id'] for m in r.json().get('data', [])]
+        return sorted([m for m in ms if 'sonnet' in m], key=ver, reverse=True) + sorted([m for m in ms if 'haiku' in m], key=ver, reverse=True)
     except Exception as e:
         print(f"[IA] não foi possível listar modelos: {e}")
-        return None
+        return []
 
 
-def _call_llm_raw(cfg, system, messages, json_mode, max_tokens, _retry=True):
-    try:
-        return _call_llm_once(cfg, system, messages, json_mode, max_tokens)
-    except LLMError as e:
-        if _retry and cfg.get('auto') and getattr(e, 'kind', None) == 'modelo':
-            m = _pick_model(cfg)
-            if m and m != cfg['model']:
-                st.session_state[f"auto_model_{cfg['provider']}"] = m
-                return _call_llm_raw({**cfg, 'model': m}, system, messages, json_mode, max_tokens, _retry=False)
-        raise
+def _call_llm_raw(cfg, system, messages, json_mode, max_tokens):
+    """Tenta o modelo configurado; se estiver indisponível, sobrecarregado ou sem quota, tenta outros modelos da conta."""
+    tried, last = [], None
+    queue = [cfg['model']]
+    listed = False
+    while queue and len(tried) < 5:
+        m = queue.pop(0)
+        if m in tried: continue
+        tried.append(m)
+        for attempt in range(2):
+            try:
+                out = _call_llm_once({**cfg, 'model': m}, system, messages, json_mode, max_tokens)
+                if m != cfg['model']: st.session_state[f"auto_model_{cfg['provider']}"] = m
+                st.session_state.pop('llm_last_detail', None)
+                return out
+            except LLMError as e:
+                last = e; kind = getattr(e, 'kind', None)
+                if kind in ('servico', 'limite') and attempt == 0:
+                    time.sleep(2); continue
+                break
+        if getattr(last, 'kind', None) in ('chave', 'saldo'): break
+        if cfg.get('auto') and not listed:
+            queue += [x for x in _ranked_models(cfg) if x not in tried]; listed = True
+    raise last
 
 
 def _call_llm_once(cfg, system, messages, json_mode, max_tokens):
@@ -5242,7 +5263,7 @@ def _call_llm_once(cfg, system, messages, json_mode, max_tokens):
             kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
             if kind == 'chave': st.session_state['llm_bad_key'] = cfg['key']
             print(f"[IA] erro {r.status_code}: {r.text[:300]}")
-            err = LLMError(msg); err.kind = kind; raise err
+            err = LLMError(msg); err.kind = kind; st.session_state['llm_last_detail'] = f"{cfg['model']} · HTTP {r.status_code} · {r.text[:400]}"; raise err
         return ''.join(b.get('text', '') for b in r.json().get('content', []) if b.get('type') == 'text')
     # Gemini por REST (com timeout e erros HTTP claros; a biblioteca google-generativeai está descontinuada)
     import requests
@@ -5255,7 +5276,7 @@ def _call_llm_once(cfg, system, messages, json_mode, max_tokens):
         kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
         if kind == 'chave' or (r.status_code == 400 and 'api key' in r.text.lower()): st.session_state['llm_bad_key'] = cfg['key']
         print(f"[IA] erro {r.status_code}: {r.text[:300]}")
-        err = LLMError(msg); err.kind = kind; raise err
+        err = LLMError(msg); err.kind = kind; st.session_state['llm_last_detail'] = f"{cfg['model']} · HTTP {r.status_code} · {r.text[:400]}"; raise err
     cand = (r.json().get('candidates') or [{}])[0]
     txt = ''.join(pt.get('text', '') for pt in cand.get('content', {}).get('parts', []))
     if not txt:
@@ -5383,7 +5404,7 @@ def render_ai_section(caps):
                 txt = call_llm(AI_SYSTEM, [{'role': 'user', 'content': "FACTOS:\n" + facts_json}], json_mode=True, max_tokens=4000)
                 st.session_state.ai_reading = _parse_json(txt); st.session_state.ai_reading_sig = sig
             except LLMError as e:
-                st.warning(str(e))
+                _show_llm_error(e)
                 if st.session_state.get('llm_bad_key'): st.rerun()
             except (ValueError, KeyError):
                 st.warning("A IA respondeu num formato inesperado. Carregue em «Gerar novamente».")
@@ -5412,7 +5433,7 @@ def render_ai_section(caps):
                     hist.append({'role': 'assistant', 'content': ans})
                 except LLMError as e:
                     hist.pop()  # a pergunta não fica no histórico sem resposta
-                    st.warning(str(e))
+                    _show_llm_error(e)
                     if st.session_state.get('llm_bad_key'): time.sleep(2.5); st.rerun()
             if hist and st.button("Limpar conversa", key='ai_chat_clear'):
                 st.session_state.ai_chat = []; st.rerun()
@@ -5432,7 +5453,7 @@ def render_ai_section(caps):
                 call_llm("Responde apenas: OK", [{'role': 'user', 'content': 'teste'}], max_tokens=10)
                 st.success(f"Ligação OK ({_llm_settings()['provider']} · {_llm_settings()['model']}).")
             except LLMError as e:
-                st.warning(str(e))
+                _show_llm_error(e)
 
     with st.expander("Diagnóstico detalhado (motor de regras): todos os factos e alertas por área"):
         render_diagnostics_page()
