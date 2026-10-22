@@ -1,5 +1,6 @@
 import difflib
 import json
+import re
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -78,6 +79,7 @@ st.markdown("""
     header[data-testid="stHeader"] { background: transparent; }
 
 
+    button[kind="primary"]:disabled, button[data-testid="stBaseButton-primary"]:disabled { background:#e2e8f0 !important; color:#64748b !important; border-color:#e2e8f0 !important; }
     /* Leitura para decisão (Diagnóstico) */
     .pm-verdict { background:#fff; border:1px solid var(--border-color); border-left:6px solid #d97706; border-radius:16px; padding:20px 24px; margin:6px 0 18px; box-shadow:0 1px 3px rgba(15,23,42,.05); }
     .pm-verdict-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
@@ -731,7 +733,6 @@ if 'dfs' not in st.session_state:
     st.session_state.dfs = {'projects': None, 'tasks': None, 'resources': None, 'resource_allocations': None, 'dependencies': None}
 if 'analysis_run' not in st.session_state: st.session_state.analysis_run = False
 if 'rl_analysis_run' not in st.session_state: st.session_state.rl_analysis_run = False
-if 'rl_params_expanded' not in st.session_state: st.session_state.rl_params_expanded = True# Alteração Sugerida
 if 'project_id_simulated' not in st.session_state: st.session_state.project_id_simulated = None
 if 'plots_pre_mining' not in st.session_state: st.session_state.plots_pre_mining = {}
 if 'plots_post_mining' not in st.session_state: st.session_state.plots_post_mining = {}
@@ -1650,654 +1651,6 @@ def run_eda_analysis(dfs):
 
     return plots, tables
 
-# --- FUNÇÃO DE ANÁLISE (REINFORCEMENT LEARNING) ---
-#@st.cache_data # Removido para permitir interatividade e barra de progresso
-def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, progress_bar, status_text, agent_params=None):
-    if agent_params is None:
-        agent_params = {}    
-    dfs = {key: df.copy() for key, df in dfs.items()}
-    
-    # --- PASSO 1: CONVERTER TODAS AS DATAS NOS DADOS ORIGINAIS PRIMEIRO ---
-    for df_name in ['projects', 'tasks', 'resource_allocations', 'dependencies']:
-        df = dfs[df_name]
-        for col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-    # -------------------------------------------------------------------------------------
-
-    # --- PASSO 2: CALCULAR O CUSTO REAL NO CONJUNTO DE DADOS COMPLETO ---
-    # garantir tipos consistentes antes de agregações
-    for id_col in ['project_id', 'task_id', 'resource_id']:
-        for dname in ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']:
-            if dname in dfs and id_col in dfs[dname].columns:
-                dfs[dname][id_col] = dfs[dname][id_col].astype(str)
-    
-    # garantir colunas numericas nos recursos e alocações
-    if 'resources' in dfs:
-        for col in ['cost_per_hour', 'daily_capacity']:
-            if col in dfs['resources'].columns:
-                dfs['resources'][col] = pd.to_numeric(dfs['resources'][col], errors='coerce').fillna(0)
-    if 'resource_allocations' in dfs:
-        for col in ['hours_worked']:
-            if col in dfs['resource_allocations'].columns:
-                dfs['resource_allocations'][col] = pd.to_numeric(dfs['resource_allocations'][col], errors='coerce').fillna(0)
-    
-    # recalcula custos reais de forma segura e numérica
-    df_real_costs = (
-        dfs['resource_allocations']
-        .merge(dfs['resources'][['resource_id', 'cost_per_hour']], on='resource_id', how='left')
-    )
-    df_real_costs['cost_per_hour'] = pd.to_numeric(df_real_costs['cost_per_hour'], errors='coerce').fillna(0)
-    df_real_costs['hours_worked'] = pd.to_numeric(df_real_costs['hours_worked'], errors='coerce').fillna(0)
-    df_real_costs['cost'] = df_real_costs['hours_worked'] * df_real_costs['cost_per_hour']
-    df_real_costs = df_real_costs.groupby('project_id', dropna=False)['cost'].sum().reset_index().rename(columns={'cost': 'total_actual_cost'})
-    
-    dfs['projects'] = dfs['projects'].merge(df_real_costs, on='project_id', how='left')
-    dfs['projects']['total_actual_cost'] = pd.to_numeric(dfs['projects'].get('total_actual_cost', pd.Series(dtype=float)), errors='coerce').fillna(0)
-
-    
-    # --- PASSO 3: CRIAR A AMOSTRA ---
-    st.info("A componente de RL irá correr numa amostra de 100 processos para garantir a performance.")
-    ids_amostra = st.session_state['rl_sample_ids']
-    dfs_rl = {}
-    ids_amostra = [str(i) for i in ids_amostra]  # garante tipo string
-    for nome_df, df in dfs.items():
-        if 'project_id' in df.columns:
-            dfs_rl[nome_df] = df[df['project_id'].astype(str).isin(ids_amostra)].copy()
-        else:
-            dfs_rl[nome_df] = df.copy()
-            
-    plots = {}
-    tables = {}
-    logs = {}
-
-    df_projects = dfs_rl['projects'].copy()
-    df_tasks = dfs_rl['tasks'].copy()
-    df_resources = dfs_rl['resources'].copy()
-    df_resource_allocations = dfs_rl['resource_allocations'].copy()
-    df_dependencies = dfs_rl['dependencies'].copy()
-
-
-    def calculate_business_days(start, end):
-        return np.busday_count(start.date(), end.date()) if pd.notna(start) and pd.notna(end) else 0
-
-    df_projects['planned_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['planned_end_date']), axis=1)
-    df_projects['total_duration_days'] = df_projects.apply(lambda row: calculate_business_days(row['start_date'], row['end_date']), axis=1)
-    
-    # --- AMBIENTE E AGENTE (CLASSES) --- 
-    class PortfolioManagementEnv:
-        def __init__(self, dfs, reward_config):
-            self.rewards = reward_config
-
-            # 1. Carregar e pré-processar TODOS os dados de uma vez
-            self.df_projects = dfs['projects'].sort_values('start_date').reset_index(drop=True)
-            self.df_resources = dfs['resources']
-            self.df_dependencies = dfs['dependencies']
-            self.df_tasks = dfs['tasks']
-            self.df_allocations = dfs['resource_allocations']
-            
-            # 2. Juntar alocações, tarefas e recursos para saber "quem fez o quê"
-            # Assegura que os IDs são strings para o merge
-            self.df_allocations['task_id'] = self.df_allocations['task_id'].astype(str)
-            self.df_allocations['resource_id'] = self.df_allocations['resource_id'].astype(str)
-            self.df_tasks['task_id'] = self.df_tasks['task_id'].astype(str)
-            self.df_resources['resource_id'] = self.df_resources['resource_id'].astype(str)
-            
-            df_merged_logic = self.df_allocations.merge(self.df_tasks[['task_id', 'task_type']], on='task_id')
-            df_merged_logic = df_merged_logic.merge(self.df_resources[['resource_id', 'resource_type']], on='resource_id')
-            
-            # 3. Agrupar para encontrar as combinações únicas
-            df_map = df_merged_logic[['task_type', 'resource_type']].drop_duplicates().dropna()
-            
-            # 4. Construir o TASK_TYPE_RESOURCE_MAP dinamicamente
-            self.TASK_TYPE_RESOURCE_MAP = {}
-            for task_type, group in df_map.groupby('task_type'):
-                self.TASK_TYPE_RESOURCE_MAP[task_type] = group['resource_type'].tolist()
-            
-            print("--- MAPA DE RECURSOS/TAREFAS GERADO DINAMICAMENTE ---")
-            print(self.TASK_TYPE_RESOURCE_MAP)
-                        
-            # 5. Criar dicionários para acesso rápido
-            self.tasks_by_project = {pid: df_group.to_dict('records') for pid, df_group in dfs['tasks'].groupby('project_id')}
-            self.dependencies_by_project = {pid: {str(row['task_id_successor']): str(row['task_id_predecessor']) for _, row in df_group.iterrows()} for pid, df_group in self.df_dependencies.groupby('project_id')}
-            
-            self.resource_types = sorted(self.df_resources['resource_type'].unique().tolist())
-            self.resources_by_type = {rt: self.df_resources[self.df_resources['resource_type'] == rt] for rt in self.resource_types}
-            self.resource_capacity_map = pd.Series(self.df_resources.daily_capacity.values, index=self.df_resources.resource_id).to_dict()
-            
-        def reset(self):
-            # 6. Reset GERAL da simulação
-            self.current_date = self.df_projects['start_date'].min()
-            self.resource_calendar = {} # Calendário de ocupação de recursos (essencial para a contenção)
-            
-            self.future_projects = self.df_projects.to_dict('records')
-            self.active_projects = {} # Dicionário para guardar o estado de cada projeto ativo
-            self.completed_projects = {} # Para guardar os resultados finais
-            self.episode_logs = []
-            self.detailed_logs = {} # Para guardar o progresso diário de cada projeto
-            self.last_day_hours_worked_per_resource = defaultdict(float)
-            self.current_day_hours_worked_per_resource = defaultdict(float)
-            return self.get_state()
-
-        def get_state(self):
-            # 7. O estado descreve o PORTFÓLIO, não um projeto
-            num_active = len(self.active_projects)
-            pending_tasks_count = 0
-            high_prio_tasks_count = 0
-        
-            max_pending_days = 0 
-            
-            # Calcular tarefas pendentes, alta prioridade e idade máxima
-            for proj in self.active_projects.values():
-                for task in proj['tasks'].values():
-                     # Usamos _is_task_eligible sem check_resource_type para elegibilidade geral
-                     if task['status'] in ['Pendente', 'Em Andamento'] and \
-                        self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
-        
-                          # Contar Pendentes (Apenas Status 'Pendente')
-                          if task['status'] == 'Pendente':
-                               pending_tasks_count += 1
-                               if task['priority'] >= 4:
-                                    high_prio_tasks_count += 1
-        
-                          # --- LÓGICA PARA max_pending_days ---
-                          eligibility_date = task.get('eligibility_date')
-                          if eligibility_date:
-                              # Calcula dias de CALENDÁRIO desde que ficou elegível
-                              pending_days_calendar = (self.current_date - eligibility_date).days 
-                              if pending_days_calendar > max_pending_days:
-                                  max_pending_days = pending_days_calendar
-                          # ---------------------------------------
-        
-            day_of_week = self.current_date.weekday()
-        
-            # --- Lógica existente para Utilização de Recursos ---
-            utilization_rates = []
-            for res_type in self.resource_types: 
-                total_capacity_today = 0
-                if self.current_date.weekday() < 5:
-                     pool = self.resources_by_type.get(res_type, pd.DataFrame())
-                     if not pool.empty:
-                          total_capacity_today = pool['daily_capacity'].sum()
-        
-                hours_worked_today = 0
-                if hasattr(self, 'last_day_hours_worked_per_resource'):
-                    pool_ids = self.resources_by_type.get(res_type, pd.DataFrame())['resource_id'].tolist()
-                    hours_worked_today = sum(self.last_day_hours_worked_per_resource.get(res_id, 0) for res_id in pool_ids)
-        
-                if total_capacity_today > 0:
-                    utilization = hours_worked_today / total_capacity_today
-                else:
-                    utilization = 0.0
-                utilization_rates.append(round(utilization, 1)) 
-                    
-            # Estado para o RL
-            new_state_tuple = (num_active, pending_tasks_count, high_prio_tasks_count, day_of_week, max_pending_days) + tuple(utilization_rates)
-        
-            return new_state_tuple
-
-        def _is_task_eligible(self, task, risk_rating, all_project_tasks, project_dependencies, check_resource_type=None):
-            if task['status'] == 'Concluída': return False
-
-            pred_id = project_dependencies.get(str(task['task_id']))
-            if pred_id and all_project_tasks.get(pred_id, {}).get('status') != 'Concluída':
-                return False
-            
-            # Se a verificação for para um tipo de recurso específico
-            if check_resource_type:
-                task_type = task['task_type']
-                allowed_resources = self.TASK_TYPE_RESOURCE_MAP.get(task_type, [])
-                return check_resource_type in allowed_resources
-            
-            return True # Retorna True se não estiver a verificar um recurso específico (elegibilidade geral)
-
-        def get_possible_actions_for_state(self):
-            # 8. Procura tarefas elegíveis em TODOS os projetos ativos
-            possible_actions = set()
-            for proj_id, proj_state in self.active_projects.items():
-                for task_id, task_data in proj_state['tasks'].items():
-                    if task_data['status'] in ['Pendente', 'Em Andamento']:
-                        # Verifica para cada tipo de recurso se a tarefa é elegível
-                        for res_type in self.resource_types:
-                             if self._is_task_eligible(task_data, proj_state['risk_rating'], proj_state['tasks'], proj_state['dependencies'], check_resource_type=res_type):
-                                 # A ação agora inclui o ID do projeto e da tarefa para ser única
-                                 possible_actions.add((res_type, task_data['task_type'], proj_id, task_id))
-            
-            # Adicionar sempre a opção 'idle' para cada tipo de recurso
-            for res_type in self.resource_types:
-                possible_actions.add((res_type, 'idle', None, None))
-                
-            return list(possible_actions)
-
-        def step(self, action_list):
-            # Guarda as horas do dia ANTERIOR antes de calcular as de hoje
-            self.last_day_hours_worked_per_resource = getattr(self, 'current_day_hours_worked_per_resource', defaultdict(float))
-            # 6a. Ativar novos projetos que começam hoje
-            projects_to_activate = [p for p in self.future_projects if p['start_date'] == self.current_date]
-            for proj_data in projects_to_activate:
-                proj_id = proj_data['project_id']
-                self.active_projects[proj_id] = {
-                    'tasks': {str(t['task_id']): {
-                    'status': 'Pendente', 'progress': 0.0,
-                    'estimated_effort': real_hours_per_task.get(str(t['task_id']), t['estimated_effort'] * 8.0),
-                    'priority': t['priority'], 'task_type': t['task_type'], 'task_id': str(t['task_id']),
-                    'eligibility_date': self.current_date if not self.dependencies_by_project.get(proj_id, {}).get(str(t['task_id'])) else None
-                } for t in self.tasks_by_project.get(proj_id, [])},
-                    'dependencies': self.dependencies_by_project.get(proj_id, {}),
-                    'risk_rating': proj_data['risk_rating'],
-                    'current_cost': 0.0,
-                    'start_date': self.current_date
-                }
-            self.future_projects = [p for p in self.future_projects if p['start_date'] != self.current_date]
-
-            # 6b. Processar ações do agente e alocar recursos
-            daily_cost = 0
-            reward_from_tasks = 0
-            resources_hours_today = defaultdict(float)
-            daily_cost_by_project = defaultdict(float) # Necessário para os logs detalhados
-            daily_hours_by_project = defaultdict(float) # Necessário para os logs detalhados
-
-            # O loop  processa a lista de ações detalhada
-            for res_type, task_type, proj_id, task_id, res_id, hours_to_work in action_list:
-                
-                task_data = self.active_projects[proj_id]['tasks'][task_id]
-                if task_data['status'] == 'Concluída':
-                    continue
-                if task_data['status'] == 'Pendente':
-                    task_data['status'] = 'Em Andamento'
-
-                # O esforço e progresso são medidos em HORAS.
-                remaining_effort = task_data['estimated_effort'] - task_data['progress']
-                
-                # As horas a trabalhar já foram calculadas, mas não podem exceder o que falta
-                actual_hours_worked = min(hours_to_work, remaining_effort)
-                if actual_hours_worked <= 0:
-                    continue
-
-                res_info = self.df_resources[self.df_resources['resource_id'] == res_id].iloc[0]
-                cost_today = actual_hours_worked * float(res_info['cost_per_hour'])
-
-                self.active_projects[proj_id]['current_cost'] += cost_today
-                task_data['progress'] += actual_hours_worked
-                
-                # Para os logs detalhados
-                daily_cost_by_project[proj_id] += cost_today
-                daily_hours_by_project[proj_id] += actual_hours_worked
-
-                if task_data['progress'] >= task_data['estimated_effort']:
-                    task_data['status'] = 'Concluída'
-                    task_data['completion_date'] = self.current_date
-                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
-
-                    # --- Atualizar Elegibilidade de Sucessoras ---
-                    completed_task_id = task_id # ID da tarefa que acabou de ser concluída
-                    # Iterar sobre todos os projetos ativos para encontrar sucessoras
-                    for check_proj_id, check_proj_state in self.active_projects.items():
-                        for check_task_id, check_task_data in check_proj_state['tasks'].items():
-                            # Verificar se esta tarefa é sucessora da que acabou de terminar
-                            predecessor_id = check_proj_state['dependencies'].get(check_task_id)
-                            if predecessor_id == completed_task_id:
-                                # Se a tarefa sucessora ainda não tinha data de elegibilidade, define-a para hoje
-                                if check_task_data['eligibility_date'] is None:
-                                    check_task_data['eligibility_date'] = self.current_date
-
-                    
-            for proj_id, proj_state in self.active_projects.items():
-                if proj_id not in self.detailed_logs:
-                    self.detailed_logs[proj_id] = []
-                
-                # Obter o último estado de progresso ou começar do zero
-                last_log = self.detailed_logs[proj_id][-1] if self.detailed_logs[proj_id] else {'cumulative_cost': 0.0, 'cumulative_hours': 0.0}
-                
-                self.detailed_logs[proj_id].append({
-                    'date': self.current_date,
-                    'day': np.busday_count(proj_state['start_date'].date(), self.current_date.date()), 
-                    'cumulative_cost': proj_state['current_cost'], 
-                    'cumulative_hours': last_log['cumulative_hours'] + daily_hours_by_project[proj_id]
-                })
-
-
-            # 6c. Atualizar estados dos projetos e calcular recompensas de conclusão
-            projects_to_remove = []
-            for proj_id, proj_state in self.active_projects.items():
-                if all(t['status'] == 'Concluída' for t in proj_state['tasks'].values()):
-                    projects_to_remove.append(proj_id)
-                    
-                    # Calcular métricas finais e recompensa de conclusão
-                    original_proj_info = self.df_projects[self.df_projects['project_id'] == proj_id].iloc[0]
-                    final_duration = np.busday_count(proj_state['start_date'].date(), self.current_date.date())
-                    real_duration = original_proj_info['total_duration_days']
-                    
-                    time_diff = real_duration - final_duration
-                    reward_from_tasks += self.rewards['completion_base']
-                    reward_from_tasks += time_diff * self.rewards['per_day_early_bonus'] if time_diff >= 0 else time_diff * self.rewards['per_day_late_penalty']
-                    reward_from_tasks -= proj_state['current_cost'] * self.rewards['cost_impact_factor']
-                    # Guardar resultados
-                    self.completed_projects[proj_id] = {'simulated_duration': final_duration, 'simulated_cost': proj_state['current_cost']}
-
-            for proj_id in projects_to_remove:
-                del self.active_projects[proj_id]
-
-            # 6d. Finalizar o dia
-            self.current_date += timedelta(days=1)
-            # Calcular Penalização DINÂMICA por Tarefas Pendentes/Atrasadas ---
-            pending_penalty = 0
-            for proj in self.active_projects.values():
-                for task in proj['tasks'].values():
-                    # Considera tarefas PENDENTES OU EM ANDAMENTO que estão ELEGÍVEIS mas não concluídas
-                    if task['status'] in ['Pendente', 'Em Andamento'] and \
-                       self._is_task_eligible(task, proj['risk_rating'], proj['tasks'], proj['dependencies']):
-    
-                        eligibility_date = task.get('eligibility_date')
-                        if eligibility_date: 
-                            # Calcula há quantos dias de CALENDÁRIO está elegível
-                            pending_days_calendar = (self.current_date - eligibility_date).days
-                            # Penalização aumenta linearmente com os dias pendente (mínimo 0)
-                            penalty_for_this_task = self.rewards['pending_task_penalty_factor'] * max(0, pending_days_calendar)
-                            pending_penalty += penalty_for_this_task
-        
-            total_reward = reward_from_tasks - self.rewards['daily_time_penalty'] - pending_penalty # Modificado para incluir a nova penalização
-            
-            done = not self.active_projects and not self.future_projects
-
-            self.current_day_hours_worked_per_resource = resources_hours_today
-            
-            return self.get_state(), total_reward, done
-            
-    class QLearningAgent:
-        def __init__(self, actions, lr=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.9995, min_epsilon=0.01):
-            self.actions = actions; self.action_to_index = {action: i for i, action in enumerate(actions)}; self.q_table = defaultdict(lambda: np.zeros(len(self.actions)))
-            self.lr, self.gamma, self.epsilon = lr, gamma, epsilon; self.epsilon_decay, self.min_epsilon = epsilon_decay, min_epsilon
-            self.epsilon_history, self.episode_rewards, self.episode_durations, self.episode_costs = [], [], [], []
-        def choose_action(self, state, possible_actions):
-            if not possible_actions: return None
-            if random.uniform(0, 1) < self.epsilon: return random.choice(possible_actions)
-            else:
-                q_values = {action: self.q_table[state][self.action_to_index[action]] for action in possible_actions if action in self.action_to_index}
-                if not q_values: return random.choice(possible_actions)
-                max_q = max(q_values.values()); best_actions = sorted([action for action, q_val in q_values.items() if q_val == max_q]); return best_actions[0]
-        def update_q_table(self, state, action, reward, next_state):
-            action_index = self.action_to_index.get(action);
-            if action_index is None: return
-            old_value = self.q_table[state][action_index]; next_max = np.max(self.q_table[next_state]) if next_state in self.q_table else 0.0
-            new_value = old_value + self.lr * (reward + self.gamma * next_max - old_value); self.q_table[state][action_index] = new_value
-        def decay_epsilon(self): self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay); self.epsilon_history.append(self.epsilon)
-    
-    # Calcular o total de horas reais trabalhadas por tarefa a partir das alocações
-    real_hours_per_task_series = df_resource_allocations.groupby('task_id')['hours_worked'].sum()
-    real_hours_per_task = real_hours_per_task_series.to_dict()
-                
-    # --- Lógica de Simulação de Portfólio ---
-    
-    # 1. Instanciar o novo ambiente de portfólio.
-    # Amostra completa de projetos para simular o portfólio.
-    env = PortfolioManagementEnv(dfs={'projects': df_projects, 'tasks': df_tasks, 'resources': df_resources, 'dependencies': df_dependencies, 'resource_allocations': df_resource_allocations}, reward_config=reward_config)
-
-    # 2. Simplificar as ações para o agente.
-    # Mantémm a Q-Table com um tamanho gerenciável.
-    simplified_actions = set()
-    for res_type in env.resource_types:
-        simplified_actions.add((res_type, 'idle'))
-        for task_type in df_tasks['task_type'].unique():
-            simplified_actions.add((res_type, task_type))
-    
-    # 3. Extrair parâmetros e instanciar o Agente.
-    lr = float(agent_params.get('lr', 0.1)); gamma = float(agent_params.get('gamma', 0.9))
-    epsilon = float(agent_params.get('epsilon', 1.0)); epsilon_decay = float(agent_params.get('epsilon_decay', 0.9995))
-    min_epsilon = float(agent_params.get('min_epsilon', 0.01))
-
-    agent = QLearningAgent(actions=tuple(sorted(list(simplified_actions))), lr=lr, gamma=gamma, epsilon=epsilon, epsilon_decay=epsilon_decay, min_epsilon=min_epsilon)
-    
-    # 4. NOVO CICLO DE TREINO
-    # Cada episódio é uma simulação completa de TODO o portfólio de projetos.
-    for episode in range(num_episodes):
-        state = env.reset()
-        episode_reward, done = 0, False
-        
-        while not done:
-            # Se for fim de semana, apenas avança o dia e continua para a próxima iteração do loop
-            if env.current_date.weekday() >= 5:
-                env.current_date += timedelta(days=1)
-                continue
-            
-            possible_actions_full = env.get_possible_actions_for_state()
-            
-            action_list_for_step = []
-            
-            # ---  LÓGICA DE ALOCAÇÃO DIÁRIA ---
-            # 1. Obter todas as tarefas de trabalho possíveis para hoje
-            work_actions = [a for a in possible_actions_full if a[1] != 'idle']
-            simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
-
-            # 2. Criar um pool de horas disponíveis para todos os recursos hoje
-            available_hours_per_resource = {res_id: cap for res_id, cap in env.resource_capacity_map.items()}
-
-            # 3. Enquanto houver trabalho a fazer e recursos com horas disponíveis
-            while any(h > 0 for h in available_hours_per_resource.values()) and work_actions:
-                
-                # Pergunta ao agente qual o melhor TIPO de tarefa a fazer AGORA
-                chosen_simplified_action = agent.choose_action(state, simplified_options)
-                if not chosen_simplified_action:
-                    break # Se o agente não escolher nada, paramos por hoje
-
-                # Encontrar a tarefa real de maior prioridade que corresponde à escolha
-                candidate_tasks = [t for t in work_actions if (t[0], t[1]) == chosen_simplified_action]
-                if not candidate_tasks:
-                    # Se não houver mais tarefas deste tipo, remove a opção e tenta de novo
-                    simplified_options.remove(chosen_simplified_action)
-                    continue
-
-                best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
-                res_type, task_type, proj_id, task_id = best_task_action
-                
-                # Encontrar um recurso DESOCUPADO para esta tarefa
-                pool = env.resources_by_type[res_type]
-                available_resources = [rid for rid in pool['resource_id'] if available_hours_per_resource.get(rid, 0) > 0]
-                
-                if not available_resources:
-                    # Não há mais recursos deste tipo disponíveis, remove a opção e tenta de novo
-                    simplified_options = [opt for opt in simplified_options if opt[0] != res_type]
-                    continue
-
-                # Atribui a tarefa a um recurso disponível
-                chosen_res_id = random.choice(available_resources)
-                
-                # Calcula as horas que o recurso ainda pode trabalhar hoje
-                hours_resource_can_work = available_hours_per_resource[chosen_res_id]
-                # Calcula as horas que a tarefa ainda precisa (total)
-                hours_task_needs = env.active_projects[proj_id]['tasks'][task_id]['estimated_effort'] - env.active_projects[proj_id]['tasks'][task_id]['progress']
-                # Atribui o mínimo entre o que o recurso pode dar e o que a tarefa precisa
-                hours_to_assign = min(hours_resource_can_work, hours_task_needs)
-                
-                # Adiciona a atribuição à lista de ações (agora com resource_id)
-                action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
-                
-                # Atualiza as horas disponíveis do recurso
-                available_hours_per_resource[chosen_res_id] -= hours_to_assign
-
-                # Remove a tarefa escolhida da lista de trabalho para este dia.
-                work_actions.remove(best_task_action)
-                simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
-            
-            next_state, reward, done = env.step(action_list_for_step)
-            
-            # Atualizar a Q-table com base nas ações simplificadas que foram tomadas.
-            for action in action_list_for_step:
-                simplified_action = (action[0], action[1])
-                # A recompensa é distribuída pelas ações que a geraram.
-                reward_per_action = reward / len(action_list_for_step) if action_list_for_step else reward
-                agent.update_q_table(state, simplified_action, reward_per_action, next_state)
-
-            state = next_state
-            episode_reward += reward
-
-            # Safety break para evitar loops infinitos.
-            if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000):
-                print("Safety break: Simulação excedeu o tempo limite.")
-                break
-
-        agent.decay_epsilon()
-        # As métricas de duração e custo referem-se ao desempenho do portfólio inteiro.
-        total_duration = sum(p['simulated_duration'] for p in env.completed_projects.values())
-        total_cost = sum(p['simulated_cost'] for p in env.completed_projects.values())
-        agent.episode_rewards.append(episode_reward)
-        agent.episode_durations.append(total_duration)
-        agent.episode_costs.append(total_cost)
-        
-        progress = (episode + 1) / num_episodes
-        progress_bar.progress(progress)
-        status_text.info(f"A treinar... Episódio {episode + 1}/{num_episodes}. Data final da simulação: {env.current_date.strftime('%Y-%m-%d')}")
-
-    status_text.success("Treino concluído!")
-    status_text.info("A preparar os gráficos e análises finais...")
-
-    # 5. Geração de Gráficos de Treino
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    
-    rewards, durations, costs, epsilon_history = agent.episode_rewards, agent.episode_durations, agent.episode_costs, agent.epsilon_history
-    rolling_avg_window = 50
-    axes[0, 0].plot(rewards, alpha=0.3, label='Recompensa do Episódio'); axes[0, 0].plot(pd.Series(rewards).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[0, 0].set_title('Recompensa por Episódio'); axes[0, 0].set_xlabel('Episódio'); axes[0, 0].set_ylabel('Recompensa Total'); axes[0, 0].legend(); axes[0, 0].grid(True, linestyle='--', alpha=0.6)
-    axes[0, 1].plot(durations, alpha=0.3, label='Duração do Portfólio'); axes[0, 1].plot(pd.Series(durations).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[0, 1].set_title('Duração Total do Portfólio'); axes[0, 1].set_xlabel('Episódio'); axes[0, 1].set_ylabel('Soma das Durações (dias)'); axes[0, 1].legend(); axes[0, 1].grid(True, linestyle='--', alpha=0.6)
-    axes[1, 0].plot(epsilon_history, color='green'); axes[1, 0].set_title('Decaimento do Epsilon (Exploração)'); axes[1, 0].set_xlabel('Episódio'); axes[1, 0].set_ylabel('Valor de Epsilon'); axes[1, 0].grid(True, linestyle='--', alpha=0.6)
-    axes[1, 1].plot(costs, alpha=0.3, label='Custo do Portfólio'); axes[1, 1].plot(pd.Series(costs).rolling(rolling_avg_window, min_periods=1).mean(), lw=2.5, color='orange', label=f'Média Móvel ({rolling_avg_window} ep)'); axes[1, 1].set_title('Custo Total do Portfólio'); axes[1, 1].set_xlabel('Episódio'); axes[1, 1].set_ylabel('Custo Total (€)'); axes[1, 1].legend(); axes[1, 1].grid(True, linestyle='--', alpha=0.6)
-    fig.tight_layout()
-    plots['training_metrics'] = convert_fig_to_bytes(fig)
-
-    # 6. AVALIAÇÃO FINAL
-    status_text.info("A correr a simulação final otimizada para avaliação...")
-    agent.epsilon = 0
-    state = env.reset()
-    done = False
-    while not done:
-        # Pular fim de semana
-        if env.current_date.weekday() >= 5:
-            env.current_date += timedelta(days=1)
-            continue
-            
-        possible_actions_full = env.get_possible_actions_for_state()
-        action_list_for_step = []
-        
-        # --- Lógica de Alocação Diária (idêntica ao treino) ---
-        work_actions = [a for a in possible_actions_full if a[1] != 'idle']
-        simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
-
-        available_hours_per_resource = {res_id: cap for res_id, cap in env.resource_capacity_map.items()}
-
-        while any(h > 0 for h in available_hours_per_resource.values()) and work_actions:
-            chosen_simplified_action = agent.choose_action(state, simplified_options)
-            if not chosen_simplified_action:
-                break 
-
-            candidate_tasks = [t for t in work_actions if (t[0], t[1]) == chosen_simplified_action]
-            if not candidate_tasks:
-                simplified_options.remove(chosen_simplified_action)
-                continue
-
-            best_task_action = max(candidate_tasks, key=lambda a: env.active_projects[a[2]]['tasks'][a[3]]['priority'])
-            res_type, task_type, proj_id, task_id = best_task_action
-            
-            pool = env.resources_by_type[res_type]
-            available_resources = [rid for rid in pool['resource_id'] if available_hours_per_resource.get(rid, 0) > 0]
-            
-            if not available_resources:
-                simplified_options = [opt for opt in simplified_options if opt[0] != res_type]
-                continue
-
-            chosen_res_id = random.choice(available_resources)
-            
-            # Calcula as horas que o recurso ainda pode trabalhar hoje
-            hours_resource_can_work = available_hours_per_resource[chosen_res_id]
-            # Calcula as horas que a tarefa ainda precisa (total)
-            hours_task_needs = env.active_projects[proj_id]['tasks'][task_id]['estimated_effort'] - env.active_projects[proj_id]['tasks'][task_id]['progress']
-            # Atribui o mínimo entre o que o recurso pode dar e o que a tarefa precisa
-            hours_to_assign = min(hours_resource_can_work, hours_task_needs)
-            
-            action_list_for_step.append((res_type, task_type, proj_id, task_id, chosen_res_id, hours_to_assign))
-            
-            available_hours_per_resource[chosen_res_id] -= hours_to_assign
-            # Remove a tarefa escolhida da lista de trabalho para este dia.
-            work_actions.remove(best_task_action)
-            simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
-            
-            # Se a tarefa ficar sem esforço restante, removemo-la das opções para o resto do dia
-            task_state = env.active_projects[proj_id]['tasks'][task_id]
-            if (task_state['estimated_effort'] - task_state['progress']) < 1:
-                 work_actions = [a for a in work_actions if a[3] != task_id]
-                 simplified_options = list(set([(a[0], a[1]) for a in work_actions]))
-
-
-        next_state, _, done = env.step(action_list_for_step)
-        state = next_state
-        if env.current_date > env.df_projects['start_date'].max() + timedelta(days=1000): 
-            break
-
-    simulated_results = env.completed_projects
-    results_list = []
-    for proj_id, sim_data in simulated_results.items():
-        real_data = df_projects[df_projects['project_id'] == proj_id].iloc[0]
-        results_list.append({
-            'project_id': proj_id, 'simulated_duration': sim_data['simulated_duration'], 'simulated_cost': sim_data['simulated_cost'],
-            'real_duration': real_data['total_duration_days'], 'real_cost': real_data['total_actual_cost']
-        })
-    test_results_df = pd.DataFrame(results_list)
-
-    if test_results_df.empty:
-        st.error("A simulação não concluiu nenhum projeto. Verifique os parâmetros.")
-        return plots, tables, logs
-
-    # 7. Geração de Gráficos de COMPARAÇÃO DE PORTFÓLIO
-    df_plot_test = test_results_df.sort_values(by='real_duration').reset_index(drop=True).head(50)
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8)); index_test = np.arange(len(df_plot_test)); bar_width = 0.35
-    axes[0].bar(index_test - bar_width/2, df_plot_test['real_duration'], bar_width, label='Real', color='orangered'); axes[0].bar(index_test + bar_width/2, df_plot_test['simulated_duration'], bar_width, label='Simulado (RL)', color='dodgerblue'); axes[0].set_title('Duração do Processo (Amostra de Teste)'); axes[0].set_xlabel('ID do Processo'); axes[0].set_ylabel('Duração (dias)'); axes[0].set_xticks(index_test); axes[0].set_xticklabels(df_plot_test['project_id'], rotation=90, ha="right"); axes[0].legend(); axes[0].grid(axis='y', linestyle='--', alpha=0.7)
-    axes[1].bar(index_test - bar_width/2, df_plot_test['real_cost'], bar_width, label='Real', color='orangered'); axes[1].bar(index_test + bar_width/2, df_plot_test['simulated_cost'], bar_width, label='Simulado (RL)', color='dodgerblue'); axes[1].set_title('Custo do Processo (Amostra de Teste)'); axes[1].set_xlabel('ID do Processo'); axes[1].set_ylabel('Custo (€)'); axes[1].set_xticks(index_test); axes[1].set_xticklabels(df_plot_test['project_id'], rotation=90, ha="right"); axes[1].legend(); axes[1].grid(axis='y', linestyle='--', alpha=0.7)
-    plots['evaluation_comparison_test'] = convert_fig_to_bytes(fig)
-
-    def get_global_performance_df(results_df):
-        real_duration = results_df['real_duration'].sum(); sim_duration = results_df['simulated_duration'].sum(); real_cost = results_df['real_cost'].sum(); sim_cost = results_df['simulated_cost'].sum()
-        dur_improv = real_duration - sim_duration; cost_improv = real_cost - sim_cost
-        dur_improv_perc = (dur_improv / real_duration) * 100 if real_duration > 0 else 0; cost_improv_perc = (cost_improv / real_cost) * 100 if real_cost > 0 else 0
-        perf_data = {'Métrica': ['Duração Total (dias)', 'Custo Total (€)'], 'Real (Histórico)': [f"{real_duration:.0f}", f"€{real_cost:,.2f}"], 'Simulado (RL)': [f"{sim_duration:.0f}", f"€{sim_cost:,.2f}"], 'Melhoria': [f"{dur_improv:.0f} ({dur_improv_perc:.1f}%)", f"€{cost_improv:,.2f} ({cost_improv_perc:.1f}%)"]}
-        return pd.DataFrame(perf_data)
-    tables['global_performance_test'] = get_global_performance_df(test_results_df)
-
-    project_info_real = df_projects.loc[df_projects['project_id'] == project_id_to_simulate].iloc[0]
-    project_info_sim = test_results_df.loc[test_results_df['project_id'] == project_id_to_simulate].iloc[0]
-    
-    tables['project_summary'] = pd.DataFrame({
-        'Métrica': ['Duração (dias úteis)', 'Custo (€)'],
-        'Real (Histórico)': [project_info_real['total_duration_days'], project_info_real['total_actual_cost']],
-        'Simulado (RL)': [project_info_sim['simulated_duration'], project_info_sim['simulated_cost']]
-    })
-
-    # Preparar dados para o gráfico detalhado
-    sim_log_df = pd.DataFrame(env.detailed_logs.get(project_id_to_simulate, []))
-    real_allocations = df_resource_allocations[df_resource_allocations['project_id'] == project_id_to_simulate].copy()
-    real_allocations['allocation_date'] = pd.to_datetime(real_allocations['allocation_date'])
-    real_log_merged = real_allocations.merge(df_resources[['resource_id', 'cost_per_hour']], on='resource_id', how='left')
-    real_log_merged['daily_cost'] = real_log_merged['hours_worked'] * real_log_merged['cost_per_hour']
-    
-    project_start_date = pd.to_datetime(project_info_real['start_date'])
-    real_log_merged['day'] = (real_log_merged['allocation_date'] - project_start_date).dt.days
-
-    # Calcular cumulativos para os dados reais
-    real_daily_cost = real_log_merged.groupby('day')['daily_cost'].sum().cumsum().reset_index().rename(columns={'daily_cost': 'cumulative_cost'})
-    real_daily_hours = real_log_merged.groupby('day')['hours_worked'].sum().cumsum().reset_index().rename(columns={'hours_worked': 'cumulative_hours'})
-    
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-    # Gráfico de Custo Acumulado
-    axes[0].plot(sim_log_df['day'], sim_log_df['cumulative_cost'], label='Custo Simulado', marker='o', linestyle='--', color='b')
-    axes[0].plot(real_daily_cost['day'], real_daily_cost['cumulative_cost'], label='Custo Real', marker='x', linestyle='-', color='r')
-    axes[0].axvline(x=project_info_real['total_duration_days'], color='k', linestyle=':', label=f"Fim Real ({project_info_real['total_duration_days']} dias)")
-    axes[0].set_title('Custo Acumulado'); axes[0].set_xlabel('Dias desde o início'); axes[0].set_ylabel('Custo Acumulado (€)'); axes[0].legend(); axes[0].grid(True)
-    # Gráfico de Progresso Acumulado
-    axes[1].plot(sim_log_df['day'], sim_log_df['cumulative_hours'], label='Progresso Simulado', marker='o', linestyle='--', color='b')
-    axes[1].plot(real_daily_hours['day'], real_daily_hours['cumulative_hours'], label='Progresso Real', marker='x', linestyle='-', color='r')
-    axes[1].set_title('Progresso Acumulado (Horas)'); axes[1].set_xlabel('Dias desde o início'); axes[1].set_ylabel('Horas Acumuladas'); axes[1].legend(); axes[1].grid(True)
-    fig.tight_layout()
-    plots['project_detailed_comparison'] = convert_fig_to_bytes(fig)
-    
-    return plots, tables, logs
-    
 # --- MOTOR DE DIAGNÓSTICO ---
 from scipy import stats
 import matplotlib.dates as mdates
@@ -4924,8 +4277,8 @@ def compute_priorities(V, caps, max_items=5):
     eur = lambda d: d * cpd if cpd else None
     items = []
 
-    def add(area, titulo, problema, evidencia, acao, dias=None, euros=None, peso=None, nivel=None):
-        items.append(dict(area=area, titulo=titulo, problema=problema, evidencia=evidencia, acao=acao,
+    def add(area, titulo, problema, evidencia, acao, dias=None, euros=None, peso=None, nivel=None, sim=None):
+        items.append(dict(area=area, titulo=titulo, problema=problema, evidencia=evidencia, acao=acao, sim=sim,
                           impacto_dias=_r(dias, 0), impacto_eur=_r(euros, 0), _peso=peso if peso is not None else (euros if euros else (dias or 0) * (cpd or 1)), nivel=nivel))
 
     try:
@@ -4940,7 +4293,7 @@ def compute_priorities(V, caps, max_items=5):
                     f"Os processos ficam em média {r.w:.1f} dias parados nesta passagem.",
                     f"{r.n:,} processos · {r.tot:,.0f} dias parados no total ({r.tot / tot_wait:.0%} de toda a espera)".replace(',', ' '),
                     "Perceber porque o trabalho fica em fila: quem recebe tem capacidade? Há critérios de entrada ou aprovações em lote? Definir um SLA interno para esta passagem.",
-                    dias=r.tot, euros=eur(r.tot))
+                    dias=r.tot, euros=eur(r.tot), sim={'name': f"Metade da espera {r.prev_task} → {r.task_name}", 'exo': [[r.prev_task, r.task_name]], 'exo_pct': 50})
     except Exception: pass
 
     try:
@@ -4954,7 +4307,7 @@ def compute_priorities(V, caps, max_items=5):
                 add('fluxo', "Retrabalho", f"{len(rw) / len(P):.1%} dos processos voltam atrás; cada um demora mais {extra:.1f} dias.",
                     f"{len(rw):,} processos com retrabalho".replace(',', ' ') + (f" · retorno mais comum: {top_loop}" if top_loop else ""),
                     ("Atacar a causa do retorno mais frequente" + (f" ({top_loop})" if top_loop else "") + ": validar na origem o que hoje é detetado mais à frente (checklist, documentação completa à entrada)."),
-                    dias=extra * len(rw), euros=ex_eur if ex_eur and ex_eur > 0 else eur(extra * len(rw)))
+                    dias=extra * len(rw), euros=ex_eur if ex_eur and ex_eur > 0 else eur(extra * len(rw)), sim={'name': 'Retrabalho −50%', 'rework': 50})
     except Exception: pass
 
     try:
@@ -4966,7 +4319,7 @@ def compute_priorities(V, caps, max_items=5):
                 add('custos', "Atrasos face ao prazo", f"{lr:.1%} dos processos terminam depois do prazo (atraso médio {late['days_diff'].mean():.1f} dias)." if len(late) else "Taxa de atrasos a subir.",
                     f"{late['days_diff'].sum():,.0f} dias de atraso acumulados".replace(',', ' ') + (f" · últimos 3 meses {cur:.0%} vs {prev:.0%} antes" if cur is not None else ""),
                     "Identificar o que os processos atrasados têm em comum (tipo, variante, equipa) e criar um alerta precoce para processos em risco.",
-                    dias=late['days_diff'].sum(), euros=eur(late['days_diff'].sum()))
+                    dias=late['days_diff'].sum(), euros=eur(late['days_diff'].sum()), sim={'tab': 'rl'})
     except Exception: pass
 
     try:
@@ -4990,7 +4343,7 @@ def compute_priorities(V, caps, max_items=5):
                 add('tempos', f"Duração imprevisível em «{a}»", f"Metade das execuções demora até {r['p50']:.1f} dias, mas 10% demoram mais de {r['p90']:.1f}.",
                     f"{int(r['n']):,} execuções".replace(',', ' '),
                     "Analisar os casos mais longos desta atividade (o que têm em comum?) e normalizar o trabalho (modelos, critérios, escalonamento).",
-                    dias=r['gap'], euros=eur(r['gap']))
+                    dias=r['gap'], euros=eur(r['gap']), sim={'name': f"{a} 20% mais rápida", 'dur': [a], 'dur_pct': 20})
     except Exception: pass
 
     try:
@@ -5013,7 +4366,7 @@ def compute_priorities(V, caps, max_items=5):
                 add('recursos', f"Função «{k}» no limite da capacidade", f"A função trabalhou {hot[k]:.0f}% da capacidade disponível nos últimos 3 meses.",
                     ", ".join(f"{a}: {b:.0f}%" for a, b in sorted(hot.items(), key=lambda x: -x[1])),
                     "Reforçar ou redistribuir trabalho desta função antes de aumentar volume; verificar se a espera antes das suas tarefas está a crescer.",
-                    peso=0.6 * ref, nivel='risco')
+                    peso=0.6 * ref, nivel='risco', sim={'name': f"+1 {k}", 'people': {k: 1}})
         if caps_ok({'RECURSOS'}, caps) and not A.empty:
             roles = R[R['resource_id'].isin(A['resource_id'].unique())]['resource_type'].value_counts()
             single = list(roles[roles <= 1].index)
@@ -5303,10 +4656,87 @@ def deterministic_reading(report, priorities):
     prios = [dict(titulo=p['titulo'], area=p['area'], problema=p['problema'], evidencia=p['evidencia'], acao=p['acao'],
                   ganho_estimado=(_fmt_eur(p['impacto_eur']) + ' de impacto estimado' if p.get('impacto_eur') else
                                   (f"{p['impacto_dias']:,.0f} dias acumulados".replace(',', ' ') if p.get('impacto_dias') else None)),
-                  nivel=p.get('nivel')) for p in priorities]
+                  nivel=p.get('nivel'), sim=p.get('sim')) for p in priorities]
     fortes = [x['titulo'] for k in ['diagnostico_custos_atrasos', 'diagnostico_fluxo_conformidade', 'diagnostico_gargalos_esperas', 'diagnostico_recursos_equipas']
               for x in (report or {}).get(k, []) or [] if isinstance(x, dict) and x.get('level') == 'recomendacao'][:4]
     return {'veredicto': verdict, 'estado': estado, 'resumo': resumo, 'prioridades': prios, 'pontos_fortes': fortes, 'a_vigiar': [], 'limitacoes_dados': [], 'perguntas_para_o_negocio': []}
+
+
+def _go_simulate(sim):
+    """Abre a Simulação com o cenário da prioridade já preenchido e corre-o automaticamente."""
+    st.session_state.current_page = 'RL'
+    if sim.get('tab') == 'rl':
+        st.session_state.sim_tab = 'rl'; st.session_state.sim_tab_ctl = 'rl'; return
+    st.session_state.sim_tab = 'cenarios'; st.session_state.sim_tab_ctl = 'cenarios'
+    for k in list(st.session_state.keys()):
+        if k.startswith('sc_p_'): st.session_state[k] = 0
+    st.session_state.update({'sc_vol': 0, 'sc_rw': sim.get('rework', 0), 'sc_exo_sel': [f"{a} → {b}" for a, b in sim.get('exo', [])],
+                             'sc_exo_pct': sim.get('exo_pct', 50), 'sc_dur_sel': list(sim.get('dur', [])), 'sc_dur_pct': sim.get('dur_pct', 20),
+                             'sc_name': sim.get('name', 'Cenário do diagnóstico'), 'sc_autorun': True})
+    for r, d in (sim.get('people') or {}).items(): st.session_state[f'sc_p_{r}'] = d
+
+
+def _attach_sim(ai_prios, calc):
+    """Liga as prioridades redigidas pela IA às prioridades calculadas (para o botão Simular)."""
+    tok = lambda x: set(re.findall(r'\w{4,}', str(x).lower()))
+    for p in ai_prios or []:
+        if p.get('sim'): continue
+        best, sc = None, 0.0
+        for c in calc:
+            if not c.get('sim') or str(c.get('area')) != str(p.get('area', '')).lower(): continue
+            a, b = tok(p.get('titulo', '') + ' ' + p.get('problema', '')), tok(c['titulo'] + ' ' + c['problema'])
+            j = len(a & b) / max(len(a | b), 1)
+            if j > sc: best, sc = c, j
+        if best and sc >= 0.12: p['sim'] = best['sim']
+    return ai_prios
+
+
+def sim_facts():
+    """Resultados da Simulação (se já foram corridos) em formato compacto, para a IA e para o resumo executivo."""
+    out = {}
+    SV = st.session_state.get('sim_validation')
+    if SV:
+        ws = SV['wait_split']; tot = ((ws['fila'] + ws['estrutural']) * ws['n']).sum()
+        out['modelo'] = {'erro_medio_pct': _r(SV['score']), 'pct_espera_por_falta_capacidade': _r((ws['fila'] * ws['n']).sum() / tot * 100) if tot else None,
+                         'ocupacao_por_funcao_pct': {k: _r(v, 0) for k, v in SV['util'].items()}}
+    B = st.session_state.get('sim_base_summary'); lst = st.session_state.get('sim_scen_list') or []
+    if B and lst:
+        def kp(S): return {k: _r(S.get(k)) for k in ['lead', 'p90', 'wait', 'late', 'cost', 'umax'] if S.get(k) is not None}
+        out['cenarios'] = {'base': kp(B), 'testados': [{'nome': n, 'parametros': {k: v for k, v in pr.items() if v and k != 'people'} |
+                                                        ({'pessoas': {r: d for r, d in pr['people'].items() if d}} if any((pr.get('people') or {}).values()) else {}),
+                                                        'resultado': kp(S_)} for n, pr, S_ in lst]}
+        out['cenarios']['legenda'] = 'lead=duração média (dias), p90=duração P90, wait=espera por processo, late=% atrasados, cost=custo mão-de-obra/processo (€), umax=ocupação máxima de uma função (%)'
+    RR = st.session_state.get('rl_result')
+    if RR:
+        R_, ev, rules = RR; nm = list(ev)
+        out['otimizacao_rl'] = {'objetivo': RL_OBJECTIVES[R_['kind']], 'volume_pct': R_['volume'], 'politica_escolhida': R_.get('chosen'),
+                                'resultados': {n: {'objetivo': _r(ev[n]['obj']), 'duracao': _r(ev[n]['lead']), 'atrasados_pct': _r(ev[n].get('late'))} for n in nm},
+                                'regras': [f"{t}: {d}" for t, d, _ in rules]}
+    return out
+
+
+DIRECTOR_SYSTEM = """És um consultor de operações. Com base APENAS nos resultados de simulação em JSON, escreve para um diretor um resumo executivo em português de Portugal:
+- 1 frase de conclusão; depois 3 a 5 bullets com a recomendação, o impacto esperado (números do JSON) e o que não compensa fazer;
+- termina com 1 linha de riscos/pressupostos. Máx. 170 palavras. Sem jargão técnico. Não inventes números."""
+
+
+def render_director_summary(key, payload, fallback_lines):
+    """Resumo para decisão: por regras (sempre) e redigido por IA (se houver chave)."""
+    with st.container(border=True):
+        ui_card_header('Resumo para o diretor', 'Conclusão dos testes feitos, pronta a copiar', 'bi-briefcase')
+        for l in fallback_lines: st.markdown(f"- {l}")
+        cfg = _llm_settings()
+        if cfg['key']:
+            if st.button("Redigir com IA", icon=":material/auto_awesome:", key=f'dir_{key}'):
+                with st.spinner("A redigir..."):
+                    try:
+                        st.session_state[f'dir_txt_{key}'] = call_llm(DIRECTOR_SYSTEM, [{'role': 'user', 'content': json.dumps(payload, ensure_ascii=False, default=str)}], max_tokens=900)
+                    except LLMError as e:
+                        _show_llm_error(e)
+            if st.session_state.get(f'dir_txt_{key}'):
+                st.markdown(st.session_state[f'dir_txt_{key}'])
+        else:
+            st.caption("Com uma chave de IA (Diagnóstico → Configurar IA) este resumo pode ser redigido automaticamente.")
 
 
 def _go_section(sec):
@@ -5344,6 +4774,10 @@ def render_reading(rd, source):
             with c2:
                 if p.get('ganho_estimado'):
                     st.markdown(f"<div class='pm-gain'><div class='pm-gain-lab'>Impacto / ganho</div><div class='pm-gain-val'>{html.escape(str(p['ganho_estimado']))}</div></div>", unsafe_allow_html=True)
+                if p.get('sim'):
+                    st.button("Simular" if p['sim'].get('tab') != 'rl' else "Otimizar prioridades", key=f"sim_{source[:3]}_{i}", on_click=_go_simulate, args=(p['sim'],),
+                              use_container_width=True, type='primary', icon=":material/science:",
+                              help="Abre o simulador com este cenário já preenchido e mostra o impacto esperado.")
                 if sec:
                     st.button(f"Ver em {sec[1]}", key=f"go_{source[:3]}_{i}", on_click=_go_section, args=(sec[0],), use_container_width=True, icon=":material/arrow_forward:")
     cols_data = [('Pontos fortes', rd.get('pontos_fortes'), 'bi-hand-thumbs-up', '#16a34a'), ('A vigiar', rd.get('a_vigiar'), 'bi-eye', '#d97706'),
@@ -5378,7 +4812,10 @@ def render_ai_section(caps):
     cfg = _llm_settings()
     anon = True  # nomes de pessoas são sempre substituídos pela função (ex.: "Analista de Risco #3")
     facts = build_process_facts(V, caps, report, anonymize=anon)
-    facts_json = json.dumps(facts, ensure_ascii=False, default=str)
+    sf = sim_facts()
+    if sf: facts['simulacao'] = sf
+    facts_json = json.dumps({**facts, 'prioridades_calculadas': [{k: v for k, v in p.items() if k != 'sim'} for p in facts['prioridades_calculadas']]},
+                            ensure_ascii=False, default=str)
     sig = hash(facts_json + cfg['provider'] + cfg['model'])
 
     c1, c2, c3 = st.columns([3.2, 1.4, 1.4], vertical_alignment='center')
@@ -5402,7 +4839,8 @@ def render_ai_section(caps):
         with st.spinner("A IA está a ler os factos do processo..."):
             try:
                 txt = call_llm(AI_SYSTEM, [{'role': 'user', 'content': "FACTOS:\n" + facts_json}], json_mode=True, max_tokens=4000)
-                st.session_state.ai_reading = _parse_json(txt); st.session_state.ai_reading_sig = sig
+                rd_ = _parse_json(txt); rd_['prioridades'] = _attach_sim(rd_.get('prioridades'), facts['prioridades_calculadas'])
+                st.session_state.ai_reading = rd_; st.session_state.ai_reading_sig = sig
             except LLMError as e:
                 _show_llm_error(e)
                 if st.session_state.get('llm_bad_key'): st.rerun()
@@ -5588,165 +5026,1033 @@ def dashboard_page():
 
 
 # --- (REINFORCEMENT LEARNING) ---
-def rl_page():
-    ui_page_header("Simulação (Reinforcement Learning)", "Treine um agente para testar políticas de alocação de recursos")
+# =====================================================================================
+# --- SIMULADOR DO PROCESSO (eventos discretos) CALIBRADO COM O HISTÓRICO ---
+# Base para cenários "e se" e para treinar o agente de RL num mundo realista.
+# =====================================================================================
+import heapq as _heapq
+import itertools as _itertools
+from collections import deque as _deque
 
-    if not st.session_state.analysis_run:
-        st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Configurações' para carregar os dados.")
-        return
+_START, _END = '__INICIO__', '__FIM__'
 
-    caps = st.session_state.get('caps')
-    if not caps_ok({'TEMPOS', 'RECURSOS'}, caps):
-        st.warning("A simulação precisa de datas de início e fim por tarefa **e** de saber quem executou cada tarefa. "
-                   "Os dados carregados não têm essa informação (ver 'Dados detetados' em Configurações).")
-        return
-    if not caps_ok({'ESFORCO'}, caps):
-        st.info("ℹ️ Sem horas trabalhadas: o esforço de cada tarefa é estimado em 8h por dia útil de duração. Os resultados são indicativos.")
 
-    #  CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
-    # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
-    if 'rl_sample_ids' not in st.session_state:
-        proj_ids = st.session_state.get('dfs_norm', st.session_state.dfs)['projects']['project_id'].astype(str)
-        n = min(100, len(proj_ids))
-        st.session_state['rl_sample_ids'] = proj_ids.sample(n=n, random_state=42).tolist()
+def _person_concurrency(T):
+    """Nº de tarefas em simultâneo que cada pessoa costuma ter (percentil 90 dos dias em que trabalhou)."""
+    d = T.dropna(subset=['resource_name', 'start_date', 'end_date'])[['resource_name', 'resource_type', 'start_date', 'end_date']].copy()
+    if d.empty: return pd.DataFrame(columns=['resource_name', 'resource_type', 'conc'])
+    d['s'] = d['start_date'].dt.normalize(); d['e'] = d['end_date'].dt.normalize()
+    d['n'] = ((d['e'] - d['s']).dt.days + 1).clip(lower=1, upper=120)
+    rep = d.loc[d.index.repeat(d['n'])].copy()
+    rep['day'] = rep['s'] + pd.to_timedelta(rep.groupby(level=0).cumcount(), unit='D')
+    daily = rep.groupby(['resource_name', 'resource_type', 'day']).size().reset_index(name='k')
+    out = daily.groupby(['resource_name', 'resource_type'])['k'].quantile(0.9).reset_index(name='conc')
+    out['conc'] = np.ceil(out['conc']).clip(lower=1)
+    return out
 
-    # -----------------------------------------------------------------
 
-    st.info("Esta secção permite treinar um agente de IA para otimizar a gestão de processos. O treino e a análise correm sobre uma amostra de 100 processos para garantir a performance.")
+def _bpos(ts, origin):
+    """Posição em dias úteis desde a origem (as durações reais dependem dos fins de semana; o relógio do simulador é em dias úteis)."""
+    ts = pd.to_datetime(ts)
+    d = ts.dt.normalize()
+    ok = d.notna()
+    out = pd.Series(np.nan, index=ts.index, dtype=float)
+    out[ok] = np.busday_count(np.datetime64(origin.date()), d[ok].values.astype('datetime64[D]')) + \
+              ((ts[ok] - d[ok]).dt.total_seconds() / 86400).values
+    return out
 
-    with st.expander("⚙️ Parâmetros da Simulação", expanded=st.session_state.rl_params_expanded):
-        st.markdown("<p><strong>Parâmetros Gerais</strong></p>", unsafe_allow_html=True)
-        
-        # As opções vêm da amostra que acabou de ser criada.
-        project_ids_elegiveis = st.session_state.get('rl_sample_ids', [])
-        
+
+def _bday_to_cal(b, origin):
+    """Converte posições em dias úteis para dias de calendário desde a origem."""
+    b = np.asarray(b, dtype=float); out = np.full(b.shape, np.nan)
+    ok = ~np.isnan(b)
+    whole = np.floor(b[ok]).astype(int)
+    dates = np.busday_offset(np.datetime64(origin.date()), whole, roll='forward')
+    out[ok] = (dates - np.datetime64(origin.date())).astype(int) + (b[ok] - whole)
+    return out
+
+
+def build_sim_model(V, caps):
+    """Extrai do histórico tudo o que o simulador precisa (rotas, durações, esperas, funções, capacidade, custos)."""
+    P, T, A, R = V['P'], V['T'], V['A'], V['R']
+    has_cap = caps_ok({'RECURSOS', 'TEMPOS'}, caps) and T['resource_type'].notna().mean() > 0.5
+    has_cost = caps_ok({'CUSTO'}, caps) and not A.empty
+    has_eff = caps_ok({'ESFORCO'}, caps) and not A.empty
+    T = T.dropna(subset=['start_date', 'end_date']).copy()
+    origin = T['start_date'].min().normalize()
+    T['bs'] = _bpos(T['start_date'], origin); T['be'] = _bpos(T['end_date'], origin)
+    T['bdur'] = (T['be'] - T['bs']).clip(lower=0)
+    T['bprev'] = T.groupby('project_id')['be'].shift(1)
+    T['bwait'] = (T['bs'] - T['bprev']).clip(lower=0)
+    ctype = P.set_index('project_id')['path_name'] if 'path_name' in P.columns else pd.Series(dtype=str)
+    T['ctype'] = T['project_id'].map(ctype).fillna('Geral')
+
+    # Rotas: probabilidade da atividade seguinte, por tipo de processo (Markov de 1ª ordem)
+    seq = T[['project_id', 'ctype', 'task_name']].copy()
+    seq['prev'] = seq.groupby('project_id')['task_name'].shift(1).fillna(_START)
+    last = seq.groupby('project_id').tail(1)[['project_id', 'ctype', 'task_name']].rename(columns={'task_name': 'prev'}); last['task_name'] = _END
+    trans = pd.concat([seq[['ctype', 'prev', 'task_name']], last[['ctype', 'prev', 'task_name']]])
+
+    def _route_table(df):
+        out = {}
+        for prev, g in df.groupby('prev'):
+            vc = g['task_name'].value_counts()
+            out[prev] = (list(vc.index), (vc / vc.sum()).values)
+        return out
+    routing = {'*': _route_table(trans)}
+    for ct, g in trans.groupby('ctype'):
+        if g['prev'].eq(_START).sum() >= 20: routing[ct] = _route_table(g)
+
+    # Pares (espera antes, duração) observados juntos: preserva a relação entre ambos (ex.: fins de semana, agendamentos)
+    dur = {('*', a): g['bdur'].values for a, g in T.groupby('task_name')}
+    for (ct, a), g in T.groupby(['ctype', 'task_name']):
+        if len(g) >= 30: dur[(ct, a)] = g['bdur'].values
+    wt = T.dropna(subset=['prev_task'])
+    pairs = {('*', p, a): g[['bwait', 'bdur']].values for (p, a), g in wt.groupby(['prev_task', 'task_name'])}
+    for (ct, p, a), g in wt.groupby(['ctype', 'prev_task', 'task_name']):
+        if len(g) >= 30: pairs[(ct, p, a)] = g[['bwait', 'bdur']].values
+    exo_act = {a: g['bwait'].values for a, g in wt.groupby('task_name')}
+    # 'Processos-molde': cada processo simulado segue os tempos de um processo real do mesmo tipo (preserva a relação entre tarefas do mesmo processo)
+    donors = {}
+    for (pid, ct), g in T.groupby(['project_id', 'ctype'], sort=False):
+        d = {}
+        for pv, a, w, du in zip(g['prev_task'].fillna(_START), g['task_name'], g['bwait'].fillna(0), g['bdur']):
+            d.setdefault((pv, a), []).append((float(w), float(du)))
+        donors.setdefault(ct, []).append((pid, d))
+    n_obs = {(p, a): len(g) for (p, a), g in wt.groupby(['prev_task', 'task_name'])}
+    obs_wait = {(p, a): float(g['bwait'].mean()) for (p, a), g in wt.groupby(['prev_task', 'task_name'])}
+
+    # Funções e capacidade (nº de tarefas em simultâneo por função)
+    roles, slots, people, conc_role, cap_src, util_target = {}, {}, {}, {}, None, {}
+    if has_cap:
+        for a, g in T.dropna(subset=['resource_type']).groupby('task_name'):
+            vc = g['resource_type'].value_counts(); roles[a] = (list(vc.index), (vc / vc.sum()).values)
+        pc = _person_concurrency(T)
+        people = pc.groupby('resource_type').size().to_dict()
+        horizon = max(T['be'].max() - T['bs'].min(), 1)
+        busy = T.dropna(subset=['resource_type']).groupby('resource_type')['bdur'].sum()
+        util = _role_utilization_recent(A, R, months=999) if has_eff else {}
+        util_target = {r: min(u, 95) for r, u in util.items() if u and 5 < u < 150}
+        for r, n in people.items():
+            u = util.get(r)
+            if u and 5 < u < 150:   # capacidade ancorada na ocupação real em horas
+                slots[r] = int(max(n, np.ceil(busy.get(r, 0) / (min(u, 98) / 100 * horizon)))); cap_src = 'horas'
+            else:                   # sem horas: nº de tarefas que cada pessoa costuma ter em simultâneo
+                slots[r] = int(pc[pc['resource_type'] == r]['conc'].sum()); cap_src = cap_src or 'simultaneidade'
+            conc_role[r] = slots[r] / n
+
+    # Esforço e custo por tarefa
+    hours, rate = {}, {}
+    if has_cost:
+        h = A.groupby(['task_id', 'task_name'])['hours_worked'].sum().reset_index()
+        hours = {a: g['hours_worked'].values for a, g in h.groupby('task_name')}
+        rate = A.groupby('resource_type').apply(lambda g: g['cost'].sum() / max(g['hours_worked'].sum(), 1e-9)).to_dict()
+        rate['*'] = A['cost'].sum() / max(A['hours_worked'].sum(), 1e-9)
+
+    # Chegadas históricas (para validar: os mesmos processos, nas mesmas datas)
+    first = T.groupby('project_id')['bs'].min()
+    arr = pd.DataFrame({'case': first.index, 't0': first.values})
+    arr['ctype'] = arr['case'].map(ctype).fillna('Geral')
+    if caps_ok({'PLANO'}, caps) and 'planned_end_date' in P.columns:
+        pl = pd.to_datetime(P.set_index('project_id')['planned_end_date'], errors='coerce')
+        arr['plan_cal'] = ((arr['case'].map(pl) - origin).dt.total_seconds() / 86400).values
+    else:
+        arr['plan_cal'] = np.nan
+    arr['plan_off'] = arr['plan_cal'] - _bday_to_cal(arr['t0'].values, origin)
+    # Para a política de priorização: duração esperada de cada atividade e tempo que costuma faltar até ao fim do processo
+    cend = T.groupby('project_id')['be'].transform('max')
+    rem = (cend - T['bs']).groupby(T['task_name']).mean().to_dict()
+    dmean = T.groupby('task_name')['bdur'].mean().to_dict()
+    ctypes_list = sorted(T['ctype'].unique())
+    return dict(rem=rem, dmean=dmean, ctypes=ctypes_list,routing=routing, dur=dur, pairs=pairs, donors=donors, exo_act=exo_act, obs_wait=obs_wait, n_obs=n_obs, exo_factor={k: 1.0 for k in obs_wait}, default_factor=1.0,
+                roles=roles, slots=slots, people=people, conc=conc_role, cap_src=cap_src, util_target=util_target, hours=hours, rate=rate, has_cap=has_cap, has_cost=has_cost,
+                arrivals=arr.sort_values('t0').reset_index(drop=True), origin=origin, acts=sorted(T['task_name'].unique()))
+
+
+POLICY_FEATS = ['Urgência (pouca folga até ao prazo)', 'Tempo já em fila', 'Duração esperada da tarefa', 'Processo já com retrabalho', 'Progresso do processo']
+
+
+def policy_features(M):
+    return POLICY_FEATS + [f"Tipo: {c}" for c in M['ctypes']]
+
+
+def simulate_process(M, arrivals=None, seed=0, slots=None, exo_mult=None, max_steps=60, dur_mult=None, rework_mult=1.0, policy=None, log=None):
+    """Simulação por eventos discretos (relógio em dias úteis). Devolve (casos, tarefas, ocupação por função).
+    slots: capacidade por função (nº de tarefas em simultâneo); exo_mult: multiplicador da espera estrutural (por passagem ou global)."""
+    rng = np.random.default_rng(seed)
+    arrivals = M['arrivals'] if arrivals is None else arrivals
+    slots = dict(M['slots'] if slots is None else slots)
+    free = dict(slots); queues = {r: _deque() for r in slots}; busy = {r: 0.0 for r in slots}
+    heap, cnt = [], _itertools.count()
+    push = lambda t, kind, data: _heapq.heappush(heap, (t, next(cnt), kind, data))
+    ctypes = arrivals['ctype'].values; t0s = arrivals['t0'].values
+    steps = np.zeros(len(arrivals), dtype=int); case_end = np.full(len(arrivals), np.nan)
+    rec = []
+    cases_ids = arrivals['case'].values
+    donor = []
+    all_d = [x for v in M.get('donors', {}).values() for x in v]
+    for c in range(len(arrivals)):
+        pool = M.get('donors', {}).get(ctypes[c]) or all_d
+        if not pool: donor.append({}); continue
+        for _ in range(3):
+            pid, d = pool[rng.integers(len(pool))]
+            if pid != cases_ids[c] or len(pool) == 1: break
+        donor.append({k: list(v) for k, v in d.items()})
+
+    def from_donor(c, prev, a):
+        lst = donor[c].get((prev, a))
+        return lst.pop(0) if lst else None
+
+    _crngs = {}
+
+    def crng(c):   # um gerador por processo: decisões diferentes noutros processos não mudam a sorte deste (comparações justas)
+        g = _crngs.get(c)
+        if g is None: g = _crngs[c] = np.random.default_rng((int(seed), int(c)))
+        return g
+
+    _cum = {}
+
+    def choose(lst_probs, c=None):
+        lst, pr = lst_probs
+        k = id(pr); cum = _cum.get(k)
+        if cum is None: cum = _cum[k] = np.cumsum(pr)
+        i = int(np.searchsorted(cum, (rng if c is None else crng(c)).random() * cum[-1], side='right'))
+        return lst[min(i, len(lst) - 1)]
+
+    visited = [set() for _ in range(len(arrivals))]
+    rwc = np.zeros(len(arrivals), dtype=bool)
+    if policy is not None:
+        po = arrivals['plan_off'].values if 'plan_off' in arrivals else np.full(len(arrivals), np.nan)
+        plan_b = t0s + po * 5 / 7
+        tix = {ct: i for i, ct in enumerate(M['ctypes'])}
+        cti = np.array([tix.get(x, -1) for x in ctypes])
+        W = np.asarray(policy['w'], dtype=float); flex = policy.get('flex', np.inf)
+
+    def feats(item, t):
+        c, a, prev, t_req, e, t_ready, d = item
+        sl = plan_b[c] - t - M['rem'].get(a, 0)
+        f = [0.0 if np.isnan(sl) else float(np.clip(-sl, -30, 30)) / 10, (t - t_ready) / 5, M['dmean'].get(a, 0) / 5,
+             1.0 if rwc[c] else 0.0, steps[c] / 10]
+        oh = [0.0] * len(M['ctypes'])
+        if cti[c] >= 0: oh[cti[c]] = 1.0
+        return np.array(f + oh)
+
+    def pick(q, t):
+        if policy is None or len(q) == 1: return q.popleft()
+        F = np.array([feats(it, t) for it in q]); sc = F @ W
+        i = int(np.argmax(sc))
+        if log is not None:
+            oldest = int(np.argmin([it[5] for it in q]))
+            log.append((i != oldest, F[i], np.delete(F, i, axis=0).mean(axis=0)))
+        it = q[i]; del q[i]
+        return it
+
+    def route(c, prev):
+        tab = M['routing'].get(ctypes[c], M['routing']['*'])
+        opts = tab.get(prev) or M['routing']['*'].get(prev)
+        if opts is None or steps[c] >= max_steps: return _END
+        a = choose(opts, c)
+        if a in visited[c]: rwc[c] = True
+        if a in visited[c] and rework_mult < 1.0 and crng(c).random() > rework_mult:
+            # retrabalho evitado: segue para a atividade seguinte mais provável que ainda não foi feita
+            lst, pr = opts
+            alt = [(x, q) for x, q in zip(lst, pr) if x not in visited[c]]
+            if alt:
+                xs, qs = zip(*alt); qs = np.array(qs) / sum(qs); a = xs[crng(c).choice(len(xs), p=qs)]
+            else:
+                fwd = M['routing']['*'].get(a)
+                a = next((x for x in (fwd[0] if fwd else []) if x not in visited[c]), _END)
+        if a != _END: visited[c].add(a)
+        return a
+
+    def sample_dur(c, a):
+        v = M['dur'].get((ctypes[c], a), M['dur'].get(('*', a)))
+        return float(v[crng(c).integers(len(v))]) if v is not None and len(v) else 0.0
+
+    def mult(prev, a):
+        if isinstance(exo_mult, dict): return exo_mult.get((prev, a), exo_mult.get(a, exo_mult.get('*', 1.0)))
+        return 1.0 if exo_mult is None else exo_mult
+
+    def request(c, a, t, prev):
+        steps[c] += 1
+        dn = from_donor(c, _START if prev is None else prev, a)
+        if prev is None:
+            e, d = 0.0, (dn[1] if dn else sample_dur(c, a))
+        else:
+            pr = M['pairs'].get((ctypes[c], prev, a), M['pairs'].get(('*', prev, a)))
+            if dn:
+                w, d = dn
+            elif pr is not None and len(pr):
+                w, d = pr[crng(c).integers(len(pr))]
+            else:
+                v = M['exo_act'].get(a); w = float(v[crng(c).integers(len(v))]) if v is not None and len(v) else 0.0; d = sample_dur(c, a)
+            e = float(w) * M['exo_factor'].get((prev, a), M['default_factor']) * mult(prev, a)
+        if dur_mult: d = float(d) * dur_mult.get(a, dur_mult.get('*', 1.0))
+        push(t + e, 'ready', (c, a, prev, t, e, float(d)))
+
+    def start(c, a, role, t, prev, t_req, e, t_ready, d):
+        push(t + d, 'end', (c, a, role, prev, t_req, e, t_ready, t, d))
+
+    for c in range(len(arrivals)):
+        push(float(t0s[c]), 'arr', c)
+    while heap:
+        t, _, kind, data = _heapq.heappop(heap)
+        if kind == 'arr':
+            a = route(data, _START)
+            if a == _END: case_end[data] = t
+            else: request(data, a, t, None)
+        elif kind == 'ready':
+            c, a, prev, t_req, e, d = data
+            role = choose(M['roles'][a], c) if M['has_cap'] and a in M['roles'] else None
+            if role is None or role not in free:
+                start(c, a, role, t, prev, t_req, e, t, d)
+            elif free[role] > 0:
+                free[role] -= 1; start(c, a, role, t, prev, t_req, e, t, d)
+            else:
+                if policy is not None and len(queues[role]) >= flex:
+                    # função saturada: outra função que já fez esta atividade no histórico ajuda (se tiver capacidade livre)
+                    lst, pr = M['roles'][a]
+                    alt = [r for r, q in sorted(zip(lst, pr), key=lambda x: -x[1]) if r != role and q >= 0.05 and free.get(r, 0) > 0]
+                    if alt:
+                        r2 = alt[0]; free[r2] -= 1; start(c, a, r2, t, prev, t_req, e, t, d * 1.1)
+                        if log is not None: log.append(('flex', role, r2))
+                        continue
+                queues[role].append((c, a, prev, t_req, e, t, d))
+        else:
+            c, a, role, prev, t_req, e, t_ready, t_st, d = data
+            rec.append((c, a, role, prev, t_req, t_ready, t_st, t, e, t_st - t_ready))
+            if role in free:
+                busy[role] += d
+                if queues[role]:
+                    c2, a2, p2, tr2, e2, ty2, d2 = pick(queues[role], t)
+                    start(c2, a2, role, t, p2, tr2, e2, ty2, d2)
+                else:
+                    free[role] += 1
+            nxt = route(c, a)
+            if nxt == _END: case_end[c] = t
+            else: request(c, nxt, t, a)
+
+    tasks = pd.DataFrame(rec, columns=['c', 'task_name', 'role', 'prev', 't_req', 't_ready', 't_start', 't_end', 'exo_wait', 'queue_wait'])
+    o = M['origin']
+    for col in ['t_req', 't_start', 't_end']:
+        tasks[col.replace('t_', 'cal_')] = _bday_to_cal(tasks[col].values, o)
+    tasks['wait'] = (tasks['cal_start'] - tasks['cal_req']).clip(lower=0); tasks['dur'] = (tasks['cal_end'] - tasks['cal_start']).clip(lower=0)
+    tasks.loc[tasks['prev'].isna(), 'wait'] = 0.0
+    if M['has_cost'] and len(tasks):
+        h = np.array([float(M['hours'][a][rng.integers(len(M['hours'][a]))]) if a in M['hours'] and len(M['hours'][a]) else 0.0 for a in tasks['task_name']])
+        tasks['cost'] = h * tasks['role'].map(M['rate']).fillna(M['rate'].get('*', 0)).values
+    g = tasks.groupby('c')
+    cases = pd.DataFrame({'c': np.arange(len(arrivals)), 'case': arrivals['case'].values, 'ctype': ctypes, 't0': t0s,
+                          'plan': arrivals['plan_cal'].values if 'plan_cal' in arrivals else np.nan})
+    if 'plan_off' in arrivals:   # prazo relativo ao início (cenários com chegadas reamostradas)
+        cases['plan'] = _bday_to_cal(t0s, o) + arrivals['plan_off'].values
+    cases['first'] = cases['c'].map(g['cal_start'].min()); cases['end'] = _bday_to_cal(case_end, o)
+    cases['lead'] = cases['end'] - cases['first']
+    cases['wait'] = cases['c'].map(g['wait'].sum()).fillna(0)
+    cases['n_tasks'] = cases['c'].map(g.size()).fillna(0)
+    cases['rework'] = cases['c'].map(tasks.duplicated(['c', 'task_name']).groupby(tasks['c']).any()).fillna(False)
+    cases['late'] = np.where(pd.notna(cases['plan']), cases['end'] > cases['plan'] + 0.5, np.nan)
+    if 'cost' in tasks: cases['cost'] = cases['c'].map(g['cost'].sum())
+    horizon = max(np.nanmax(case_end) - float(np.min(t0s)), 1) if len(arrivals) else 1
+    util = {r: busy[r] / (slots[r] * horizon) * 100 for r in slots if slots[r] > 0}
+    return cases, tasks, util
+
+
+def _real_reference(V, caps, M):
+    """Indicadores reais calculados da mesma forma que no simulador (para comparar maçãs com maçãs)."""
+    T = V['T'].dropna(subset=['start_date', 'end_date'])
+    g = T.groupby('project_id')
+    c = pd.DataFrame({'first': g['start_date'].min(), 'end': g['end_date'].max(), 'wait': g['wait_days'].sum(), 'n_tasks': g.size(),
+                      'rework': g['repeat'].any()})
+    c['lead'] = (c['end'] - c['first']).dt.total_seconds() / 86400
+    if caps_ok({'PLANO'}, caps) and 'planned_end_date' in V['P'].columns:
+        pl = pd.to_datetime(V['P'].set_index('project_id')['planned_end_date'], errors='coerce')
+        c['late'] = (c['end'] > c.index.map(pl) + pd.Timedelta(hours=12)).astype(float).where(c.index.map(pl).notna())
+    if M['has_cost']:
+        c['cost'] = V['A'].groupby('project_id')['cost'].sum()
+    c['end_month'] = c['end'].dt.to_period('M').dt.to_timestamp()
+    acts = T.groupby('task_name').agg(wait=('wait_days', 'mean'), dur=('dur_days', 'mean'))
+    return c, acts
+
+
+def _summ(cases):
+    s = {'Duração média (dias)': cases['lead'].mean(), 'Duração mediana (dias)': cases['lead'].median(), 'Duração P90 (dias)': cases['lead'].quantile(0.9),
+         'Espera média por processo (dias)': cases['wait'].mean(), 'Tarefas por processo': cases['n_tasks'].mean(), '% com retrabalho': cases['rework'].mean() * 100}
+    if 'late' in cases and cases['late'].notna().any(): s['% atrasados'] = pd.to_numeric(cases['late'], errors='coerce').mean() * 100
+    if 'cost' in cases and cases['cost'].notna().any(): s['Custo médio por processo (€)'] = cases['cost'].mean()
+    return s
+
+
+def calibrate_and_validate(V, caps, reps=5, progress=None):
+    """1) Constrói o modelo; 2) separa a espera em 'falta de capacidade' (fila) e 'estrutural'; 3) valida contra o histórico."""
+    M = build_sim_model(V, caps)
+    step = lambda p, txt: progress(p, txt) if progress else None
+    obs = M['obs_wait']
+    # 1. Só filas (sem espera estrutural): a capacidade explica quanta espera?
+    if M['has_cap']:
+        M['exo_factor'] = {k: 0.0 for k in obs}; M['default_factor'] = 0.0
+        # 0. Ancorar a capacidade na ocupação real (horas trabalhadas ÷ horas disponíveis)
+        for it in range(2):
+            if not M['util_target']: break
+            step(0.05 + it * 0.03, "A ajustar a capacidade de cada função à ocupação real...")
+            u = pd.DataFrame([simulate_process(M, seed=50 + s_)[2] for s_ in range(2)]).mean()
+            for r, tgt in M['util_target'].items():
+                if r in M['slots'] and u.get(r, 0) > 0:
+                    M['slots'][r] = int(max(M['people'].get(r, 1), round(M['slots'][r] * u[r] / tgt)))
+        for it in range(6):
+            step(0.1 + it * 0.05, "A medir a espera causada por falta de capacidade...")
+            q = pd.concat([simulate_process(M, seed=s)[1] for s in range(2)])
+            qw = q.dropna(subset=['prev']).groupby(['prev', 'task_name'])['queue_wait'].mean().to_dict()
+            tot_q = sum(qw.get(k, 0) * M['n_obs'][k] for k in obs); tot_o = sum(obs[k] * M['n_obs'][k] for k in obs)
+            if tot_q <= 0.9 * max(tot_o, 1e-9): break
+            M['slots'] = {r: int(np.ceil(v * 1.25)) for r, v in M['slots'].items()}   # capacidade estimada demasiado baixa
+        M['exo_factor'] = {k: float(np.clip((obs[k] - qw.get(k, 0)) / obs[k], 0, 1)) if obs[k] > 0 else 0.0 for k in obs}
+        M['default_factor'] = 1.0
+        M['queue_wait_base'] = qw
+    # 2. Ajuste fino da espera estrutural (2 iterações)
+    for it in range(2):
+        step(0.45 + it * 0.15, "A calibrar as esperas entre atividades...")
+        s_t = pd.concat([simulate_process(M, seed=10 + s)[1] for s in range(2)])
+        sw = s_t.dropna(subset=['prev']).assign(bw=lambda x: x['t_start'] - x['t_req']).groupby(['prev', 'task_name'])['bw'].mean().to_dict()
+        for k in obs:
+            if sw.get(k, 0) > 1e-6 and obs[k] > 0:
+                M['exo_factor'][k] = float(np.clip(M['exo_factor'][k] * obs[k] / sw[k], 0, 3))
+    # 3. Validação: os mesmos processos, nas mesmas datas, várias réplicas
+    runs = []
+    for s in range(reps):
+        step(0.75 + 0.2 * s / reps, f"A validar contra o histórico (réplica {s + 1} de {reps})...")
+        runs.append(simulate_process(M, seed=100 + s))
+    real_c, real_a = _real_reference(V, caps, M)
+    rs = _summ(real_c)
+    sims = pd.DataFrame([_summ(r[0]) for r in runs])
+    rows = []
+    for k, v in rs.items():
+        if k not in sims: continue
+        m, lo, hi = sims[k].mean(), sims[k].min(), sims[k].max()
+        err = (m - v) if k.startswith('%') else ((m - v) / v * 100 if v else np.nan)
+        rows.append({'Indicador': k, 'Real': v, 'Simulado': m, 'Intervalo simulado': f"{lo:,.1f} – {hi:,.1f}".replace(',', ' '),
+                     'Diferença': (f"{err:+.1f} pp" if k.startswith('%') else f"{err:+.1f}%"), '_err': abs(err)})
+    val = pd.DataFrame(rows)
+    key = val[val['Indicador'].isin(['Duração média (dias)', 'Duração P90 (dias)', 'Espera média por processo (dias)', 'Custo médio por processo (€)'])]
+    score = key['_err'].mean() if len(key) else np.nan
+    # Detalhe por atividade e por mês
+    st_all = pd.concat([r[1] for r in runs])
+    sim_a = st_all.groupby('task_name').agg(wait=('wait', 'mean'), dur=('dur', 'mean'), queue=('queue_wait', 'mean'))
+    sim_c = pd.concat([r[0].assign(rep=i) for i, r in enumerate(runs)])
+    sim_c['end_month'] = (M['origin'] + pd.to_timedelta(sim_c['end'], unit='D')).dt.to_period('M').dt.to_timestamp()
+    util = pd.DataFrame([r[2] for r in runs]).mean().to_dict() if M['has_cap'] else {}
+    # Decomposição da espera por passagem: fila (capacidade) vs estrutural
+    dec = st_all.dropna(subset=['prev']).groupby(['prev', 'task_name']).agg(fila=('queue_wait', 'mean'), estrutural=('exo_wait', 'mean'), n=('c', 'size')).reset_index()
+    dec['n'] = dec['n'] / reps
+    step(1.0, "Concluído.")
+    return dict(model=M, validation=val, score=score, real_cases=real_c, real_acts=real_a, sim_cases=sim_c, sim_acts=sim_a, util=util, wait_split=dec, reps=reps)
+
+
+# ---------- Gráficos da validação ----------
+def fig_sim_monthly(SV):
+    r = SV['real_cases'].groupby('end_month')['lead'].mean()
+    s = SV['sim_cases'].groupby(['rep', 'end_month'])['lead'].mean().unstack(0)
+    cnt = SV['real_cases'].groupby('end_month').size(); full = cnt[cnt >= 0.3 * cnt.median()].index
+    r = r[r.index.isin(full)]; s = s[s.index.isin(full)]
+    if len(r) < 2: return None
+    fig = go.Figure()
+    fig.add_scatter(x=s.index, y=s.max(axis=1), mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip')
+    fig.add_scatter(x=s.index, y=s.min(axis=1), mode='lines', fill='tonexty', fillcolor='rgba(37,99,235,0.12)', line=dict(width=0), name='Intervalo simulado', hoverinfo='skip')
+    fig.add_scatter(x=s.index, y=s.mean(axis=1), name='Simulado', mode='lines', line=dict(color=UI['blue'], width=2.5, dash='dot'))
+    fig.add_scatter(x=r.index, y=r.values, name='Real', mode='lines+markers', line=dict(color=UI['ink'], width=2.5))
+    fig.update_layout(yaxis_title='Duração média (dias)', xaxis_title='Mês de conclusão')
+    return _style(fig, 320)
+
+
+def fig_sim_acts(SV, col='wait'):
+    r, s = SV['real_acts'][col], SV['sim_acts'][col]
+    d = pd.DataFrame({'Real': r, 'Simulado': s}).dropna().sort_values('Real')
+    fig = go.Figure()
+    fig.add_bar(y=d.index, x=d['Real'], name='Real', orientation='h', marker_color=UI['ink'])
+    fig.add_bar(y=d.index, x=d['Simulado'], name='Simulado', orientation='h', marker_color=UI['blue'])
+    fig.update_layout(barmode='group', xaxis_title='Dias (média)' if col == 'wait' else 'Dias de execução (média)', yaxis_title='')
+    return _style(fig, max(300, 40 * len(d)))
+
+
+def fig_wait_split(SV):
+    d = SV['wait_split'].copy()
+    d['tot'] = (d['fila'] + d['estrutural']) * d['n']
+    d = d[d['n'] >= 0.01 * len(SV['real_cases'])].sort_values('tot').tail(10)
+    if d.empty or d['fila'].sum() == 0: return None
+    d['lbl'] = d['prev'] + ' → ' + d['task_name']
+    fig = go.Figure()
+    fig.add_bar(y=d['lbl'], x=d['fila'], name='Falta de capacidade (fila)', orientation='h', marker_color=UI['red'],
+                hovertemplate='%{y}<br>Fila: %{x:.2f} dias<extra></extra>')
+    fig.add_bar(y=d['lbl'], x=d['estrutural'], name='Estrutural (não depende de pessoas)', orientation='h', marker_color=UI['amber'],
+                hovertemplate='%{y}<br>Estrutural: %{x:.2f} dias<extra></extra>')
+    fig.update_layout(barmode='stack', xaxis_title='Dias úteis (média)', yaxis_title='')
+    return _style(fig, max(320, 36 * len(d)))
+
+
+def fig_sim_util(SV):
+    u = pd.Series(SV['util']).sort_values()
+    if u.empty: return None
+    cols = [UI['red'] if v >= 85 else (UI['amber'] if v >= 70 else UI['teal']) for v in u.values]
+    fig = go.Figure(go.Bar(x=u.values, y=u.index, orientation='h', marker_color=cols, text=[f"{v:.0f}%" for v in u.values], textposition='inside',
+                           insidetextanchor='end', textfont=dict(color='white'), hovertemplate='%{y}: %{x:.0f}%<extra></extra>'))
+    fig.add_vline(x=85, line=dict(color=UI['red'], dash='dash', width=1))
+    fig.update_layout(xaxis_title='Ocupação média da capacidade (%)', yaxis_title='', xaxis_range=[0, max(100, u.max() * 1.1)])
+    return _style(fig, max(260, 36 * len(u)), legend=False)
+
+
+def render_sim_validation(caps):
+    V = st.session_state.view
+    ui_section_intro("O simulador reproduz o seu processo?",
+                     "Antes de testar cenários, o modelo é calibrado com o histórico e posto à prova: simula os mesmos processos, nas mesmas datas, e compara com o que aconteceu.")
+    if not caps_ok({'TEMPOS'}, caps):
+        ui_note("O simulador precisa de datas de início e de fim por tarefa."); return
+    c1, c2 = st.columns([5, 1.4], vertical_alignment='center')
+    with c2:
+        rerun = st.button("Recalibrar", icon=":material/refresh:", use_container_width=True, key='sim_recal')
+    if st.session_state.get('sim_validation') is None or rerun:
+        bar = st.progress(0.0, text="A construir o modelo do processo...")
+        try:
+            st.session_state.sim_validation = calibrate_and_validate(V, caps, reps=5, progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
+        except Exception as e:
+            bar.empty(); st.error(f"Não foi possível calibrar o simulador: {e}"); return
+        bar.empty()
+    SV = st.session_state.sim_validation; M = SV['model']
+    with c1:
+        st.caption(f"{len(M['arrivals']):,} processos simulados × {SV['reps']} réplicas · {len(M['acts'])} atividades".replace(',', ' ')
+                   + (f" · {sum(M['people'].values())} pessoas em {len(M['people'])} funções" if M['has_cap'] else " · sem dados de pessoas: capacidade ilimitada"))
+    sc = SV['score']
+    lab, icon = ('Boa', 'bi-patch-check') if sc < 10 else (('Aceitável', 'bi-exclamation-circle') if sc < 20 else ('Fraca', 'bi-x-octagon'))
+    v = SV['validation'].set_index('Indicador')
+    k = [dict(icon=icon, value=lab, label=f"Fidelidade do modelo (erro médio {sc:.1f}%)", good=sc < 10 if sc < 10 or sc >= 20 else None,
+              help='Média do erro absoluto em duração média, P90, espera e custo.')]
+    for ind, ic in [('Duração média (dias)', 'bi-stopwatch'), ('Espera média por processo (dias)', 'bi-pause-circle'), ('% atrasados', 'bi-alarm')]:
+        if ind in v.index:
+            k.append(dict(icon=ic, value=f"{v.loc[ind, 'Simulado']:.1f}" + ('%' if ind.startswith('%') else ' d'),
+                          label=f"{ind.split(' (')[0]} simulada · real {v.loc[ind, 'Real']:.1f}" + ('%' if ind.startswith('%') else ' d')))
+    ui_kpis(k)
+    with st.container(border=True):
+        ui_card_header('Real vs. simulado', 'Indicadores principais com os mesmos processos e datas de chegada', 'bi-clipboard-data')
+        show = SV['validation'].drop(columns='_err').copy()
+        st.dataframe(show.style.format({'Real': '{:,.1f}', 'Simulado': '{:,.1f}'}), hide_index=True, use_container_width=True)
+    ui_chart(fig_sim_monthly(SV), 'Duração ao longo do tempo: real vs. simulado', 'Se as linhas acompanham os altos e baixos, o modelo capta o efeito do volume e da capacidade', 'bi-graph-up', key='sim_m')
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_sim_acts(SV, 'wait'), 'Espera antes de cada atividade', 'Real vs. simulado', 'bi-hourglass-split', key='sim_aw')
+    with c2: ui_chart(fig_sim_acts(SV, 'dur'), 'Duração de cada atividade', 'Real vs. simulado', 'bi-stopwatch', key='sim_ad')
+    if M['has_cap']:
+        c1, c2 = st.columns(2)
+        with c1: ui_chart(fig_wait_split(SV), 'De onde vem a espera?', 'Fila por falta de pessoas vs. espera estrutural (aprovações, terceiros, agendamentos)', 'bi-diagram-2', key='sim_ws')
+        with c2: ui_chart(fig_sim_util(SV), 'Ocupação da capacidade por função', 'Acima de 85% as filas crescem depressa com qualquer aumento de volume', 'bi-speedometer2', key='sim_ut')
+        ws = SV['wait_split']; tot_f = (ws['fila'] * ws['n']).sum(); tot_e = (ws['estrutural'] * ws['n']).sum()
+        if tot_f + tot_e > 0:
+            ui_note(f"Leitura: {tot_f / (tot_f + tot_e):.0%} da espera deve-se a falta de capacidade (reduz-se com mais pessoas ou melhor alocação); "
+                    f"{tot_e / (tot_f + tot_e):.0%} é estrutural (reduz-se mudando regras, aprovações ou prazos de terceiros, não com mais pessoas).")
+    with st.expander("Pressupostos do modelo"):
+        st.markdown("- **Chegadas:** os processos reais, nas datas reais (na validação). Nos cenários, o volume pode ser alterado.\n"
+                    "- **Caminho de cada processo:** probabilidade da atividade seguinte observada no histórico, por tipo de processo (inclui retrabalho).\n"
+                    "- **Duração das tarefas:** sorteada da distribuição real de cada atividade.\n"
+                    "- **Capacidade:** cada função tem tantas pessoas como no histórico; cada pessoa trabalha em paralelo no nº de tarefas que costuma ter em simultâneo (percentil 90).\n"
+                    "- **Espera:** parte surge naturalmente da fila por falta de capacidade; o restante é espera estrutural calibrada para reproduzir o histórico.")
+        if M['has_cap']:
+            st.dataframe(pd.DataFrame({'Pessoas': M['people'], 'Tarefas em simultâneo por pessoa (média)': pd.Series(M['conc']).round(1),
+                                       'Capacidade total (tarefas em simultâneo)': M['slots']}), use_container_width=True)
+
+
+# ---------- Fase 2: cenários "e se" ----------
+def _ensure_sim(V, caps):
+    if st.session_state.get('sim_validation') is None:
+        bar = st.progress(0.0, text="A calibrar o simulador com o histórico (só na primeira vez)...")
+        st.session_state.sim_validation = calibrate_and_validate(V, caps, reps=5, progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
+        bar.empty()
+    return st.session_state.sim_validation
+
+
+def scenario_arrivals(M, volume_pct=0, seed=0):
+    base = M['arrivals']
+    if not volume_pct: return base
+    rng = np.random.default_rng(1000 + seed)
+    n0 = len(base); n = max(1, int(round(n0 * (1 + volume_pct / 100))))
+    idx = np.sort(rng.choice(n0, n, replace=n > n0))
+    a = base.iloc[idx].copy().reset_index(drop=True)
+    dup = pd.Series(idx).duplicated().values
+    a.loc[dup, 't0'] = (a.loc[dup, 't0'] + rng.uniform(-5, 5, dup.sum())).clip(lower=0)
+    a['case'] = [f"sim_{i}" for i in range(len(a))]
+    return a.sort_values('t0').reset_index(drop=True)
+
+
+def run_scenario(M, params, reps=5):
+    """Corre o cenário com as mesmas sementes da base (comparação justa). Devolve lista de (casos, tarefas, ocupação)."""
+    slots = dict(M['slots'])
+    for r, d in (params.get('people') or {}).items():
+        if r in slots and d:
+            n = M['people'].get(r, 1); slots[r] = max(1, int(round(slots[r] * max(n + d, 1) / n)))
+    exo = {k: 1 - v / 100 for k, v in (params.get('exo') or {}).items()} or None
+    dur = {a: 1 - v / 100 for a, v in (params.get('dur') or {}).items()} or None
+    runs = []
+    for s_ in range(reps):
+        arr = scenario_arrivals(M, params.get('volume', 0), seed=s_)
+        runs.append(simulate_process(M, arrivals=arr, seed=500 + s_, slots=slots, exo_mult=exo, dur_mult=dur,
+                                     rework_mult=1 - params.get('rework', 0) / 100))
+    return runs
+
+
+def summarize_runs(runs):
+    rows = []
+    for c, t, u in runs:
+        c = c.dropna(subset=['lead'])
+        r = {'lead': c['lead'].mean(), 'p90': c['lead'].quantile(0.9), 'wait': c['wait'].mean(), 'n': len(c),
+             'rework': c['rework'].mean() * 100, 'umax': max(u.values()) if u else np.nan}
+        if c['late'].notna().any(): r['late'] = pd.to_numeric(c['late'], errors='coerce').mean() * 100
+        if 'cost' in c: r['cost'] = c['cost'].mean(); r['cost_tot'] = c['cost'].sum()
+        rows.append(r)
+    out = pd.DataFrame(rows).mean().to_dict()
+    out['util'] = pd.DataFrame([u for _, _, u in runs]).mean().to_dict() if runs and runs[0][2] else {}
+    allt = pd.concat([t for _, t, _ in runs])
+    out['acts'] = allt.groupby('task_name').agg(wait=('wait', 'mean'), fila=('queue_wait', 'mean'))
+    out['leads'] = pd.concat([c['lead'] for c, _, _ in runs]).dropna().values
+    return out
+
+
+def _scen_preset(kind):
+    SV = st.session_state.sim_validation; M = SV['model']
+    for k in list(st.session_state.keys()):
+        if k.startswith('sc_p_'): st.session_state[k] = 0
+    st.session_state.update({'sc_vol': 0, 'sc_rw': 0, 'sc_exo_sel': [], 'sc_exo_pct': 50, 'sc_dur_sel': [], 'sc_dur_pct': 20})
+    if kind == 'vol':
+        st.session_state.sc_vol = 20; st.session_state.sc_name = 'Volume +20%'
+    elif kind == 'people' and SV['util']:
+        r = max(SV['util'], key=SV['util'].get); st.session_state[f'sc_p_{r}'] = 1; st.session_state.sc_name = f'+1 {r}'
+    elif kind == 'exo':
+        ws = SV['wait_split'].assign(tot=lambda d: d['estrutural'] * d['n']).sort_values('tot', ascending=False)
+        if len(ws):
+            k = f"{ws.iloc[0]['prev']} → {ws.iloc[0]['task_name']}"; st.session_state.sc_exo_sel = [k]; st.session_state.sc_exo_pct = 50
+            st.session_state.sc_name = f'Metade da espera {k}'
+    elif kind == 'rework':
+        st.session_state.sc_rw = 50; st.session_state.sc_name = 'Retrabalho −50%'
+    elif kind == 'clear':
+        st.session_state.sc_name = ''
+
+
+def _delta_txt(new, old, unit='', pp=False, dec=1):
+    if new is None or old is None or pd.isna(new) or pd.isna(old): return None
+    d = new - old
+    if pp: return f"{d:+.{dec}f} pp"
+    return f"{d:+,.{dec}f}{unit}".replace(',', ' ') + (f" ({d / old:+.0%})" if old else "")
+
+
+def fig_scen_util(B, S):
+    roles = sorted(set(B['util']) | set(S['util']))
+    if not roles: return None
+    fig = go.Figure()
+    fig.add_bar(y=roles, x=[B['util'].get(r, 0) for r in roles], name='Base', orientation='h', marker_color='#cbd5e1')
+    fig.add_bar(y=roles, x=[S['util'].get(r, 0) for r in roles], name='Cenário', orientation='h',
+                marker_color=[UI['red'] if S['util'].get(r, 0) >= 85 else UI['blue'] for r in roles])
+    fig.add_vline(x=85, line=dict(color=UI['red'], dash='dash', width=1))
+    fig.update_layout(barmode='group', xaxis_title='Ocupação da capacidade (%)', yaxis_title='')
+    return _style(fig, max(280, 44 * len(roles)))
+
+
+def fig_scen_acts(B, S):
+    d = pd.DataFrame({'Base': B['acts']['wait'], 'Cenário': S['acts']['wait']}).dropna().sort_values('Base')
+    fig = go.Figure()
+    fig.add_bar(y=d.index, x=d['Base'], name='Base', orientation='h', marker_color='#cbd5e1')
+    fig.add_bar(y=d.index, x=d['Cenário'], name='Cenário', orientation='h', marker_color=UI['blue'])
+    fig.update_layout(barmode='group', xaxis_title='Espera média antes da atividade (dias)', yaxis_title='')
+    return _style(fig, max(300, 40 * len(d)))
+
+
+def fig_scen_dist(B, S):
+    fig = go.Figure()
+    fig.add_histogram(x=B['leads'], name='Base', marker_color='#94a3b8', opacity=0.6, nbinsx=40, histnorm='percent')
+    fig.add_histogram(x=S['leads'], name='Cenário', marker_color=UI['blue'], opacity=0.6, nbinsx=40, histnorm='percent')
+    fig.update_layout(barmode='overlay', xaxis_title='Duração do processo (dias)', yaxis_title='% dos processos')
+    return _style(fig, 300)
+
+
+def render_sim_scenarios(caps):
+    V = st.session_state.view
+    if not caps_ok({'TEMPOS'}, caps):
+        ui_note("O simulador precisa de datas de início e de fim por tarefa."); return
+    SV = _ensure_sim(V, caps); M = SV['model']
+    for k_, v_ in {'sc_vol': 0, 'sc_rw': 0, 'sc_exo_sel': [], 'sc_exo_pct': 50, 'sc_dur_sel': [], 'sc_dur_pct': 20, 'sc_name': ''}.items():
+        st.session_state.setdefault(k_, v_)
+    for r_ in M['people']: st.session_state.setdefault(f'sc_p_{r_}', 0)
+    ui_section_intro('E se...?', 'Altere volume, equipa, esperas, retrabalho ou duração das atividades e veja o efeito antes de decidir. '
+                     'Cada cenário é comparado com a base simulada, nos mesmos processos e com as mesmas sementes aleatórias.')
+    if SV['score'] >= 20:
+        ui_note(f"Atenção: a fidelidade do modelo é fraca (erro médio {SV['score']:.0f}%). Use os resultados como indicação de sentido, não como valores exatos.")
+    st.markdown("<div class='pm-side-label' style='margin:4px 0 6px'>Cenários rápidos</div>", unsafe_allow_html=True)
+    b = st.columns(5)
+    b[0].button("Volume +20%", on_click=_scen_preset, args=('vol',), use_container_width=True, icon=":material/trending_up:")
+    b[1].button("+1 pessoa", on_click=_scen_preset, args=('people',), use_container_width=True, icon=":material/person_add:", disabled=not M['has_cap'])
+    b[2].button("Metade da espera", on_click=_scen_preset, args=('exo',), use_container_width=True, icon=":material/hourglass_bottom:")
+    b[3].button("Retrabalho −50%", on_click=_scen_preset, args=('rework',), use_container_width=True, icon=":material/replay:")
+    b[4].button("Limpar", on_click=_scen_preset, args=('clear',), use_container_width=True, icon=":material/restart_alt:")
+
+    ws = SV['wait_split'].assign(tot=lambda d: d['estrutural'] * d['n']).sort_values('tot', ascending=False)
+    exo_opts = [f"{r.prev} → {r.task_name}" for r in ws.head(10).itertuples()]
+    exo_opts += [k for k in (st.session_state.get('sc_exo_sel') or []) if k not in exo_opts]
+    autorun = st.session_state.pop('sc_autorun', False)
+    if autorun: ui_note(f"Cenário vindo do Diagnóstico: «{st.session_state.get('sc_name')}». Pode ajustar os parâmetros e simular de novo.")
+    with st.form('scen_form', border=True):
+        ui_card_header('Definir cenário', None, 'bi-sliders')
         c1, c2 = st.columns(2)
         with c1:
-            project_id_to_simulate = st.selectbox(
-            "Selecione o Processo para Simulação Detalhada (Amostra)",
-            options=project_ids_elegiveis,
-            index=0  # Garante que o primeiro item da lista é sempre o default
-        )
+            st.slider("Volume de processos (%)", -50, 100, step=5, key='sc_vol', help='Variação do nº de processos que entram, no mesmo período.')
+            st.slider("Redução do retrabalho (%)", 0, 100, step=10, key='sc_rw', help='Percentagem dos retornos a atividades já feitas que deixam de acontecer.')
+            st.multiselect("Reduzir esperas estruturais nestas passagens", exo_opts, key='sc_exo_sel', placeholder='Escolher passagens',
+                           help='Esperas que não dependem de pessoas: agendamentos, aprovações, terceiros.')
+            st.slider("Redução dessas esperas (%)", 0, 100, step=10, key='sc_exo_pct')
+            st.multiselect("Acelerar estas atividades (automação, simplificação)", M['acts'], key='sc_dur_sel', placeholder='Escolher atividades')
+            st.slider("Redução da duração dessas atividades (%)", 0, 90, step=10, key='sc_dur_pct')
         with c2:
-            num_episodes = st.number_input("Número de Episódios de Treino", min_value=5, max_value=10000, value=1000, step=100)
+            if M['has_cap']:
+                st.markdown("**Pessoas por função** (variação face ao atual)")
+                for r in sorted(M['people']):
+                    st.number_input(f"{r} · hoje {M['people'][r]}", min_value=-(M['people'][r] - 1), max_value=50, step=1, key=f'sc_p_{r}')
+            else:
+                st.caption("Sem dados de pessoas por tarefa: não é possível simular alterações de equipa.")
+        st.text_input("Nome do cenário", key='sc_name', placeholder='ex.: +1 avaliador e metade da espera na avaliação')
+        go_ = st.form_submit_button("Simular cenário", type='primary', icon=":material/play_arrow:")
 
-        st.markdown("<p><strong>Parâmetros de Recompensa e Penalização do Agente</strong></p>", unsafe_allow_html=True)
-        rc1, rc2, rc3 = st.columns(3)
-        with rc1:
-            cost_impact_factor = st.number_input("Fator de Impacto do Custo", value=0.01)
-            daily_time_penalty = st.number_input("Penalização Diária por Tempo", value=400.0)
-            idle_penalty = st.number_input("Penalização por Inatividade", value=50.0)
-        with rc2:
-            per_day_early_bonus = st.number_input("Bónus por Dia de Adiantamento", value=2000.0)
-            completion_base = st.number_input("Recompensa Base por Conclusão", value=10000.0)
-            per_day_late_penalty = st.number_input("Penalização por Dia de Atraso", value=7500.0)
-        with rc3:
-            priority_task_bonus_factor = st.number_input("Bónus por Tarefa Prioritária", value=500)
-            pending_task_penalty_factor = st.number_input("Penalização Base Diária por Tarefa Pendente", value=100)
-        
-        st.markdown("<p><strong>Parâmetros do Agente</strong></p>", unsafe_allow_html=True)
-        c_ag1, c_ag2, c_ag3 = st.columns(3)
-        with c_ag1:
-            agent_lr = st.number_input("Learning rate (lr)", min_value=0.0001, max_value=1.0, value=0.1, step=0.0001, format="%.4f")
-            agent_gamma = st.number_input("Gamma (discount)", min_value=0.0, max_value=1.0, value=0.9, step=0.01, format="%.2f")
-        with c_ag2:
-            agent_epsilon = st.number_input("Epsilon (start)", min_value=0.0, max_value=1.0, value=1.0, step=0.01, format="%.2f")
-            agent_epsilon_decay = st.number_input("Epsilon decay", min_value=0.0, max_value=1.0, value=0.9995, step=0.0001, format="%.4f")
-        with c_ag3:
-            agent_min_epsilon = st.number_input("Epsilon min", min_value=0.0, max_value=1.0, value=0.01, step=0.001, format="%.3f")
+    if 'sim_base_summary' not in st.session_state or st.session_state.get('sim_base_sig') != id(SV):
+        with st.spinner("A simular a base..."):
+            st.session_state.sim_base_summary = summarize_runs(run_scenario(M, {}))
+            st.session_state.sim_base_sig = id(SV)
+    B = st.session_state.sim_base_summary
 
-    status_container = st.empty()
+    if go_ or autorun:
+        exo_sel = st.session_state.get('sc_exo_sel') or []
+        params = {'volume': st.session_state.sc_vol, 'rework': st.session_state.sc_rw,
+                  'people': {r: st.session_state.get(f'sc_p_{r}', 0) for r in M['people']},
+                  'exo': {tuple(k.split(' → ', 1)): st.session_state.sc_exo_pct for k in exo_sel},
+                  'dur': {a: st.session_state.sc_dur_pct for a in (st.session_state.get('sc_dur_sel') or [])}}
+        if not any([params['volume'], params['rework'], any(params['people'].values()), params['exo'] and st.session_state.sc_exo_pct, params['dur'] and st.session_state.sc_dur_pct]):
+            st.info("Altere pelo menos um parâmetro (ou use um cenário rápido).");
+        else:
+            with st.spinner("A simular o cenário (5 réplicas)..."):
+                S = summarize_runs(run_scenario(M, params))
+            name = st.session_state.get('sc_name') or f"Cenário {len(st.session_state.get('sim_scen_list', [])) + 1}"
+            st.session_state.sim_last = (name, params, S)
+            st.session_state.setdefault('sim_scen_list', []).append((name, params, S))
 
-    if st.button("▶️ Iniciar Treino e Simulação do Agente", use_container_width=True):
-        st.session_state.rl_params_expanded = False
-        
-        # Criar reward_config DENTRO do botão para usar valores atuais
-        reward_config = {
-            'cost_impact_factor': cost_impact_factor, 'daily_time_penalty': daily_time_penalty, 'idle_penalty': idle_penalty,
-            'per_day_early_bonus': per_day_early_bonus, 'completion_base': completion_base, 'per_day_late_penalty': per_day_late_penalty,
-            'priority_task_bonus_factor': priority_task_bonus_factor, 'pending_task_penalty_factor': pending_task_penalty_factor
-        }
-        st.session_state.project_id_simulated = project_id_to_simulate
-        
-        with status_container.container():
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            status_text.info("A iniciar o treino do agente de RL...")
-    
-            plots_rl, tables_rl, logs_rl = run_rl_analysis(
-                st.session_state.get('dfs_norm', st.session_state.dfs),
-                project_id_to_simulate,
-                num_episodes,
-                reward_config,
-                progress_bar,
-                status_text,
-                agent_params={
-                    'lr': float(agent_lr),
-                    'gamma': float(agent_gamma),
-                    'epsilon': float(agent_epsilon),
-                    'epsilon_decay': float(agent_epsilon_decay),
-                    'min_epsilon': float(agent_min_epsilon)
-                }
-            )
-            
-            
-    
-        st.session_state.plots_rl = plots_rl
-        st.session_state.tables_rl = tables_rl
-        st.session_state.logs_rl = logs_rl
-        st.session_state.rl_analysis_run = True
-        st.rerun()
-    if st.session_state.rl_analysis_run:
+    if st.session_state.get('sim_last'):
+        name, params, S = st.session_state.sim_last
+        st.markdown(f"<div class='pm-h5'>Resultado: {html.escape(name)}</div>", unsafe_allow_html=True)
+        k = [dict(icon='bi-stopwatch', value=_fmt_days(S['lead']), label='Duração média', delta=_delta_txt(S['lead'], B['lead'], ' d'), good=S['lead'] <= B['lead']),
+             dict(icon='bi-graph-up-arrow', value=_fmt_days(S['p90']), label='Duração P90 (10% mais lentos)', delta=_delta_txt(S['p90'], B['p90'], ' d'), good=S['p90'] <= B['p90']),
+             dict(icon='bi-pause-circle', value=_fmt_days(S['wait']), label='Espera por processo', delta=_delta_txt(S['wait'], B['wait'], ' d'), good=S['wait'] <= B['wait'])]
+        if 'late' in S and 'late' in B:
+            k.append(dict(icon='bi-alarm', value=f"{S['late']:.1f}%", label='Processos atrasados', delta=_delta_txt(S['late'], B['late'], pp=True), good=S['late'] <= B['late']))
+        if 'cost' in S and 'cost' in B:
+            k.append(dict(icon='bi-currency-euro', value=_fmt_eur(S['cost']), label='Custo de mão-de-obra por processo', delta=_delta_txt(S['cost'], B['cost'], ' €', dec=0), good=S['cost'] <= B['cost']))
+        if S['util']:
+            r = max(S['util'], key=S['util'].get)
+            k.append(dict(icon='bi-speedometer2', value=f"{S['util'][r]:.0f}%", label=f"Ocupação máx.: {r}", delta=_delta_txt(S['util'][r], B['util'].get(r), pp=True, dec=0),
+                          good=S['util'][r] <= B['util'].get(r, 0)))
+        for it in k:   # variações abaixo do ruído da simulação ficam neutras (cinzento)
+            dl = it.get('delta') or ''
+            try:
+                num = float(dl.split()[0].replace('+', '').replace('−', '-'))
+            except (ValueError, IndexError):
+                continue
+            rel = re.search(r'\(([+-]?\d+)%\)', dl)
+            if (('pp' in dl and abs(num) < 0.5) or (rel and abs(int(rel.group(1))) < 2) or abs(num) < 0.05):
+                it['good'] = None
+        ui_kpis(k)
+        # leitura económica
+        P = V['P']; yrs = max((P['end_date'].max() - P['start_date'].min()).days / 365, 0.1)
+        per_year = S['n'] / yrs
+        notes = [f"≈ {per_year:,.0f} processos/ano no cenário.".replace(',', ' ')]
+        if B['lead'] - S['lead'] > 0.05: notes.append(f"Poupa ≈ {(B['lead'] - S['lead']) * per_year:,.0f} dias de processo por ano.".replace(',', ' '))
+        if B['lead'] - S['lead'] < -0.05: notes.append(f"Acrescenta ≈ {(S['lead'] - B['lead']) * per_year:,.0f} dias de processo por ano.".replace(',', ' '))
+        add = {r: d for r, d in (params.get('people') or {}).items() if d}
+        if add and M['has_cost']:
+            capd = V['R'].groupby('resource_type')['daily_capacity'].mean() if 'daily_capacity' in V['R'].columns else pd.Series(dtype=float)
+            yc = sum(d * M['rate'].get(r, M['rate'].get('*', 0)) * capd.get(r, 8) * 220 for r, d in add.items())
+            notes.append(f"Custo anual estimado da variação de pessoas: {_fmt_eur(yc)} (custo/hora × horas/dia × 220 dias).")
+        if S['util'] and max(S['util'].values()) >= 85:
+            notes.append("Há funções acima de 85% de ocupação: neste cenário as filas tornam-se sensíveis a qualquer pico de volume.")
+        ui_note(" ".join(notes))
+        c1, c2 = st.columns(2)
+        with c1: ui_chart(fig_scen_dist(B, S), 'Distribuição da duração', 'Base vs. cenário', 'bi-bar-chart', key='sc_dist')
+        with c2:
+            if S['util']: ui_chart(fig_scen_util(B, S), 'Ocupação por função', 'Base vs. cenário (linha = 85%)', 'bi-speedometer2', key='sc_util')
+        ui_chart(fig_scen_acts(B, S), 'Espera antes de cada atividade', 'Base vs. cenário', 'bi-hourglass-split', key='sc_acts')
 
-        st.markdown("---")
-        st.subheader("Resultados da Simulação")
-        
-        plots_rl = st.session_state.plots_rl
-        tables_rl = st.session_state.tables_rl
-        
-        st.markdown("<h4>Desempenho Global</h4>", unsafe_allow_html=True)
-        create_card(
-            "Performance Global (Conjunto de Teste)", 
-            '<i class="bi bi-clipboard-data-fill"></i>', 
-            dataframe=tables_rl.get('global_performance_test'),
-            tooltip="Esta tabela resume o desempenho agregado do agente de IA no conjunto de teste. Compara a soma total de dias e custos dos processos simulados com os valores históricos reais, calculando a melhoria percentual."
-        )
+    lst = st.session_state.get('sim_scen_list') or []
+    if lst:
+        with st.container(border=True):
+            ui_card_header('Comparação de cenários', 'Todos os cenários simulados nesta sessão, face à base', 'bi-table')
+            rows = [{'Cenário': 'Base (atual)', 'Duração média': B['lead'], 'P90': B['p90'], 'Espera': B['wait'], **({'% atrasados': B['late']} if 'late' in B else {}),
+                     **({'Custo/processo (€)': B['cost']} if 'cost' in B else {}), 'Ocupação máx. (%)': B['umax']}]
+            for n_, _, S_ in lst:
+                rows.append({'Cenário': n_, 'Duração média': S_['lead'], 'P90': S_['p90'], 'Espera': S_['wait'], **({'% atrasados': S_.get('late')} if 'late' in B else {}),
+                             **({'Custo/processo (€)': S_.get('cost')} if 'cost' in B else {}), 'Ocupação máx. (%)': S_['umax']})
+            df = pd.DataFrame(rows)
+            st.dataframe(df.style.format({c: '{:,.1f}' for c in df.columns if c != 'Cenário'}), hide_index=True, use_container_width=True)
+            if st.button("Limpar cenários", key='sc_clear_list'):
+                st.session_state.sim_scen_list = []; st.session_state.sim_last = None; st.rerun()
+        key_m = 'late' if 'late' in B else 'lead'
+        best = min(lst, key=lambda x: x[2].get(key_m, np.inf))
+        lines = []
+        for n_, pr_, S_ in lst:
+            dl = S_['lead'] - B['lead']; dlt = (S_.get('late', 0) - B.get('late', 0)) if 'late' in B else None
+            eff = "melhora" if dl < -0.3 or (dlt is not None and dlt < -0.5) else ("piora" if dl > 0.3 or (dlt is not None and dlt > 0.5) else "não muda significativamente")
+            lines.append(f"**{n_}**: {eff} — duração {dl:+.1f} dias" + (f", atrasados {dlt:+.1f} pp" if dlt is not None else "") + (f", ocupação máx. {S_['umax']:.0f}%" if S_.get('umax') == S_.get('umax') else ""))
+        lines.insert(0, f"Cenário com melhor resultado em {'atrasos' if key_m == 'late' else 'duração'}: **{best[0]}**.")
+        render_director_summary('scen', sim_facts(), lines)
 
-        st.markdown("<h4>Métricas de Treino do Agente</h4>", unsafe_allow_html=True)
-        create_card(
-            "Evolução do Treino", 
-            '<i class="bi bi-robot"></i>', 
-            chart_bytes=plots_rl.get('training_metrics'),
-            tooltip="Estes gráficos mostram as curvas de aprendizagem do agente. Recompensa: Deve ter uma tendência crescente. Duração/Custo: Devem ter uma tendência decrescente. Epsilon: Mostra a taxa de exploração, que diminui à medida que o agente fica mais confiante."
-        )
-        
-        st.markdown("<h4>Comparação de Desempenho (Simulado vs. Real)</h4>", unsafe_allow_html=True)
-        create_card(
-            "Comparação do Desempenho (Conjunto de Teste da Amostra)", 
-            '<i class="bi bi-bullseye"></i>', 
-            chart_bytes=plots_rl.get('evaluation_comparison_test'),
-            tooltip="Estes gráficos comparam, processo a processo, a performance do agente (barras azuis) com os dados históricos (barras vermelhas) para o conjunto de teste. Permite uma análise visual de onde o agente teve melhor ou pior desempenho."
-        )
-        
-        st.markdown(f"<h4>Análise Detalhada da Simulação (Processo {st.session_state.project_id_simulated})</h4>", unsafe_allow_html=True)
-        summary_df = tables_rl.get('project_summary')
-        if summary_df is not None:
-            metric_cols = st.columns(2)
-            with metric_cols[0]:
-                real_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Real (Histórico)'].iloc[0]
-                sim_duration = summary_df.loc[summary_df['Métrica'] == 'Duração (dias úteis)', 'Simulado (RL)'].iloc[0]
-                st.metric(label="Duração (dias úteis)", value=f"{sim_duration:.0f}", delta=f"{sim_duration - real_duration:.0f} vs Real")
-            with metric_cols[1]:
-                real_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Real (Histórico)'].iloc[0]
-                sim_cost = summary_df.loc[summary_df['Métrica'] == 'Custo (€)', 'Simulado (RL)'].iloc[0]
-                st.metric(label="Custo (€)", value=f"€{sim_cost:,.2f}", delta=f"€{sim_cost - real_cost:,.2f} vs Real")
 
-        create_card(
-        f"Comparação Detalhada (Processo {st.session_state.project_id_simulated})", 
-        '<i class="bi bi-search"></i>', 
-        chart_bytes=plots_rl.get('project_detailed_comparison'),
-        tooltip="Análise detalhada de um único processo. O gráfico da esquerda compara o custo acumulado (Real vs. Simulado). O da direita compara o progresso acumulado (em horas trabalhadas). Ideal para entender a estratégia do agente no dia a dia."
-    )
+# ---------- Fase 3: otimização da política de decisão (RL por pesquisa direta de política) ----------
+RL_OBJECTIVES = {'atrasos': 'Menos processos atrasados', 'duracao': 'Menor duração média', 'p90': 'Menos processos muito lentos (P90)'}
+
+
+def _objective(cases, kind):
+    c = cases.dropna(subset=['lead'])
+    if c.empty: return 1e9
+    if kind == 'atrasos' and c['late'].notna().any():
+        late = pd.to_numeric(c['late'], errors='coerce')
+        over = (c['end'] - c['plan']).clip(lower=0)
+        return late.mean() * 100 + over.mean()
+    if kind == 'p90': return c['lead'].quantile(0.9)
+    return c['lead'].mean()
+
+
+def _eval_policy(M, arrs, slots, policy, kind, seeds):
+    return float(np.mean([_objective(simulate_process(M, arrivals=a, seed=s, slots=slots, policy=policy)[0], kind) for a, s in zip(arrs, seeds)]))
+
+
+def train_policy(M, volume_pct=40, people=None, kind='atrasos', allow_flex=True, iters=8, pop=14, progress=None):
+    """Cross-Entropy Method: o agente experimenta políticas no simulador, fica com as melhores e refina. Interpretável e rápido."""
+    nf = len(policy_features(M))
+    slots = dict(M['slots'])
+    for r, d in (people or {}).items():
+        if r in slots and d:
+            n = M['people'].get(r, 1); slots[r] = max(1, int(round(slots[r] * max(n + d, 1) / n)))
+    # treino numa janela de ~9 meses (mais rápido); avaliação final no período completo
+    full = [scenario_arrivals(M, volume_pct, seed=s) for s in range(2)]
+    arrs = []
+    for a in full:
+        lo = a['t0'].quantile(0.25); hi = lo + 190
+        arrs.append(a[(a['t0'] >= lo) & (a['t0'] < hi)].reset_index(drop=True))
+    seeds = [900, 901]
+    mu = np.zeros(nf + 1); mu[0] = 0.5; mu[1] = 0.5; mu[-1] = 2.0   # parte de uma mistura de prazo e ordem de chegada
+    sd = np.ones(nf + 1); sd[-1] = 1.5
+    if not allow_flex: sd[-1] = 0; mu[-1] = 99
+    to_pol = lambda x: {'w': x[:nf], 'flex': (np.inf if not allow_flex else float(np.exp(np.clip(x[-1], 0, 4))))}
+    best, best_x, hist = np.inf, mu.copy(), []
+    fifo_score = _eval_policy(M, arrs, slots, to_pol(np.r_[np.eye(nf)[1], 99]), kind, seeds)
+    rng = np.random.default_rng(7)
+    for it in range(iters):
+        X = mu + sd * rng.standard_normal((pop, nf + 1)); X[0] = mu
+        scores = []
+        for j, x in enumerate(X):
+            scores.append(_eval_policy(M, arrs, slots, to_pol(x), kind, seeds))
+            if progress: progress((it * pop + j + 1) / (iters * pop), f"Treino: iteração {it + 1} de {iters} · melhor até agora {min(best, min(scores)):.2f} (prática atual {fifo_score:.2f})")
+        scores = np.array(scores); el = X[np.argsort(scores)[:max(3, pop // 4)]]
+        if scores.min() < best: best, best_x = float(scores.min()), X[np.argmin(scores)].copy()
+        mu = 0.7 * el.mean(axis=0) + 0.3 * mu; sd = 0.7 * el.std(axis=0) + 0.3 * sd * 0.6 + 0.02
+        hist.append((it + 1, float(scores.min()), float(np.median(scores))))
+    # Validação noutro sorteio e no período completo: só fica a política aprendida se bater as alternativas simples (evita sobre-ajuste)
+    if progress: progress(1.0, "A validar a política aprendida noutro sorteio...")
+    cands = {'rl': to_pol(best_x), 'rl_mean': to_pol(mu), 'edd': {'w': np.eye(nf)[0] + 0.05 * np.eye(nf)[1], 'flex': np.inf},
+             'fifo': {'w': np.eye(nf)[1], 'flex': np.inf}}
+    va = [scenario_arrivals(M, volume_pct, seed=s_) for s_ in (11, 12)]
+    vs = {k: _eval_policy(M, va, slots, pol, kind, [1311, 1312]) for k, pol in cands.items()}
+    win = min(vs, key=vs.get)
+    return dict(policy=cands[win], chosen=win, val=vs, slots=slots, kind=kind, volume=volume_pct, people=people or {}, hist=hist, fifo_train=fifo_score, best_train=best)
+
+
+def evaluate_policies(M, R, reps=5):
+    """Compara, no período completo e com as mesmas sementes: prática atual (FIFO), regra simples do prazo (EDD) e política aprendida."""
+    nf = len(policy_features(M))
+    fifo = {'w': np.eye(nf)[1], 'flex': np.inf}
+    edd = {'w': np.eye(nf)[0] + 0.05 * np.eye(nf)[1], 'flex': np.inf}
+    out = {}
+    logs = []
+    for name, pol in [('Prática atual (por ordem de chegada)', fifo), ('Regra simples: prazo mais próximo primeiro', edd), ('Política aprendida (RL)', R['policy'])]:
+        runs = []
+        for s_ in range(reps):
+            lg = [] if name.startswith('Política') else None
+            runs.append(simulate_process(M, arrivals=scenario_arrivals(M, R['volume'], seed=s_), seed=700 + s_, slots=R['slots'], policy=pol, log=lg))
+            if lg is not None: logs += lg
+        S = summarize_runs(runs)
+        S['obj'] = float(np.mean([_objective(r[0], R['kind']) for r in runs]))
+        S['by_type'] = pd.concat([r[0] for r in runs]).groupby('ctype')['lead'].mean().to_dict()
+        out[name] = S
+    return out, logs
+
+
+def policy_rules(M, R, logs, ev):
+    """Traduz a política aprendida em regras legíveis, com base nos pesos e nas decisões tomadas na simulação."""
+    names = policy_features(M); w = np.asarray(R['policy']['w'])
+    dec = [l for l in logs if l[0] is not True and l[0] is not False and l[0] == 'flex']
+    pri = [l for l in logs if l[0] in (True, False)]
+    rules = []
+    if pri:
+        jumped = np.mean([l[0] for l in pri])
+        ch = np.array([l[1] for l in pri if l[0]]); ot = np.array([l[2] for l in pri if l[0]])
+        rules.append(("Mudar a ordem da fila em algumas decisões",
+                      f"Em {jumped:.0%} das vezes em que havia fila, o agente não escolheu o trabalho que chegou primeiro.",
+                      None))
+        if len(ch):
+            diff = ch.mean(axis=0) - ot.mean(axis=0)
+            order = np.argsort(-np.abs(diff * np.sign(w)))
+            for i in order[:4]:
+                if abs(diff[i]) < 0.05: continue
+                n = names[i]
+                if i == 0:
+                    rules.append(("Dar prioridade a processos com o prazo mais apertado" if diff[i] > 0 else "Não deixar a urgência do prazo dominar a fila",
+                                  f"Quando passou à frente, o processo escolhido tinha em média {abs(diff[i]) * 10:.1f} dias úteis {'menos' if diff[i] > 0 else 'mais'} de folga do que os que ficaram à espera.", n))
+                elif i == 1:
+                    rules.append(("Não deixar trabalho envelhecer na fila" if diff[i] > 0 else "A antiguidade na fila não deve ser o único critério",
+                                  f"O escolhido estava em fila {abs(diff[i]) * 5:.1f} dias úteis {'mais' if diff[i] > 0 else 'menos'} do que a média dos restantes.", n))
+                elif i == 2:
+                    rules.append(("Despachar primeiro as tarefas curtas" if diff[i] < 0 else "Começar primeiro as tarefas longas",
+                                  f"A tarefa escolhida durava em média {abs(diff[i]) * 5:.1f} dias úteis {'menos' if diff[i] < 0 else 'mais'}.", n))
+                elif i == 3:
+                    rules.append(("Dar prioridade a processos que já tiveram retrabalho" if diff[i] > 0 else "Processos com retrabalho não passam à frente",
+                                  "Recupera o tempo perdido nos retornos." if diff[i] > 0 else "Evita que os retornos atrasem os restantes.", n))
+                elif i == 4:
+                    rules.append(("Fechar primeiro os processos quase concluídos" if diff[i] > 0 else "Fazer avançar os processos no início",
+                                  "Termina o que está mais perto do fim antes de pegar em novos." if diff[i] > 0 else "Evita que processos novos fiquem parados no início.", n))
+                else:
+                    rules.append((f"{'Dar prioridade a' if diff[i] > 0 else 'Baixar a prioridade de'} processos do tipo {n.split(': ', 1)[1]}",
+                                  f"Nas decisões em que o agente alterou a ordem, este tipo foi {'mais' if diff[i] > 0 else 'menos'} escolhido do que a sua presença na fila ({abs(diff[i]) * 100:.0f} pontos percentuais).", n))
+    if dec and len(dec) / 5 >= 1:
+        vc = pd.Series([f"{a} → {b}" for _, a, b in dec]).value_counts()
+        rules.append(("Usar outras funções quando uma está saturada",
+                      f"{len(dec) / 5:,.0f} tarefas por período foram feitas por outra função que já as fazia no histórico (assumindo +10% de duração). Mais comum: {vc.index[0]}.".replace(',', ' '), None))
+    elif np.isfinite(R['policy']['flex']):
+        rules.append(("Ajuda entre funções não foi necessária", "Neste contexto, o agente não precisou de passar tarefas para outra função.", None))
+    return rules
+
+
+def fig_rl_compare(ev, key, label):
+    names = list(ev); vals = [ev[n].get(key, np.nan) for n in names]
+    cols = ['#94a3b8', '#60a5fa', UI['blue']]
+    fig = go.Figure(go.Bar(x=vals, y=names, orientation='h', marker_color=cols[:len(names)], text=[f"{v:.1f}" for v in vals], textposition='inside',
+                           insidetextanchor='end', textfont=dict(color='white')))
+    fig.update_layout(xaxis_title=label, yaxis_title='', yaxis_autorange='reversed')
+    return _style(fig, 220, legend=False)
+
+
+def fig_rl_types(ev):
+    names = list(ev); types = sorted(set().union(*[ev[n]['by_type'] for n in names]))
+    if len(types) < 2: return None
+    fig = go.Figure()
+    for n, col in zip(names, ['#94a3b8', '#60a5fa', UI['blue']]):
+        fig.add_bar(x=types, y=[ev[n]['by_type'].get(t, np.nan) for t in types], name=n.split(' (')[0], marker_color=col)
+    fig.update_layout(barmode='group', yaxis_title='Duração média (dias)')
+    return _style(fig, 300)
+
+
+def fig_rl_training(R):
+    h = pd.DataFrame(R['hist'], columns=['it', 'best', 'med'])
+    fig = go.Figure()
+    fig.add_scatter(x=h['it'], y=h['med'], name='Mediana das políticas testadas', mode='lines+markers', line=dict(color='#94a3b8'))
+    fig.add_scatter(x=h['it'], y=h['best'], name='Melhor política', mode='lines+markers', line=dict(color=UI['blue'], width=3))
+    fig.add_hline(y=R['fifo_train'], line=dict(color=UI['red'], dash='dash'), annotation_text='Prática atual', annotation_position='top left')
+    fig.update_layout(xaxis_title='Iteração', yaxis_title='Objetivo (menor = melhor)')
+    return _style(fig, 260)
+
+
+def render_sim_rl(caps):
+    V = st.session_state.view
+    if not caps_ok({'TEMPOS'}, caps):
+        ui_note("O simulador precisa de datas de início e de fim por tarefa."); return
+    SV = _ensure_sim(V, caps); M = SV['model']
+    ui_section_intro('Qual a melhor forma de decidir no dia a dia?',
+                     'Um agente de reinforcement learning experimenta milhares de decisões no simulador (que trabalho atender primeiro, quando pedir ajuda a outra função) '
+                     'e aprende a política que melhor cumpre o objetivo. O resultado é comparado com a prática atual e traduzido em regras simples.')
+    if not M['has_cap']:
+        ui_note("Sem dados de quem executa as tarefas não há filas de trabalho para priorizar: a otimização precisa de pessoas/funções por tarefa."); return
+    with st.form('rl_form', border=True):
+        ui_card_header('Contexto de treino', 'A forma de priorizar só faz diferença quando há filas. Com o volume atual quase não há; por isso o treino usa, por defeito, um cenário de maior carga.', 'bi-sliders')
+        c1, c2, c3 = st.columns(3)
+        kind = c1.selectbox('Objetivo', list(RL_OBJECTIVES), format_func=lambda k: RL_OBJECTIVES[k], key='rl_kind',
+                            index=0 if caps_ok({'PLANO'}, caps) else 1)
+        vol = c2.slider('Volume de processos (%)', -20, 100, value=st.session_state.get('rl_vol', 40), step=10, key='rl_vol')
+        mode = c3.selectbox('Treino', ['Rápido (~1 min)', 'Completo (~3 min)'], key='rl_mode')
+        flex = st.checkbox('Permitir que outras funções ajudem quando uma está saturada (só em atividades que essas funções já fizeram no histórico)', value=True, key='rl_flex')
+        go_ = st.form_submit_button('Treinar agente', type='primary', icon=":material/model_training:")
+    if kind == 'atrasos' and not caps_ok({'PLANO'}, caps):
+        ui_note("Sem datas planeadas, o objetivo 'menos atrasos' usa a duração média.")
+    if go_:
+        bar = st.progress(0.0, text="A preparar o treino...")
+        it, pop = (6, 10) if mode.startswith('Rápido') else (10, 16)
+        try:
+            R = train_policy(M, volume_pct=vol, kind=kind, allow_flex=flex, iters=it, pop=pop, progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
+            bar.progress(1.0, text="A avaliar no período completo (prática atual vs. regra simples vs. política aprendida)...")
+            ev, logs = evaluate_policies(M, R)
+            st.session_state.rl_result = (R, ev, policy_rules(M, R, logs, ev))
+        except Exception as e:
+            st.error(f"Não foi possível treinar: {e}")
+        bar.empty()
+    if not st.session_state.get('rl_result'): return
+    R, ev, rules = st.session_state.rl_result
+    names = list(ev); base, edd, rl = ev[names[0]], ev[names[1]], ev[names[2]]
+    st.markdown(f"<div class='pm-h5'>Resultado · objetivo: {RL_OBJECTIVES[R['kind']].lower()} · volume {R['volume']:+d}%</div>", unsafe_allow_html=True)
+    gain = (base['obj'] - rl['obj']) / base['obj'] * 100 if base['obj'] else 0
+    k = [dict(icon='bi-trophy', value=f"{gain:+.0f}%", label='Melhoria do objetivo face à prática atual', good=gain > 2 if abs(gain) > 2 else None),
+         dict(icon='bi-stopwatch', value=_fmt_days(rl['lead']), label='Duração média com a política', delta=_delta_txt(rl['lead'], base['lead'], ' d'), good=(rl['lead'] < base['lead'] * 0.99) or None),
+         dict(icon='bi-graph-up-arrow', value=_fmt_days(rl['p90']), label='P90 com a política', delta=_delta_txt(rl['p90'], base['p90'], ' d'), good=(rl['p90'] < base['p90'] * 0.99) or None)]
+    if 'late' in rl:
+        k.append(dict(icon='bi-alarm', value=f"{rl['late']:.1f}%", label='Atrasados com a política', delta=_delta_txt(rl['late'], base['late'], pp=True), good=rl['late'] < base['late'] - 0.3 or None))
+    ui_kpis(k)
+    if R.get('chosen') == 'fifo':
+        ui_note("Conclusão do agente: nenhuma alternativa bateu a prática atual neste contexto, por isso recomenda manter a ordem de chegada.")
+    elif R.get('chosen') == 'edd':
+        ui_note("Conclusão do agente: das políticas testadas, a que melhor generaliza é a regra simples 'prazo mais próximo primeiro'. É fácil de aplicar já, sem tecnologia.")
+    if abs(gain) <= 2:
+        ui_note("A política aprendida fica praticamente igual à prática atual: neste contexto há pouca fila, e a ordem de atendimento quase não mexe nos resultados. "
+                "Experimente um volume maior ou menos pessoas, ou atue nas esperas estruturais (ver Cenários).")
+    elif R.get('chosen') not in ('edd', 'fifo') and (edd['obj'] - rl['obj']) / max(edd['obj'], 1e-9) * 100 < 2:
+        ui_note("A regra simples 'prazo mais próximo primeiro' consegue quase o mesmo que o agente: é uma regra fácil de aplicar já, sem tecnologia.")
+    with st.container(border=True):
+        ui_card_header('Regras de decisão recomendadas', 'O que o agente faz de diferente, em linguagem de negócio', 'bi-signpost-2')
+        if not rules:
+            st.caption("Sem diferenças relevantes face à prática atual.")
+        for i, (t, d, f) in enumerate(rules):
+            st.markdown(f"<div class='pm-prio' style='margin:6px 0'><div class='pm-prio-num'>{i + 1}</div><div style='flex:1'><div class='pm-prio-title'>{html.escape(t)}</div>"
+                        f"<div class='pm-prio-problem'>{html.escape(d)}</div></div></div>", unsafe_allow_html=True)
+    lab = {'atrasos': '% atrasados + dias de atraso', 'duracao': 'Duração média (dias)', 'p90': 'Duração P90 (dias)'}[R['kind']]
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_rl_compare(ev, 'obj', lab), 'Prática atual vs. regra simples vs. agente', 'Período completo, 5 réplicas, mesmas sementes', 'bi-bar-chart', key='rl_cmp')
+    with c2: ui_chart(fig_rl_types(ev), 'Efeito por tipo de processo', 'Verifique que nenhum tipo fica prejudicado', 'bi-diagram-3', key='rl_types')
+    with st.expander("Como o agente aprendeu"):
+        ui_chart(fig_rl_training(R), 'Evolução do treino', 'Em cada iteração o agente testa várias políticas no simulador e refina as melhores', 'bi-activity', key='rl_tr')
+        w = pd.Series(R['policy']['w'], index=policy_features(M))
+        st.dataframe(pd.DataFrame({'Critério': w.index, 'Peso na prioridade': w.round(2).values}).sort_values('Peso na prioridade', key=abs, ascending=False),
+                     hide_index=True, use_container_width=True)
+        st.caption("Método: pesquisa direta de política (Cross-Entropy Method), uma família de reinforcement learning sem modelo de gradiente. A prioridade de cada trabalho em fila "
+                   "é uma soma ponderada dos critérios acima; o agente aprende os pesos e o limiar a partir do qual pede ajuda a outra função. "
+                   "Escolhido por ser rápido e explicável: cada decisão pode ser justificada.")
+    render_director_summary('rl', sim_facts(), [f"Com volume {R['volume']:+d}%, a política recomendada melhora o objetivo em {gain:+.0f}% face à prática atual."] +
+                            [f"{t}." for t, _, _ in rules[:3]])
+
+
+def rl_page():
+    ui_page_header("Simulação e Otimização", "Teste decisões antes de as tomar: um simulador do seu processo, calibrado com o histórico")
+    if not st.session_state.analysis_run:
+        st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Dados e Configurações' para carregar os dados."); return
+    caps = st.session_state.get('caps')
+    if st.session_state.get('view') is None:
+        _dfp = st.session_state.data_frames_processed
+        _alloc = st.session_state.get('dfs_norm', st.session_state.dfs)['resource_allocations']
+        st.session_state.view = prepare_view(_dfp['projects'], _dfp['tasks'], _dfp['resources'], _alloc)
+    tabs = {'modelo': '1 · Modelo e validação', 'cenarios': '2 · Cenários "e se"', 'rl': '3 · Otimização (RL)'}
+    ch = st.segmented_control("Etapa", list(tabs), format_func=lambda x: tabs[x], default=st.session_state.get('sim_tab', 'modelo'),
+                              key='sim_tab_ctl', label_visibility='collapsed')
+    st.session_state.sim_tab = ch or st.session_state.get('sim_tab', 'modelo')
+    t = st.session_state.sim_tab
+    if t == 'modelo':
+        render_sim_validation(caps)
+    elif t == 'cenarios':
+        render_sim_scenarios(caps)
+    elif t == 'rl':
+        render_sim_rl(caps)
+
 
 # --- CONTROLO PRINCIPAL DA APLICAÇÃO ---
 def main():
@@ -5764,7 +6070,7 @@ def main():
             st.markdown("<div class='pm-brand'><span class='pm-brand-badge'><i class='bi bi-diagram-3-fill'></i></span>Process Intelligence</div>", unsafe_allow_html=True)
             cur = st.session_state.current_page
             for label, icon, page in [("Análise de Processos", ":material/monitoring:", "Dashboard"),
-                                      ("Simulação (RL)", ":material/smart_toy:", "RL"),
+                                      ("Simulação", ":material/smart_toy:", "RL"),
                                       ("Dados e Configurações", ":material/database:", "Settings")]:
                 if st.button(label, icon=icon, use_container_width=True, type="primary" if cur == page else "secondary", key=f"navp_{page}"):
                     st.session_state.current_page = page
