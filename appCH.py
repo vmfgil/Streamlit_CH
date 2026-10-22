@@ -239,7 +239,451 @@ def create_card(title, icon_html, chart_bytes=None, dataframe=None, use_containe
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
+
+def make_unique_resource_names(df_resources):
+    """Garante nomes de recurso únicos (há pessoas diferentes com o mesmo nome).
+    Nomes repetidos passam a 'Nome (Função)' e, se ainda repetirem, 'Nome (Função #id)'."""
+    df = df_resources.copy()
+    if 'resource_name' not in df.columns or not df['resource_name'].duplicated(keep=False).any():
+        return df
+    dup = df['resource_name'].duplicated(keep=False)
+    if 'resource_type' in df.columns:
+        df.loc[dup, 'resource_name'] = df.loc[dup, 'resource_name'] + ' (' + df.loc[dup, 'resource_type'].astype(str) + ')'
+    dup2 = df['resource_name'].duplicated(keep=False)
+    df.loc[dup2, 'resource_name'] = df.loc[dup2, 'resource_name'].str.rstrip(')') + ' #' + df.loc[dup2, 'resource_id'].astype(str) + ')'
+    return df
+
+def build_task_event_log(df_tasks, df_resource_allocations, df_resources):
+    """Event log com 1 evento por tarefa (time:timestamp = fim, start_timestamp = início)."""
+    log = df_tasks[['project_id', 'task_id', 'task_name', 'start_date', 'end_date']].copy()
+    if df_resource_allocations is not None and not df_resource_allocations.empty:
+        main_res = (df_resource_allocations.groupby(['task_id', 'resource_id'])['hours_worked'].sum()
+                    .reset_index().sort_values('hours_worked', ascending=False)
+                    .drop_duplicates('task_id')[['task_id', 'resource_id']])
+        main_res = main_res.merge(df_resources[['resource_id', 'resource_name']], on='resource_id', how='left')
+        log = log.merge(main_res[['task_id', 'resource_name']], on='task_id', how='left')
+    else:
+        log['resource_name'] = 'Desconhecido'
+    log['resource_name'] = log['resource_name'].fillna('Desconhecido')
+    log['_ord'] = pd.to_numeric(log['task_id'], errors='coerce')
+    log = log.sort_values(['project_id', 'start_date', 'end_date', '_ord']).drop(columns=['_ord', 'task_id'])
+    log = log.rename(columns={'project_id': 'case:concept:name', 'task_name': 'concept:name',
+                              'end_date': 'time:timestamp', 'start_date': 'start_timestamp',
+                              'resource_name': 'org:resource'})
+    log['lifecycle:transition'] = 'complete'
+    return log.reset_index(drop=True)
+
+
+# =====================================================================================
+# --- CAMADA DE INGESTÃO: NORMALIZAÇÃO DOS DADOS E DETEÇÃO DE CAPACIDADES ---
+# Aceita os 5 ficheiros completos ou subconjuntos (ex.: só tasks; tasks com pessoas mas
+# sem horas). Preenche o que falta com valores neutros/estimados para que as análises
+# corram, e regista que capacidades os dados REALMENTE suportam. Os gráficos e insights
+# que dependem de dados em falta são escondidos (ver PLOT_REQUIREMENTS / CARD_REQUIREMENTS).
+# =====================================================================================
+CAPS_INFO = {
+    'FLUXO':        ('Fluxo do processo', 'identificador do processo, atividade e data'),
+    'TEMPOS':       ('Tempos de execução e espera', 'data de início e data de fim de cada tarefa'),
+    'RECURSOS':     ('Recursos e equipas', 'pessoa (ou função) associada a cada tarefa'),
+    'ESFORCO':      ('Esforço real (horas)', 'horas efetivamente trabalhadas por pessoa (resource_allocations)'),
+    'CUSTO':        ('Custos', 'custo/hora dos recursos + horas trabalhadas'),
+    'PLANO':        ('Prazos e atrasos', 'data planeada de fim do processo (ou um SLA em dias)'),
+    'ORCAMENTO':    ('Orçamento', 'custo planeado por processo (budget_impact)'),
+    'COMPETENCIA':  ('Competências', 'nível de competência dos recursos (skill_level)'),
+    'PRIORIDADE':   ('Prioridades', 'prioridade de cada tarefa (priority)'),
+    'ESTADO':       ('Estado dos processos', 'estado de cada processo (project_status)'),
+}
+
+# Que capacidades cada gráfico/tabela exige. Chave não listada = só precisa de FLUXO.
+PLOT_REQUIREMENTS = {
+    # pre-mining
+    'performance_matrix': {'PLANO', 'CUSTO', 'ORCAMENTO'},
+    'activity_service_times': {'ESFORCO'}, 'top_handoffs': {'TEMPOS'}, 'top_handoffs_cost': {'TEMPOS', 'CUSTO'},
+    'resource_workload': {'ESFORCO'}, 'resource_avg_events': {'RECURSOS'}, 'resource_activity_matrix': {'ESFORCO'},
+    'resource_handoffs': {'RECURSOS'}, 'cost_by_resource_type': {'CUSTO'}, 'delay_by_teamsize': {'PLANO', 'RECURSOS'},
+    'median_duration_by_teamsize': {'RECURSOS'}, 'weekly_efficiency': {'ESFORCO'}, 'bottleneck_by_resource': {'TEMPOS', 'RECURSOS'},
+    'service_vs_wait_stacked': {'TEMPOS'}, 'wait_vs_service_scatter': {'TEMPOS'}, 'wait_time_evolution': {'TEMPOS'},
+    'throughput_benchmark_by_teamsize': {'RECURSOS'}, 'cycle_time_breakdown': {'TEMPOS'},
+    'outlier_cost': {'CUSTO'}, 'cost_by_resource_type_data': {'CUSTO'}, 'resource_workload_data': {'ESFORCO'},
+    'bottleneck_by_resource_data': {'TEMPOS', 'RECURSOS'}, 'bottleneck_by_activity_data': {'TEMPOS'},
+    'handoff_stats_data': {'TEMPOS'}, 'resource_avg_events_data': {'RECURSOS'}, 'avg_cycle_time_by_task_type_data': {'TEMPOS'},
+    # post-mining
+    'performance_heatmap': {'TEMPOS'}, 'gantt_chart_all_projects': {'TEMPOS'}, 'resource_network_adv': {'RECURSOS'},
+    'skill_vs_performance_adv': {'ESFORCO', 'COMPETENCIA'}, 'resource_network_bipartite': {'RECURSOS', 'COMPETENCIA'},
+    'cost_per_day_time_series': {'CUSTO'}, 'milestone_time_analysis_plot': {'TEMPOS'}, 'waiting_time_matrix_plot': {'TEMPOS'},
+    'resource_efficiency_plot': {'ESFORCO'}, 'avg_waiting_time_by_activity_plot': {'TEMPOS'},
+    # EDA
+    'plot_01': {'ESTADO'}, 'plot_03': {'PLANO'}, 'plot_04': {'CUSTO', 'ORCAMENTO'}, 'plot_05': {'PLANO'}, 'plot_06': {'CUSTO'},
+    'plot_07': {'RECURSOS'}, 'plot_09': {'PRIORIDADE'}, 'plot_10': {'TEMPOS'}, 'plot_11': {'TEMPOS'}, 'plot_12': {'RECURSOS'},
+    'plot_14': {'PLANO', 'RECURSOS'}, 'plot_16': {'CUSTO'}, 'plot_17': {'CUSTO', 'ORCAMENTO'}, 'plot_18': {'CUSTO', 'PLANO'},
+    'plot_19': {'CUSTO', 'PLANO'}, 'plot_20': {'CUSTO', 'RECURSOS'}, 'plot_22': {'PLANO', 'ORCAMENTO'},
+    'plot_23': {'PLANO', 'COMPETENCIA'}, 'plot_27': {'PLANO'}, 'plot_28': {'CUSTO', 'ORCAMENTO'},
+    'plot_29': {'CUSTO', 'PLANO', 'ORCAMENTO', 'COMPETENCIA', 'PRIORIDADE'}, 'plot_30': {'PLANO', 'CUSTO', 'ORCAMENTO'},
+    'stats_table': {'PLANO', 'CUSTO', 'ORCAMENTO'},
+}
+
+# Que capacidades cada "Cartão" referido nos insights do diagnóstico exige.
+CARD_REQUIREMENTS = {
+    1: {'PLANO', 'CUSTO', 'ORCAMENTO'}, 2: {'CUSTO'}, 4: {'ESTADO'}, 5: {'CUSTO'}, 6: {'CUSTO', 'ORCAMENTO'}, 7: {'CUSTO'},
+    9: {'CUSTO'}, 10: {'CUSTO', 'ORCAMENTO'}, 11: {'CUSTO'}, 17: {'PLANO'}, 18: {'TEMPOS'}, 22: {'PLANO'}, 23: {'PLANO'},
+    26: {'RECURSOS'}, 27: {'RECURSOS'}, 29: {'PLANO', 'RECURSOS'}, 31: {'ESFORCO'}, 32: {'RECURSOS'}, 33: {'ESFORCO'},
+    36: {'PLANO', 'RECURSOS'}, 37: {'ESFORCO', 'COMPETENCIA'}, 39: {'RECURSOS', 'COMPETENCIA'}, 40: {'RECURSOS'},
+    41: {'ESFORCO'}, 42: {'TEMPOS'}, 44: {'TEMPOS'}, 45: {'TEMPOS', 'CUSTO'}, 46: {'TEMPOS', 'RECURSOS'}, 49: {'ESFORCO'},
+    51: {'TEMPOS'}, 52: {'TEMPOS'}, 55: {'TEMPOS'}, 57: {'TEMPOS'}, 58: {'TEMPOS'}, 72: {'PRIORIDADE'}, 76: {'PLANO'},
+    77: {'CUSTO', 'ORCAMENTO'},
+}
+
+def get_visible_outputs():
+    """Resultados guardados na sessão, já filtrados pelas capacidades dos dados carregados."""
+    caps = st.session_state.get('caps')
+    return (gate_outputs(st.session_state.plots_pre_mining, caps), gate_outputs(st.session_state.tables_pre_mining, caps),
+            gate_outputs(st.session_state.plots_post_mining, caps), gate_outputs(st.session_state.plots_eda, caps),
+            gate_outputs(st.session_state.tables_eda, caps))
+
+def caps_ok(required, caps):
+    """True se todas as capacidades exigidas estão disponíveis (caps=None significa 'tudo disponível')."""
+    return caps is None or set(required).issubset(caps)
+
+def gate_outputs(outputs, caps):
+    """Esconde (põe a None) os gráficos/tabelas cujas capacidades não estão disponíveis."""
+    if caps is None or outputs is None:
+        return outputs
+    return {k: (v if caps_ok(PLOT_REQUIREMENTS.get(k, {'FLUXO'}), caps) else None) for k, v in outputs.items()}
+
+def _has_values(df, col):
+    if df is None or col not in df.columns:
+        return False
+    s = df[col]
+    if s.dtype == object:
+        s = s.replace('', np.nan)
+    return s.notna().mean() > 0.5
+
+def _split_people(val):
+    """'Ana; Rui, Rita' -> ['Ana', 'Rui', 'Rita'] (uma tarefa pode ter várias pessoas)."""
+    if pd.isna(val):
+        return []
+    import re as _re
+    return [p.strip() for p in _re.split(r'[;,|/]', str(val)) if p.strip()]
+
+def normalize_inputs(raw, sla_days=None):
+    """
+    raw: dict com qualquer subconjunto de {'projects','tasks','resources','resource_allocations','dependencies'}.
+         'tasks' é obrigatório. Em 'tasks' pode existir uma coluna 'resource_id' ou 'resource_name'
+         (e opcionalmente 'resource_type') quando não há resource_allocations.
+    sla_days: prazo-alvo em dias, usado como data planeada quando não existe planned_end_date.
+    Devolve (dfs_completos, caps, notas).
+    """
+    notes, caps = [], set()
+    t = raw.get('tasks')
+    if t is None or t.empty:
+        raise ValueError("É necessário pelo menos o ficheiro de tarefas (tasks) ou um log de eventos.")
+    t = t.copy()
+    for c in ['start_date', 'end_date']:
+        if c in t.columns:
+            t[c] = pd.to_datetime(t[c], errors='coerce')
+    if 'start_date' not in t.columns and 'end_date' not in t.columns:
+        raise ValueError("O ficheiro de tarefas precisa de pelo menos uma coluna de data (start_date ou end_date).")
+    if 'start_date' not in t.columns: t['start_date'] = t['end_date']
+    if 'end_date' not in t.columns: t['end_date'] = t['start_date']
+    t['start_date'] = t['start_date'].fillna(t['end_date']); t['end_date'] = t['end_date'].fillna(t['start_date'])
+    t = t.dropna(subset=['project_id', 'task_name', 'start_date']).copy()
+    if 'task_id' not in t.columns:
+        t['task_id'] = range(1, len(t) + 1)
+    for c in ['project_id', 'task_id']:
+        t[c] = t[c].astype(str)
+    caps.add('FLUXO')
+    if (t['end_date'] > t['start_date']).mean() > 0.3:
+        caps.add('TEMPOS')
+    else:
+        notes.append("As tarefas têm uma só data (ou início = fim): as análises de tempos de execução e espera ficam indisponíveis.")
+    if 'task_type' not in t.columns or not _has_values(t, 'task_type'):
+        t['task_type'] = t['task_name']
+    if _has_values(t, 'priority'):
+        caps.add('PRIORIDADE')
+    t['priority'] = pd.to_numeric(t['priority'], errors='coerce').fillna(3) if 'priority' in t.columns else 3
+    dur_days = ((t['end_date'] - t['start_date']).dt.days).clip(lower=1)
+    if 'estimated_effort' not in t.columns:
+        t['estimated_effort'] = dur_days
+    t['estimated_effort'] = pd.to_numeric(t['estimated_effort'], errors='coerce').fillna(dur_days)
+
+    # --- Recursos e alocações ---
+    res = raw.get('resources'); alloc = raw.get('resource_allocations')
+    res = res.copy() if res is not None and not res.empty else None
+    task_res_col = next((c for c in ['resource_id', 'resource_name'] if c in t.columns and _has_values(t, c)), None)
+    if alloc is not None and not alloc.empty and 'hours_worked' in alloc.columns:
+        alloc = alloc.copy()
+        alloc['task_id'] = alloc['task_id'].astype(str); alloc['resource_id'] = alloc['resource_id'].astype(str)
+        alloc['allocation_date'] = pd.to_datetime(alloc['allocation_date'], errors='coerce')
+        alloc['hours_worked'] = pd.to_numeric(alloc['hours_worked'], errors='coerce').fillna(0)
+        caps.update({'RECURSOS', 'ESFORCO'})
+        if res is None:
+            ids = alloc['resource_id'].unique()
+            res = pd.DataFrame({'resource_id': ids, 'resource_name': ids, 'resource_type': 'Desconhecido'})
+            notes.append("Sem ficheiro de recursos: as pessoas aparecem pelo seu ID e sem função.")
+    else:
+        # Sem horas reais: gera alocações ESTIMADAS (8h por dia útil da tarefa) para que as análises corram.
+        if task_res_col:
+            caps.add('RECURSOS')
+            cols = ['task_id', 'project_id', 'start_date', 'end_date', task_res_col] + (['resource_type'] if 'resource_type' in t.columns else [])
+            rows = t[cols].copy()
+            rows['_people'] = rows[task_res_col].apply(_split_people)
+            rows = rows.explode('_people').dropna(subset=['_people'])
+            if res is None:
+                names = rows['_people'].unique()
+                res = pd.DataFrame({'resource_id': names, 'resource_name': names})
+                if 'resource_type' in rows.columns:
+                    rtype = rows.groupby('_people')['resource_type'].agg(lambda x: x.mode().iat[0] if not x.mode().empty else 'Desconhecido')
+                    res['resource_type'] = res['resource_name'].map(rtype).fillna('Desconhecido')
+                else:
+                    res['resource_type'] = 'Desconhecido'
+                rows['resource_id'] = rows['_people']
+            elif task_res_col == 'resource_name':
+                res['resource_id'] = res['resource_id'].astype(str)
+                name2id = res.drop_duplicates('resource_name').set_index('resource_name')['resource_id'].to_dict()
+                rows['resource_id'] = rows['_people'].map(name2id).fillna(rows['_people'])
+            else:
+                rows['resource_id'] = rows['_people'].astype(str)
+            notes.append("Sem horas trabalhadas (resource_allocations): o esforço é ESTIMADO como 8h por dia útil da tarefa e só é usado na simulação; os gráficos de esforço, eficiência e custos ficam escondidos.")
+        else:
+            rows = t[['task_id', 'project_id', 'start_date', 'end_date']].copy()
+            rows['resource_id'] = 'N/D'
+            res = pd.DataFrame({'resource_id': ['N/D'], 'resource_name': ['Não identificado'], 'resource_type': ['Não identificado']})
+            notes.append("Sem informação de quem executou as tarefas: as análises de recursos e equipas ficam indisponíveis.")
+        rows['allocation_date'] = [list(pd.bdate_range(s, e)) or [s] for s, e in zip(rows['start_date'], rows['end_date'])]
+        alloc = rows[['task_id', 'project_id', 'resource_id', 'allocation_date']].explode('allocation_date')
+        alloc['allocation_date'] = pd.to_datetime(alloc['allocation_date'])
+        alloc['hours_worked'] = 8.0
+        alloc = alloc.reset_index(drop=True)
+        alloc['allocation_id'] = range(1, len(alloc) + 1)
+    res['resource_id'] = res['resource_id'].astype(str)
+    if 'resource_name' not in res.columns: res['resource_name'] = res['resource_id']
+    if 'resource_type' not in res.columns: res['resource_type'] = 'Desconhecido'
+    res['resource_type'] = res['resource_type'].fillna('Desconhecido')
+    if 'ESFORCO' in caps and 'cost_per_hour' in res.columns and pd.to_numeric(res['cost_per_hour'], errors='coerce').fillna(0).gt(0).any():
+        caps.add('CUSTO')
+    res['cost_per_hour'] = pd.to_numeric(res['cost_per_hour'], errors='coerce').fillna(0) if 'cost_per_hour' in res.columns else 0.0
+    res['daily_capacity'] = pd.to_numeric(res['daily_capacity'], errors='coerce').fillna(8) if 'daily_capacity' in res.columns else 8.0
+    if _has_values(res, 'skill_level') and 'RECURSOS' in caps:
+        caps.add('COMPETENCIA')
+    res['skill_level'] = pd.to_numeric(res['skill_level'], errors='coerce').fillna(1) if 'skill_level' in res.columns else 1
+    if 'performance_factor' not in res.columns: res['performance_factor'] = 1.0
+    alloc['task_id'] = alloc['task_id'].astype(str)
+    if 'project_id' not in alloc.columns or alloc['project_id'].isna().any():
+        alloc = alloc.drop(columns=['project_id'], errors='ignore').merge(t[['task_id', 'project_id']], on='task_id', how='left')
+    alloc['project_id'] = alloc['project_id'].astype(str)
+    if 'allocation_id' not in alloc.columns: alloc['allocation_id'] = range(1, len(alloc) + 1)
+
+    # --- Processos (projects) ---
+    derived = t.groupby('project_id').agg(_start=('start_date', 'min'), _end=('end_date', 'max')).reset_index()
+    p = raw.get('projects')
+    if p is not None and not p.empty:
+        p = p.copy(); p['project_id'] = p['project_id'].astype(str)
+        p = derived.merge(p, on='project_id', how='left')
+    else:
+        p = derived.copy()
+        notes.append("Sem ficheiro de processos: início e fim de cada processo foram derivados das tarefas.")
+    for c in ['start_date', 'end_date', 'planned_end_date']:
+        if c in p.columns: p[c] = pd.to_datetime(p[c], errors='coerce')
+    p['start_date'] = p['start_date'].fillna(p['_start']) if 'start_date' in p.columns else p['_start']
+    p['end_date'] = p['end_date'].fillna(p['_end']) if 'end_date' in p.columns else p['_end']
+    p = p.drop(columns=['_start', '_end'])
+    if _has_values(p, 'planned_end_date'):
+        caps.add('PLANO')
+    elif sla_days:
+        p['planned_end_date'] = p['start_date'] + pd.to_timedelta(int(sla_days), unit='D')
+        caps.add('PLANO'); notes.append(f"Prazo planeado definido pelo SLA indicado: {int(sla_days)} dias após o início.")
+    else:
+        p['planned_end_date'] = p['end_date']
+        notes.append("Sem data planeada nem SLA: as análises de atrasos ficam indisponíveis (pode indicar um SLA nas Configurações).")
+    p['planned_end_date'] = p['planned_end_date'].fillna(p['end_date'])
+    if _has_values(p, 'budget_impact'):
+        caps.add('ORCAMENTO')
+    p['budget_impact'] = pd.to_numeric(p['budget_impact'], errors='coerce').fillna(0) if 'budget_impact' in p.columns else 0.0
+    if _has_values(p, 'project_status'): caps.add('ESTADO')
+    p['project_status'] = p['project_status'].fillna('Concluído') if 'project_status' in p.columns else 'Concluído'
+    if 'project_name' not in p.columns: p['project_name'] = 'Processo ' + p['project_id']
+    p['project_name'] = p['project_name'].fillna('Processo ' + p['project_id'])
+    p['path_name'] = p['path_name'].fillna('Geral') if 'path_name' in p.columns else 'Geral'
+    if 'risk_rating' not in p.columns: p['risk_rating'] = 'N/D'
+
+    # --- Dependências: derivadas da ordem das tarefas se não existirem ---
+    d = raw.get('dependencies')
+    if d is None or d.empty:
+        ts = t.assign(_o=pd.to_numeric(t['task_id'], errors='coerce')).sort_values(['project_id', 'start_date', 'end_date', '_o'])
+        ts['pred'] = ts.groupby('project_id')['task_id'].shift(1)
+        d = ts.dropna(subset=['pred'])[['project_id', 'pred', 'task_id']].rename(columns={'pred': 'task_id_predecessor', 'task_id': 'task_id_successor'})
+        d['dependency_id'] = range(1, len(d) + 1)
+    else:
+        d = d.copy()
+    for c in ['project_id', 'task_id_predecessor', 'task_id_successor']:
+        d[c] = d[c].astype(str)
+
+    t = t.drop(columns=[c for c in ['resource_id', 'resource_name', 'resource_type'] if c in t.columns])
+    dfs = {'projects': p, 'tasks': t, 'resources': res, 'resource_allocations': alloc, 'dependencies': d}
+    return dfs, caps, notes
+
+
+# =====================================================================================
+# --- LOG ÚNICO: CONVERSÃO DE UM EVENT LOG (1 ficheiro) PARA O MODELO DE 5 TABELAS ---
+# =====================================================================================
+# Campos que o utilizador pode mapear. (chave, rótulo, obrigatório, palavras para sugestão automática)
+LOG_FIELDS = [
+    ('case',       'Identificador do processo (caso)', True,  ['case:concept:name', 'case_id', 'caseid', 'case', 'project_id', 'processo', 'process_id', 'dossier', 'id_processo', 'pedido', 'ticket']),
+    ('activity',   'Atividade / tarefa',               True,  ['concept:name', 'activity', 'atividade', 'actividade', 'task_name', 'tarefa', 'task', 'etapa', 'step', 'evento', 'event']),
+    ('start',      'Data de início',                   False, ['start_timestamp', 'start_date', 'start', 'inicio', 'início', 'data_inicio', 'data inicio', 'started']),
+    ('end',        'Data de fim (ou data do evento)',  False, ['time:timestamp', 'end_date', 'end', 'fim', 'data_fim', 'data fim', 'timestamp', 'complete', 'completed', 'data', 'date', 'datetime']),
+    ('lifecycle',  'Ciclo de vida (start/complete)',   False, ['lifecycle:transition', 'lifecycle', 'transition', 'event_type', 'ciclo']),
+    ('resource',   'Pessoa / recurso',                 False, ['org:resource', 'resource', 'resource_name', 'recurso', 'pessoa', 'user', 'utilizador', 'colaborador', 'owner', 'assignee', 'analista']),
+    ('role',       'Função do recurso',                False, ['org:role', 'role', 'resource_type', 'funcao', 'função', 'perfil', 'departamento', 'team', 'equipa']),
+    ('hours',      'Horas trabalhadas',                False, ['hours_worked', 'hours', 'horas', 'effort_hours', 'esforco_horas', 'duration_hours']),
+    ('cost_hour',  'Custo por hora',                   False, ['cost_per_hour', 'custo_hora', 'custo/hora', 'hourly_rate', 'rate']),
+    ('planned',    'Data planeada de fim do processo', False, ['planned_end_date', 'due_date', 'data_prevista', 'data_planeada', 'deadline', 'sla_date', 'prazo']),
+    ('budget',     'Orçamento do processo',            False, ['budget_impact', 'budget', 'orcamento', 'orçamento', 'custo_planeado']),
+    ('status',     'Estado do processo',               False, ['project_status', 'status', 'estado', 'case_status']),
+    ('case_type',  'Tipo de processo',                 False, ['path_name', 'case_type', 'tipo', 'produto', 'product', 'segmento', 'channel', 'canal']),
+    ('priority',   'Prioridade',                       False, ['priority', 'prioridade']),
+]
+
+def read_any_table(uploaded_file):
+    """Lê CSV (separador detetado: , ; tab |), Excel (.xlsx/.xls) ou XES."""
+    name = uploaded_file.name.lower()
+    if name.endswith(('.xlsx', '.xls')):
+        return pd.read_excel(uploaded_file)
+    if name.endswith('.xes'):
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xes') as tmp:
+            tmp.write(uploaded_file.getvalue()); path = tmp.name
+        try:
+            log = pm4py.read_xes(path)
+            return pm4py.convert_to_dataframe(log) if not isinstance(log, pd.DataFrame) else log
+        finally:
+            os.remove(path)
+    raw_bytes = uploaded_file.getvalue()
+    for enc in ['utf-8', 'utf-8-sig', 'latin-1']:
+        try:
+            return pd.read_csv(io.BytesIO(raw_bytes), sep=None, engine='python', encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return pd.read_csv(io.BytesIO(raw_bytes), sep=None, engine='python', encoding='latin-1')
+
+def guess_log_mapping(columns):
+    """Sugere, para cada campo, a coluna mais provável (por nome). Cada coluna só é usada uma vez."""
+    def norm(x): return str(x).strip().lower().replace('-', '_')
+    cols = list(columns); used = set(); mapping = {}
+    for key, _, _, hints in LOG_FIELDS:
+        found = None
+        for h in hints:                      # 1º: nome exatamente igual
+            for c in cols:
+                if c not in used and norm(c) == norm(h): found = c; break
+            if found: break
+        if not found:                        # 2º: nome contém a pista (só pistas com 4+ letras)
+            for h in hints:
+                if len(h) < 4: continue
+                for c in cols:
+                    if c not in used and norm(h) in norm(c): found = c; break
+                if found: break
+        if found:
+            mapping[key] = found; used.add(found)
+    return mapping
+
+def _to_dt(s):
+    out = pd.to_datetime(s, errors='coerce')
+    if out.notna().mean() < 0.5:   # tenta formato dia/mês/ano
+        out2 = pd.to_datetime(s, errors='coerce', dayfirst=True)
+        if out2.notna().mean() > out.notna().mean(): out = out2
+    try:
+        if getattr(out.dt, 'tz', None) is not None: out = out.dt.tz_localize(None)
+    except (AttributeError, TypeError):
+        pass
+    return out
+
+def log_to_raw(df, mapping):
+    """
+    Converte um event log (1 linha por evento/tarefa) nas tabelas que a app usa.
+    mapping: {campo: nome_da_coluna} (ver LOG_FIELDS). Devolve (raw_dict, avisos).
+    """
+    warns = []
+    m = {k: v for k, v in mapping.items() if v}
+    for req in ['case', 'activity']:
+        if req not in m: raise ValueError(f"Falta mapear o campo obrigatório: {dict((k, l) for k, l, _, _ in LOG_FIELDS)[req]}.")
+    if 'start' not in m and 'end' not in m:
+        raise ValueError("É preciso mapear pelo menos uma data (início ou fim).")
+    d = pd.DataFrame({k: df[c].values for k, c in m.items()})
+    d['case'] = d['case'].astype(str); d['activity'] = d['activity'].astype(str)
+    for c in ['start', 'end', 'planned']:
+        if c in d.columns: d[c] = _to_dt(d[c])
+    n0 = len(d)
+
+    # Logs com eventos 'start' e 'complete' em linhas separadas: emparelhar numa tarefa com início e fim
+    if 'lifecycle' in d.columns:
+        lc = d['lifecycle'].astype(str).str.lower().str.strip()
+        ts_col = 'end' if 'end' in d.columns else 'start'
+        is_start = lc.isin(['start', 'started', 'inicio', 'início', 'begin', 'assign'])
+        is_end = lc.isin(['complete', 'completed', 'end', 'fim', 'done', 'concluido', 'concluído', 'closed'])
+        if is_start.any() and is_end.any():
+            st_ev = d[is_start].copy(); en_ev = d[is_end].copy()
+            for x in (st_ev, en_ev):
+                x.sort_values(['case', ts_col], inplace=True)
+                x['_n'] = x.groupby(['case', 'activity']).cumcount()
+            st_ev = st_ev[['case', 'activity', '_n', ts_col]].rename(columns={ts_col: '_s'})
+            d = en_ev.merge(st_ev, on=['case', 'activity', '_n'], how='left')
+            d['start'] = d['_s'].fillna(d[ts_col]); d['end'] = d[ts_col]
+            d = d.drop(columns=['_s', '_n', 'lifecycle'])
+            warns.append(f"Eventos de início e fim emparelhados: {n0:,} eventos → {len(d):,} tarefas.")
+        else:
+            d = d[~lc.isin(['schedule', 'suspend', 'resume', 'withdraw', 'ate_abort', 'pi_abort'])].drop(columns=['lifecycle'])
+    if 'start' not in d.columns: d['start'] = d['end']
+    if 'end' not in d.columns: d['end'] = d['start']
+    d['start'] = d['start'].fillna(d['end']); d['end'] = d['end'].fillna(d['start'])
+    bad = d['start'].isna() | (d['case'].isin(['nan', 'None', '']))
+    if bad.any():
+        warns.append(f"{int(bad.sum()):,} linhas ignoradas por não terem data ou identificador de processo válidos.")
+        d = d[~bad]
+    swap = d['end'] < d['start']
+    if swap.any():
+        warns.append(f"{int(swap.sum()):,} tarefas com fim anterior ao início: datas trocadas.")
+        d.loc[swap, ['start', 'end']] = d.loc[swap, ['end', 'start']].values
+    d = d.sort_values(['case', 'start', 'end']).reset_index(drop=True)
+    d['task_id'] = (d.index + 1).astype(str)
+
+    tasks = pd.DataFrame({'task_id': d['task_id'], 'project_id': d['case'], 'task_name': d['activity'],
+                          'start_date': d['start'], 'end_date': d['end']})
+    if 'priority' in d.columns: tasks['priority'] = d['priority']
+    raw = {'tasks': tasks}
+
+    # Recursos: com horas -> resource_allocations reais; sem horas -> coluna de pessoa nas tarefas
+    if 'resource' in d.columns:
+        if 'hours' in d.columns:
+            a = d[['task_id', 'case', 'resource', 'start', 'hours']].copy()
+            a['resource'] = a['resource'].apply(_split_people)
+            a = a.explode('resource').dropna(subset=['resource'])
+            a['hours'] = pd.to_numeric(a['hours'], errors='coerce').fillna(0)
+            raw['resource_allocations'] = pd.DataFrame({'task_id': a['task_id'], 'project_id': a['case'], 'resource_id': a['resource'].astype(str),
+                                                        'allocation_date': a['start'], 'hours_worked': a['hours']})
+            raw['resource_allocations']['allocation_id'] = range(1, len(a) + 1)
+        else:
+            tasks['resource_name'] = d['resource'].astype(str).where(d['resource'].notna())
+            if 'role' in d.columns: tasks['resource_type'] = d['role']
+        ppl = d[['resource'] + [c for c in ['role', 'cost_hour'] if c in d.columns]].copy()
+        ppl['resource'] = ppl['resource'].apply(_split_people)
+        ppl = ppl.explode('resource').dropna(subset=['resource'])
+        agg = {'role': (lambda x: x.mode().iat[0] if not x.mode().empty else 'Desconhecido')} if 'role' in ppl.columns else {}
+        if 'cost_hour' in ppl.columns:
+            ppl['cost_hour'] = pd.to_numeric(ppl['cost_hour'], errors='coerce'); agg['cost_hour'] = 'mean'
+        r = ppl.groupby('resource').agg(agg).reset_index() if agg else ppl[['resource']].drop_duplicates()
+        res = pd.DataFrame({'resource_id': r['resource'].astype(str), 'resource_name': r['resource'].astype(str)})
+        res['resource_type'] = r['role'].values if 'role' in r.columns else 'Desconhecido'
+        if 'cost_hour' in r.columns: res['cost_per_hour'] = r['cost_hour'].values
+        raw['resources'] = res
+    elif 'hours' in d.columns:
+        warns.append("Foram mapeadas horas mas não o recurso: as horas não podem ser atribuídas a ninguém e foram ignoradas.")
+
+    # Atributos ao nível do processo
+    proj_cols = {k: v for k, v in {'planned': 'planned_end_date', 'budget': 'budget_impact', 'status': 'project_status', 'case_type': 'path_name'}.items() if k in d.columns}
+    if proj_cols:
+        p = d.groupby('case')[list(proj_cols)].first().reset_index().rename(columns={'case': 'project_id', **proj_cols})
+        raw['projects'] = p
+    return raw, warns
+
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 if 'current_page' not in st.session_state: st.session_state.current_page = "Dashboard"
@@ -273,7 +717,7 @@ def run_pre_mining_analysis(dfs):
     tables = {}
     df_projects = dfs['projects'].copy()
     df_tasks = dfs['tasks'].copy()
-    df_resources = dfs['resources'].copy()
+    df_resources = make_unique_resource_names(dfs['resources'])
     df_resource_allocations = dfs['resource_allocations'].copy()
     df_dependencies = dfs['dependencies'].copy()
 
@@ -307,9 +751,9 @@ def run_pre_mining_analysis(dfs):
     df_full_context = df_full_context.merge(df_resources, on='resource_id')
     df_full_context['cost_of_work'] = df_full_context['hours_worked'] * df_full_context['cost_per_hour']
 
-    log_df_final = df_full_context[['project_id', 'task_name', 'allocation_date', 'resource_name']].copy()
-    log_df_final.rename(columns={'project_id': 'case:concept:name', 'task_name': 'concept:name', 'allocation_date': 'time:timestamp', 'resource_name': 'org:resource'}, inplace=True)
-    log_df_final['lifecycle:transition'] = 'complete'
+    # Event log ao nível da TAREFA (1 evento por tarefa), e não por dia de alocação.
+    # time:timestamp = fim da tarefa; start_timestamp = início da tarefa; recurso = o que mais horas trabalhou na tarefa.
+    log_df_final = build_task_event_log(df_tasks, df_resource_allocations, df_resources)
     event_log_pm4py = pm4py.convert_to_event_log(log_df_final)
     
     tables['kpi_data'] = {
@@ -330,7 +774,7 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 4)); sns.boxplot(x=df_projects['actual_duration_days'], ax=ax, color="#2563EB"); sns.stripplot(x=df_projects['actual_duration_days'], color="#FBBF24", size=4, jitter=True, alpha=0.7, ax=ax); ax.set_title("Distribuição da Duração dos Processos (PM)")
     plots['case_durations_boxplot'] = convert_fig_to_bytes(fig)
     
-    lead_times = log_df_final.groupby("case:concept:name")["time:timestamp"].agg(["min", "max"]).reset_index()
+    lead_times = log_df_final.groupby("case:concept:name").agg(min=("start_timestamp", "min"), max=("time:timestamp", "max")).reset_index()
     lead_times["lead_time_days"] = (lead_times["max"] - lead_times["min"]).dt.total_seconds() / (24*60*60)
     def compute_avg_throughput(group):
         group = group.sort_values("time:timestamp"); deltas = group["time:timestamp"].diff().dropna()
@@ -352,15 +796,17 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 5)); sns.regplot(x="avg_throughput_hours", y="lead_time_days", data=perf_df, ax=ax, scatter_kws={'color': '#06B6D4'}, line_kws={'color': '#FBBF24'}); ax.set_title("Relação Lead Time vs Throughput")
     plots['lead_time_vs_throughput'] = convert_fig_to_bytes(fig)
     
-    service_times = df_full_context.groupby('task_name')['hours_worked'].mean().reset_index()
+    # horas por TAREFA (soma das alocações da tarefa) e só depois a média por atividade
+    service_times = df_full_context.groupby(['task_id', 'task_name'])['hours_worked'].sum().reset_index().groupby('task_name')['hours_worked'].mean().reset_index()
     service_times['service_time_days'] = service_times['hours_worked'] / 8
     
     fig, ax = plt.subplots(figsize=(8, 5)); sns.barplot(x='service_time_days', y='task_name', data=service_times.sort_values('service_time_days', ascending=False).head(10), ax=ax, hue='task_name', legend=False, palette='coolwarm'); ax.set_title("Tempo Médio de Execução por Atividade")
     plots['activity_service_times'] = convert_fig_to_bytes(fig)
     
-    df_handoff = log_df_final.sort_values(['case:concept:name', 'time:timestamp'])
+    df_handoff = log_df_final.copy()  # já ordenado por caso e início
     df_handoff['previous_activity_end_time'] = df_handoff.groupby('case:concept:name')['time:timestamp'].shift(1)
-    df_handoff['handoff_time_days'] = (df_handoff['time:timestamp'] - df_handoff['previous_activity_end_time']).dt.total_seconds() / (24*3600)
+    # espera = início desta tarefa - fim da anterior (nunca negativa)
+    df_handoff['handoff_time_days'] = ((df_handoff['start_timestamp'] - df_handoff['previous_activity_end_time']).dt.total_seconds() / (24*3600)).clip(lower=0)
     df_handoff['previous_activity'] = df_handoff.groupby('case:concept:name')['concept:name'].shift(1)
     handoff_stats = df_handoff.groupby(['previous_activity', 'concept:name'])['handoff_time_days'].mean().reset_index().sort_values('handoff_time_days', ascending=False)
     handoff_stats['transition'] = handoff_stats['previous_activity'].fillna('') + ' -> ' + handoff_stats['concept:name'].fillna('')
@@ -488,7 +934,9 @@ def run_pre_mining_analysis(dfs):
     tables['cost_of_delay_kpis'] = {
         'Custo Total Processos Atrasados': total_cost_delay,
         'Atraso Médio (dias)': mean_delay_days,
-        'Custo Médio/Dia Atraso': mean_cost_per_day
+        'Custo Médio/Dia Atraso': mean_cost_per_day,
+        '% Processos Atrasados': float((df_projects['days_diff'] > 0).mean() * 100),
+        'Desvio Médio face ao Plano (dias)': float(df_projects['days_diff'].mean())
     }
 
     min_res, max_res = df_projects['num_resources'].min(), df_projects['num_resources'].max()
@@ -513,7 +961,12 @@ def run_pre_mining_analysis(dfs):
     df_tasks_analysis.sort_values(['project_id', 'start_date'], inplace=True); df_tasks_analysis['previous_task_end'] = df_tasks_analysis.groupby('project_id')['end_date'].shift(1)
     df_tasks_analysis['waiting_time_days'] = (df_tasks_analysis['start_date'] - df_tasks_analysis['previous_task_end']).dt.total_seconds() / (24*60*60)
     df_tasks_analysis['waiting_time_days'] = df_tasks_analysis['waiting_time_days'].apply(lambda x: x if x > 0 else 0)
-    tables['kpi_data']['Espera Média (dias)'] = df_tasks_analysis['waiting_time_days'].mean()
+    tables['kpi_data']['Espera Média (dias)'] = df_tasks_analysis['waiting_time_days'].mean()  # por transição entre tarefas
+    # Espera ao nível do PROCESSO: soma das esperas de cada processo e % da duração desse processo
+    wait_per_case = df_tasks_analysis.groupby('project_id')['waiting_time_days'].sum()
+    dur_per_case = df_projects.set_index('project_id')['actual_duration_days'].replace(0, np.nan)
+    tables['kpi_data']['Espera Média por Processo (dias)'] = float(wait_per_case.mean())
+    tables['kpi_data']['% Tempo em Espera'] = float((wait_per_case / dur_per_case.reindex(wait_per_case.index)).mean() * 100)
 
     df_tasks_with_resources = df_tasks_analysis.merge(df_full_context[['task_id', 'resource_name']], on='task_id', how='left').drop_duplicates()
     bottleneck_by_resource = df_tasks_with_resources.groupby('resource_name')['waiting_time_days'].mean().sort_values(ascending=False).head(15).reset_index()
@@ -541,8 +994,8 @@ def run_pre_mining_analysis(dfs):
     fig, ax = plt.subplots(figsize=(8, 5)); sns.boxplot(data=df_perf_full, x='team_size_bin_dynamic', y='avg_throughput_hours', ax=ax, hue='team_size_bin_dynamic', legend=False, palette='plasma'); ax.set_title("Benchmark de Throughput por Tamanho da Equipa")
     plots['throughput_benchmark_by_teamsize'] = convert_fig_to_bytes(fig)
     
-    phase_times = df_tasks.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
-    phase_times['cycle_time_days'] = (phase_times['end'] - phase_times['start']).dt.days
+    # Duração da fase = soma das durações das suas tarefas (o intervalo min-max esticava com o rework)
+    phase_times = df_tasks.assign(_d=(df_tasks['end_date'] - df_tasks['start_date']).dt.days).groupby(['project_id', 'task_type'])['_d'].sum().reset_index(name='cycle_time_days')
     avg_cycle_time_by_task_type = phase_times.groupby('task_type')['cycle_time_days'].mean()
     tables['avg_cycle_time_by_task_type_data'] = avg_cycle_time_by_task_type.reset_index() 
     fig, ax = plt.subplots(figsize=(8, 4)); 
@@ -559,12 +1012,12 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     metrics = {}
     
     # 1. Preparação de um log com ciclo de vida completo (start/complete) para certas análises
-    df_start_events = _df_tasks_raw[['project_id', 'task_id', 'task_name', 'start_date']].rename(columns={'start_date': 'time:timestamp', 'task_name': 'concept:name', 'project_id': 'case:concept:name'})
-    df_start_events['lifecycle:transition'] = 'start'
-    df_complete_events = _df_tasks_raw[['project_id', 'task_id', 'task_name', 'end_date']].rename(columns={'end_date': 'time:timestamp', 'task_name': 'concept:name', 'project_id': 'case:concept:name'})
-    df_complete_events['lifecycle:transition'] = 'complete'
-    log_df_full_lifecycle = pd.concat([df_start_events, df_complete_events]).sort_values('time:timestamp')
-    log_full_pm4py = pm4py.convert_to_event_log(log_df_full_lifecycle)
+    # Log ao nível da tarefa: 1 evento por tarefa, com início (start_timestamp) e fim (time:timestamp).
+    # (Antes juntava eventos 'start' e 'complete' como se fossem atividades distintas -> DFG com '0ns' e setas impossíveis.)
+    log_df_full_lifecycle = pm4py.convert_to_dataframe(_event_log_pm4py)
+    log_df_full_lifecycle['start_timestamp'] = pd.to_datetime(log_df_full_lifecycle['start_timestamp'])
+    log_df_full_lifecycle['time:timestamp'] = pd.to_datetime(log_df_full_lifecycle['time:timestamp'])
+    log_full_pm4py = _event_log_pm4py
 
     # 2. Descoberta de Modelos e Métricas (usando uma amostra das 10 variantes principais para performance)
     variants_dict = variants_filter.get_variants(_event_log_pm4py)
@@ -602,7 +1055,17 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
     ax1.yaxis.label.set_color('#2563EB'); ax2.yaxis.label.set_color('#06B6D4'); ax1.tick_params(axis='y', colors='#2563EB'); ax2.tick_params(axis='y', colors='#06B6D4')
     plots['kpi_time_series'] = convert_fig_to_bytes(fig)
     
-    dfg_perf, _, _ = pm4py.discover_performance_dfg(log_full_pm4py)
+    # DFG de ESPERA: para cada par A->B consecutivo, média de (início de B - fim de A), em segundos.
+    # Só se mostram transições presentes em >= 1% dos casos (o resto é ruído raro).
+    _dl = log_df_full_lifecycle.sort_values(['case:concept:name', 'start_timestamp', 'time:timestamp']).copy()
+    _dl['prev_act'] = _dl.groupby('case:concept:name')['concept:name'].shift(1)
+    _dl['prev_end'] = _dl.groupby('case:concept:name')['time:timestamp'].shift(1)
+    _dl = _dl.dropna(subset=['prev_act'])
+    _dl['wait_s'] = (_dl['start_timestamp'] - _dl['prev_end']).dt.total_seconds().clip(lower=0)
+    _agg = _dl.groupby(['prev_act', 'concept:name']).agg(wait=('wait_s', 'mean'), n=('case:concept:name', 'nunique'))
+    n_cases = log_df_full_lifecycle['case:concept:name'].nunique()
+    _agg = _agg[_agg['n'] >= max(1, 0.01 * n_cases)]
+    dfg_perf = {(a, b): float(r['wait']) for (a, b), r in _agg.iterrows()}
     gviz_dfg = dfg_visualizer.apply(dfg_perf, log=log_full_pm4py, variant=dfg_visualizer.Variants.PERFORMANCE)
     plots['performance_heatmap'] = convert_gviz_to_bytes(gviz_dfg)
     
@@ -708,7 +1171,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         ax.set_title('Rede de Top 30 Recursos por Função (Atividade)')
         plots['resource_network_bipartite'] = convert_fig_to_bytes(fig)
 
-    variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('time:timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
+    variants_df = log_df_full_lifecycle.groupby('case:concept:name').agg(variant=('concept:name', lambda x: tuple(x)), start_timestamp=('start_timestamp', 'min'), end_timestamp=('time:timestamp', 'max')).reset_index()
     variants_df['duration_hours'] = (variants_df['end_timestamp'] - variants_df['start_timestamp']).dt.total_seconds() / 3600
     variant_durations = variants_df.groupby('variant').agg(count=('case:concept:name', 'count'), avg_duration_hours=('duration_hours', 'mean')).reset_index().sort_values(by='count', ascending=False).head(10)
     
@@ -906,7 +1369,7 @@ def run_eda_analysis(dfs):
     # --- Pré-processamento e Feature Engineering ---
     df_projects = dfs['projects'].copy()
     df_tasks = dfs['tasks'].copy()
-    df_resources = dfs['resources'].copy()
+    df_resources = make_unique_resource_names(dfs['resources'])
     df_resource_allocations = dfs['resource_allocations'].copy()
     df_dependencies = dfs['dependencies'].copy()
 
@@ -1438,15 +1901,7 @@ def run_rl_analysis(dfs, project_id_to_simulate, num_episodes, reward_config, pr
                                 # Se a tarefa sucessora ainda não tinha data de elegibilidade, define-a para hoje
                                 if check_task_data['eligibility_date'] is None:
                                     check_task_data['eligibility_date'] = self.current_date
-                
-                # Para os logs detalhados
-                daily_cost_by_project[proj_id] += cost_today
-                daily_hours_by_project[proj_id] += hours_to_work
 
-                if task_data['progress'] >= task_data['estimated_effort']:
-                    task_data['status'] = 'Concluída'
-                    task_data['completion_date'] = self.current_date
-                    reward_from_tasks += task_data['priority'] * self.rewards['priority_task_bonus_factor']
                     
             for proj_id, proj_state in self.active_projects.items():
                 if proj_id not in self.detailed_logs:
@@ -1859,7 +2314,8 @@ SECTION_MAP = {
 class DiagnosticEngineV5:
     """ Lógica de investigação flexível"""
 
-    def __init__(self, tables_pre, metrics, data_frames, tables_eda):
+    def __init__(self, tables_pre, metrics, data_frames, tables_eda, caps=None):
+        self.caps = caps  # None = todas as capacidades disponíveis (comportamento original)
         self.tables_pre_orig = tables_pre if tables_pre else {}
         self.metrics_orig = metrics if metrics else {}
         self.data_frames_orig = data_frames if data_frames else {}
@@ -1973,7 +2429,7 @@ class DiagnosticEngineV5:
             try: self.df_workload = self.df_full_context_base.groupby('resource_name')['hours_worked'].sum().sort_values(ascending=False).reset_index()
             except Exception as e: print(f"Erro _prepare: df_workload: {e}")
             try:
-                 self.df_activity_service_times = self.df_full_context_base.groupby('task_name')['hours_worked'].mean().reset_index()
+                 self.df_activity_service_times = self.df_full_context_base.groupby(['task_id', 'task_name'])['hours_worked'].sum().reset_index().groupby('task_name')['hours_worked'].mean().reset_index()
                  self.df_activity_service_times['service_time_days'] = self.df_activity_service_times['hours_worked'] / 8
             except Exception as e: print(f"Erro _prepare: df_activity_service_times: {e}")
 
@@ -2017,8 +2473,8 @@ class DiagnosticEngineV5:
 
                  if 'task_type' in self.df_tasks_base.columns:
                      df_ph = self.df_tasks_base.dropna(subset=['project_id', 'start_date', 'end_date', 'task_type']).copy()
-                     ph_times = df_ph.groupby(['project_id', 'task_type']).agg(start=('start_date', 'min'), end=('end_date', 'max')).reset_index()
-                     ph_times['cycle_time_days'] = (ph_times['end'] - ph_times['start']).dt.days
+                     df_ph['_d'] = (df_ph['end_date'] - df_ph['start_date']).dt.days
+                     ph_times = df_ph.groupby(['project_id', 'task_type'])['_d'].sum().reset_index(name='cycle_time_days')
                      ph_times = ph_times[ph_times['cycle_time_days'] >= 0]
                      if not ph_times.empty: 
                          # A variável de classe é preenchida com os dados de task_type
@@ -2028,18 +2484,22 @@ class DiagnosticEngineV5:
         # --- Cálculos de Handoffs e Rede Social (log reconstruído) ---
         try:
              if not self.df_full_context_base.empty and 'project_id' in self.df_full_context_base.columns:
-                log_cols = ['project_id', 'task_name', 'allocation_date', 'resource_name']
+                log_cols = ['project_id', 'task_id', 'task_name', 'start_date_task', 'end_date_task', 'resource_name', 'hours_worked']
                 if all(c in self.df_full_context_base.columns for c in log_cols):
-                    log_df = self.df_full_context_base[log_cols].dropna().copy()
-                    log_df.rename(columns={'project_id': 'case', 'task_name': 'act', 'allocation_date': 'ts', 'resource_name': 'res'}, inplace=True)
-                    log_df['ts'] = pd.to_datetime(log_df['ts'], errors='coerce')
+                    # Log ao nível da TAREFA (antes: 1 linha por dia de alocação -> falsos handoffs A->A)
+                    fc = self.df_full_context_base[log_cols].dropna(subset=['project_id', 'task_id']).copy()
+                    main_res = fc.groupby(['task_id', 'resource_name'])['hours_worked'].sum().reset_index().sort_values('hours_worked', ascending=False).drop_duplicates('task_id')
+                    log_df = fc.drop_duplicates('task_id').drop(columns=['resource_name', 'hours_worked']).merge(main_res[['task_id', 'resource_name']], on='task_id', how='left')
+                    log_df.rename(columns={'project_id': 'case', 'task_name': 'act', 'start_date_task': 'start', 'end_date_task': 'ts', 'resource_name': 'res'}, inplace=True)
+                    log_df['ts'] = pd.to_datetime(log_df['ts'], errors='coerce'); log_df['start'] = pd.to_datetime(log_df['start'], errors='coerce')
                     log_df.dropna(subset=['ts', 'case', 'res'], inplace=True)
-                    log_df.sort_values(['case', 'ts'], inplace=True)
+                    log_df['_ord'] = pd.to_numeric(log_df['task_id'], errors='coerce')
+                    log_df.sort_values(['case', 'start', 'ts', '_ord'], inplace=True)
 
                     if not log_df.empty:
-                        # Handoffs Atividade
+                        # Handoffs Atividade: espera = início desta tarefa - fim da anterior
                         log_df['prev_end'] = log_df.groupby('case')['ts'].shift(1)
-                        log_df['wait_sec']=(log_df['ts'] - log_df['prev_end']).dt.total_seconds()
+                        log_df['wait_sec']=(log_df['start'] - log_df['prev_end']).dt.total_seconds()
                         log_df['h_days']=log_df['wait_sec'].apply(lambda x: x/(24*3600) if pd.notna(x) and x > 0 else 0)
                         log_df['prev_act']=log_df.groupby('case')['act'].shift(1)
                         h_stats = log_df.groupby(['prev_act', 'act'])['h_days'].mean().reset_index().sort_values('h_days', ascending=False)
@@ -2056,6 +2516,13 @@ class DiagnosticEngineV5:
                             case, res = row['case'], row['res']
                             if case == last_case and pd.notna(last_res) and pd.notna(res) and res != last_res: res_handoffs[(last_res, res)] += 1
                             last_case, last_res = case, res
+                        # Ignorar passagens que envolvem funções com 1 só pessoa: são estrutura do processo
+                        # (ex.: Diretor de Risco -> Comité), não um 'hub' emergente. Esse risco é tratado no insight de funções especializadas.
+                        if not self.df_resources_base.empty and 'resource_type' in self.df_resources_base.columns:
+                            role_size = self.df_resources_base['resource_type'].value_counts()
+                            name_role = self.df_resources_base.set_index('resource_name')['resource_type'].to_dict()
+                            single = {n for n, r in name_role.items() if role_size.get(r, 0) <= 1}
+                            res_handoffs = Counter({k: v for k, v in res_handoffs.items() if k[0] not in single and k[1] not in single})
                         self.resource_handoffs_counts = res_handoffs
                 else: print("Aviso _prepare: Colunas essenciais em falta em df_full_context.")
              else: print("Aviso _prepare: df_full_context vazio ou sem project_id.")
@@ -2114,6 +2581,15 @@ class DiagnosticEngineV5:
             return "Referência Inválida"
 
         keys = [key.strip() for key in card_keys_str.split(',')]
+        # Não citar como evidência cartões que estão escondidos por falta de dados
+        def _visible(key):
+            if key.startswith('Cartão'):
+                try: return caps_ok(CARD_REQUIREMENTS.get(int(key.split()[-1]), set()), self.caps)
+                except ValueError: return True
+            return True
+        keys = [k for k in keys if _visible(k)] or keys[:0]
+        if not keys:
+            return "Análise de fluxo do processo"
         names = [CARD_TITLE_MAP.get(key, key) for key in keys] # Usa a chave se o nome não for encontrado
 
         # Remove duplicados mantendo a ordem (caso haja referência repetida)
@@ -2127,6 +2603,19 @@ class DiagnosticEngineV5:
     def _add_insight(self, section_key, title, detail, card_keys_str, level='problema', priority=10):
         """ Adiciona insight com referência mapeada (NOMES) e prioridade. """
         try:
+            # Esconde insights que dependem de dados que o utilizador não tem (exceto o resumo executivo,
+            # cujos cenários já são decididos com base nas capacidades disponíveis).
+            if self.caps is not None and section_key != 'resumo_executivo' and isinstance(card_keys_str, str):
+                needed = set()
+                for key in card_keys_str.split(','):
+                    key = key.strip()
+                    if key.startswith('Cartão'):
+                        try: needed |= CARD_REQUIREMENTS.get(int(key.split()[-1]), set())
+                        except ValueError: pass
+                    elif key == 'KPIs Saúde Geral':
+                        needed.add('TEMPOS')
+                if not caps_ok(needed, self.caps):
+                    return
             section_name = SECTION_MAP.get(section_key, section_key)
             card_names = self._map_card_keys_to_names(card_keys_str) # USA A NOVA FUNÇÃO
             reference = f"{card_names}" # Referência simplificada para apenas os nomes
@@ -2210,13 +2699,25 @@ class DiagnosticEngineV5:
             flags['top_1_variant_perc'] = top_1_perc
             flags['top_10_variant_perc'] = top_10_perc
             if top_1_perc < 20: flags['is_chaotic'] = True
-            if top_1_perc > 70: flags['is_standardized'] = True
+            if top_1_perc > 70:
+                # Uma variante dominante (>70% dos casos) é padronização, mesmo que a precisão do modelo seja baixa
+                flags['is_standardized'] = True
+                flags['is_chaotic'] = False
 
         # --- 4. Análise de Causa-Raiz (Rework vs. Filas) ---
         self.detected_rework_loops = self._find_rework_in_wait_matrix()
+        # Prevalência: % de processos com pelo menos uma atividade repetida (rework)
+        rework_pct = 0.0
+        if not self.df_tasks_base.empty and {'project_id', 'task_name'}.issubset(self.df_tasks_base.columns):
+            rework_pct = float(self.df_tasks_base.groupby('project_id')['task_name'].apply(lambda x: x.duplicated().any()).mean() * 100)
+        flags['rework_case_pct'] = rework_pct
         if self.detected_rework_loops:
-            flags['has_rework'] = True
             flags['rework_loops'] = self.detected_rework_loops
+            # Só é tratado como problema estrutural se afetar >= 5% dos processos
+            if rework_pct >= 5:
+                flags['has_rework'] = True
+            else:
+                flags['has_rework_pontual'] = True
 
         if not self.df_activity_wait_stats.empty:
             df_wait = self.df_activity_wait_stats.copy()
@@ -2260,6 +2761,18 @@ class DiagnosticEngineV5:
                          flags['resource_hub_names'] = f"{top_handoff[0][0]} -> {top_handoff[0][1]}"
 
 
+        # Só manter as conclusões que os dados disponíveis suportam
+        c = self.caps
+        if not caps_ok({'PLANO'}, c):
+            for k in ['baseline_efficient', 'baseline_inefficient', 'is_degrading_prazo', 'mean_days_diff', 'trend_days_diff']: flags.pop(k, None)
+        if not caps_ok({'TEMPOS'}, c):
+            for k in ['has_high_queues', 'queue_bottlenecks', 'has_rework', 'rework_loops']: flags.pop(k, None)
+            if flags.get('rework_case_pct', 0) > 0: flags['has_rework_pontual'] = flags.get('rework_case_pct', 0) < 5
+            if flags.get('rework_case_pct', 0) >= 5: flags['has_rework_freq_sem_tempos'] = True
+        if not caps_ok({'ESFORCO'}, c):
+            for k in ['has_service_bottlenecks', 'service_bottlenecks', 'has_pareto_herois']: flags.pop(k, None)
+        if not caps_ok({'RECURSOS'}, c):
+            for k in ['has_resource_hub', 'resource_hub_names']: flags.pop(k, None)
         self.narrative_flags = flags
 
     def _find_rework_in_wait_matrix(self):
@@ -2332,7 +2845,7 @@ class DiagnosticEngineV5:
         elif (f.get('baseline_inefficient') or f.get('is_degrading_prazo')) and f.get('is_chaotic') and f.get('has_rework'):
             loop_ex = f['rework_loops'][0]
             self._add_insight('resumo_executivo', 'Diagnóstico Principal: Processo Caótico Dominado por Rework',
-                              f"A performance é baixa ou está a degradar-se devido à falta de padronização. O processo é caótico (Precisão: {f.get('precision', 0):.1%}, Variante Top 1: {f.get('top_1_variant_perc', 0):.1%}). "
+                              f"A performance é baixa ou está a degradar-se devido à falta de padronização. O processo é caótico (Precisão: {f.get('precision', 0):.1%}, Variante Top 1: {f.get('top_1_variant_perc', 0):.1f}%). "
                               f"Isto resulta em ciclos de rework caros, como '{loop_ex['loop']}', que são os principais gargalos de tempo ({loop_ex['wait_days']:.1f}d).",
                               "Cartão 23, Cartão 22, Cartão 61, Cartão 65, Cartão 58", level='problema', priority=1)
             self._add_insight('resumo_executivo', 'Recomendação Imediata',
@@ -2364,12 +2877,27 @@ class DiagnosticEngineV5:
         # --- Cenário 6: Processo Saudável ---
         elif f.get('baseline_efficient') and not f.get('is_degrading_prazo') and not f.get('is_chaotic'):
             self._add_insight('resumo_executivo', 'Diagnóstico Principal: Processo Saudável e Padronizado',
-                              f"A análise revela um processo globalmente saudável: eficiente (termina em média {f.get('mean_days_diff', 0):.1f} dias adiantado), estável (sem degradação de performance) e padronizado (Precisão: {f.get('precision', 0):.1%}). "
-                              f"Gargalos de espera ou rework não são significativos.",
+                              f"A análise revela um processo globalmente saudável: eficiente (termina em média {abs(f.get('mean_days_diff', 0)):.1f} dias antes do planeado) e padronizado ({f.get('top_1_variant_perc', 0):.1f}% dos processos seguem a mesma sequência). "
+                              + (f"Ponto de atenção: a duração média está a aumentar (+{f.get('trend_duration', 0):.2f} dias/mês). " if f.get('is_degrading_duracao') else "A performance está estável. ")
+                              + (f"O rework existe mas é pontual ({f.get('rework_case_pct', 0):.1f}% dos processos)." if f.get('has_rework_pontual') else "Não há rework significativo."),
                               "Cartão 1, Cartão 22, Cartão 61", level='facto', priority=1)
             self._add_insight('resumo_executivo', 'Próximos Passos Sugeridos',
                               "O foco deve ser a manutenção e monitorização contínua. Use a Simulação de RL para testar cenários de otimização (aumento de volume, redução de equipa) e identificar oportunidades de melhoria incremental.",
                               "Página de RL", level='recomendacao', priority=2)
+
+        # --- Cenário 6b: Padronizado mas sem dados de prazo (sem PLANO) ---
+        elif f.get('is_standardized') and not caps_ok({'PLANO'}, self.caps):
+            partes = [f"O processo é padronizado: {f.get('top_1_variant_perc', 0):.1f}% dos casos seguem a mesma sequência de atividades."]
+            if f.get('is_degrading_duracao'):
+                partes.append(f"Ponto de atenção: a duração média está a aumentar (+{f.get('trend_duration', 0):.2f} dias/mês).")
+            if f.get('rework_case_pct', 0) > 0:
+                partes.append(f"Há retrabalho em {f.get('rework_case_pct', 0):.1f}% dos processos.")
+            partes.append("Sem data planeada (ou SLA) não é possível avaliar atrasos; indique um SLA nas Configurações para ativar essa análise.")
+            self._add_insight('resumo_executivo', 'Diagnóstico Principal: Processo Padronizado', " ".join(partes), "Cartão 65", level='facto', priority=1)
+            if caps_ok({'TEMPOS'}, self.caps):
+                self._add_insight('resumo_executivo', 'Próximos Passos Sugeridos',
+                                  "Analise as maiores esperas entre atividades (secção Handoffs e Espera): num processo padronizado, reduzir a espera nos handoffs mais lentos é a alavanca com maior impacto na duração.",
+                                  "Cartão 42, Cartão 52", level='recomendacao', priority=2)
 
         # --- Cenário 7: Genérico ---
         else:
@@ -2382,30 +2910,26 @@ class DiagnosticEngineV5:
 
     def _check_kpis(self):
         try:
-            dur_media = self.kpis.get('Duração Média Num', 0)
-            espera_media = self.kpis.get('Espera Média (dias)', 0)
-            perc_espera = (espera_media / max(dur_media, 1)) * 100 if dur_media > 0 else 0
-            self.kpis['% Tempo em Espera'] = perc_espera # Guarda o valor calculado para consistência
-
-            kpi_values = {
-                'Duração Média': dur_media,
-                'Custo Médio': self.kpis.get('Custo Médio', 0),
-                'Atraso Médio': self.delay_kpis.get('Atraso Médio (dias)', 0),
-                'Desvio Custo Médio': self.kpis.get('Desvio de Custo Médio', 0),
-                'Espera Média (Total)': espera_media,
-                '% Tempo em Espera': perc_espera
-            }
-
+            def fmt(v, f):
+                return f.format(v) if isinstance(v, (int, float, np.floating)) and not pd.isna(v) else 'N/A'
+            dur_media = self.kpis.get('Duração Média Num', np.nan)
+            # % espera calculada por processo (soma das esperas do processo / duração do processo)
+            perc_espera = self.kpis.get('% Tempo em Espera', np.nan)
+            espera_proc = self.kpis.get('Espera Média por Processo (dias)', np.nan)
             kpi_geral = [
-                {'label': 'Duração Média', 'value': f"{kpi_values['Duração Média']:.1f} dias" if isinstance(kpi_values['Duração Média'], (int, float)) else 'N/A'},
-                {'label': 'Custo Médio', 'value': f"€{kpi_values['Custo Médio']:,.0f}" if isinstance(kpi_values['Custo Médio'], (int, float)) else 'N/A'},
-                {'label': 'Atraso Médio', 'value': f"{kpi_values['Atraso Médio']:.1f} dias" if isinstance(kpi_values['Atraso Médio'], (int, float)) else 'N/A'},
-                {'label': 'Desvio Custo Médio', 'value': f"€{kpi_values['Desvio Custo Médio']:,.0f}" if isinstance(kpi_values['Desvio Custo Médio'], (int, float)) else 'N/A'},
-                {'label': 'Espera Média (Total)', 'value': f"{kpi_values['Espera Média (Total)']:.1f} dias" if isinstance(kpi_values['Espera Média (Total)'], (int, float)) else 'N/A'},
-                {'label': '% Tempo em Espera', 'value': f"{kpi_values['% Tempo em Espera']:.1f}%" if isinstance(kpi_values['% Tempo em Espera'], (int, float)) else 'N/A'}
+                {'label': 'Duração Média', 'value': fmt(dur_media, "{:.1f} dias")},
+                {'label': 'Custo Médio', 'value': fmt(self.kpis.get('Custo Médio'), "€{:,.0f}")},
+                {'label': 'Desvio Custo Médio', 'value': fmt(self.kpis.get('Desvio de Custo Médio'), "€{:,.0f}")},
+                {'label': '% Processos Atrasados', 'value': fmt(self.delay_kpis.get('% Processos Atrasados'), "{:.1f}%")},
+                {'label': 'Atraso Médio dos Atrasados', 'value': fmt(self.delay_kpis.get('Atraso Médio (dias)'), "{:.1f} dias")},
+                {'label': 'Desvio Médio face ao Plano', 'value': fmt(self.delay_kpis.get('Desvio Médio face ao Plano (dias)'), "{:+.1f} dias")},
+                {'label': 'Espera Média por Processo', 'value': fmt(espera_proc, "{:.1f} dias")},
+                {'label': '% Tempo em Espera', 'value': fmt(perc_espera, "{:.1f}%")},
             ]
-            self.insights['saude_geral'] = kpi_geral
-
+            kpi_req = {'Custo Médio': {'CUSTO'}, 'Desvio Custo Médio': {'CUSTO', 'ORCAMENTO'},
+                       '% Processos Atrasados': {'PLANO'}, 'Atraso Médio dos Atrasados': {'PLANO'},
+                       'Desvio Médio face ao Plano': {'PLANO'}, 'Espera Média por Processo': {'TEMPOS'}, '% Tempo em Espera': {'TEMPOS'}}
+            self.insights['saude_geral'] = [k for k in kpi_geral if caps_ok(kpi_req.get(k['label'], set()), self.caps)]
         except Exception as e: print(f"Erro em _check_kpis: {e}")
 
     def _check_custos_atrasos_facts(self):
@@ -2561,11 +3085,7 @@ class DiagnosticEngineV5:
             # Usa o valor calculado e guardado em _check_kpis
             perc_espera = self.kpis.get('% Tempo em Espera', None)
             if perc_espera is not None: # Verifica se o KPI foi calculado
-                if perc_espera < 5 and self.narrative_flags.get('has_rework'):
-                    self._add_insight(section, 'Observação: Limitação do KPI "% Tempo em Espera"',
-                                      f"O KPI '% Tempo em Espera' ({perc_espera:.1f}%) é baixo porque mede apenas a espera *entre passos sequenciais*. Ele não captura o tempo significativo perdido em ciclos de **rework** (fluxos para trás), visíveis na Matriz de Espera.",
-                                      "KPIs Saúde Geral, Cartão 58", level='facto', priority=6) # Alterado para Observação/Facto
-                elif perc_espera > 40:
+                if perc_espera > 40:
                     self._add_insight(section, "Alerta: Processo Dominado por Espera em Fila",
                                       f"Mais de {perc_espera:.0f}% da duração total é consumida por tempos de espera *entre tarefas sequenciais* (filas).",
                                       "KPIs Saúde Geral", level='problema', priority=6)
@@ -2581,6 +3101,23 @@ class DiagnosticEngineV5:
 
                 for i, loop in enumerate(loops[1:]):
                      self._add_insight(section, f'Alerta: Rework Adicional #{i+1}', f"'{loop['loop']}' (espera de {loop['wait_days']*24:.1f} horas).", "Cartão 58", level='problema', priority=8)
+
+        # Rework pontual (existe mas afeta < 5% dos processos)
+        if self.narrative_flags.get('has_rework_pontual'):
+            loops = self.narrative_flags.get('rework_loops', [])
+            pct = self.narrative_flags.get('rework_case_pct', 0)
+            if loops:
+                self._add_insight(section, 'Observação: Rework Pontual',
+                                  f"Existe retrabalho, mas só em {pct:.1f}% dos processos. Quando acontece, o retorno mais demorado é '{loops[0]['loop']}' (espera média de {loops[0]['wait_days']*24:.1f} horas). Não é a causa principal da duração.",
+                                  "Cartão 58, Cartão 70", level='facto', priority=9)
+            else:
+                self._add_insight(section, 'Observação: Rework Pontual',
+                                  f"Existe retrabalho (atividades repetidas), mas só em {pct:.1f}% dos processos.",
+                                  "Cartão 70", level='facto', priority=9)
+        if self.narrative_flags.get('has_rework_freq_sem_tempos'):
+            self._add_insight(section, 'Alerta: Rework Frequente',
+                              f"{self.narrative_flags.get('rework_case_pct', 0):.1f}% dos processos repetem pelo menos uma atividade. Sem datas de início/fim não é possível medir o tempo perdido.",
+                              "Cartão 70", level='problema', priority=7)
 
         # Factos sobre Filas (se detetadas)
         if self.narrative_flags.get('has_high_queues'):
@@ -2628,13 +3165,13 @@ class DiagnosticEngineV5:
             if self.narrative_flags.get('is_chaotic'):
                 prec = self.narrative_flags.get('precision', 0)
                 # --- CORREÇÃO FORMAT % V10 ---
-                top_1_p = self.narrative_flags.get('top_1_variant_perc', 0) * 100
-                top_10_p = self.narrative_flags.get('top_10_variant_perc', 0) * 100
+                top_1_p = self.narrative_flags.get('top_1_variant_perc', 0)  # já está em %
+                top_10_p = self.narrative_flags.get('top_10_variant_perc', 0)  # já está em %
                 self._add_insight(section, 'Alerta: Baixa Padronização (Processo Caótico)', f"O processo é pouco padronizado e caótico. Precisão do Modelo: {prec:.1%}. Variante Top 1: {top_1_p:.1f}%. Top 10 Variantes: {top_10_p:.1f}%.", "Cartão 61, Cartão 65", level='problema', priority=8)
             elif self.narrative_flags.get('is_standardized'):
                 prec = self.narrative_flags.get('precision', 0)
-                top_1_p = self.narrative_flags.get('top_1_variant_perc', 0) * 100
-                self._add_insight(section, 'Destaque: Alta Padronização', f"O processo é altamente padronizado (Precisão: {prec:.1%}, Variante Top 1: {top_1_p:.1f}%).", "Cartão 61, Cartão 65", level='facto')
+                top_1_p = self.narrative_flags.get('top_1_variant_perc', 0)  # já está em %
+                self._add_insight(section, 'Destaque: Alta Padronização', f"O processo é altamente padronizado: {top_1_p:.1f}% dos processos seguem exatamente a mesma sequência de atividades.", "Cartão 61, Cartão 65", level='facto')
 
             # Contextualizar a baixa precisão com o rework (sem criticar)
             if self.narrative_flags.get('is_chaotic') and self.narrative_flags.get('has_rework'):
@@ -2655,6 +3192,8 @@ class DiagnosticEngineV5:
                 else:
                      self._add_insight(section, 'Facto: Rework Confirmado por Múltiplas Análises', "Tanto a Matriz de Espera (Cartão 58) como a Tabela de Loops (Cartão 70) indicam a presença de ciclos de retrabalho.", "Cartão 58, Cartão 70", level='facto')
             # Se a Matriz NÃO mostra rework
+            elif self.narrative_flags.get('has_rework_pontual'):
+                 pass  # já reportado como 'Rework Pontual' na secção de gargalos
             elif not df_rework_table.empty:
                  # Mas a Tabela mostra (improvável, mas possível dependendo das definições)
                  self._add_insight(section, 'Observação: Loops Específicos Detetados (Tabela)', "A Tabela de Loops (Cartão 70) deteta sequências A->...->A, embora a Matriz de Espera (Cartão 58) não mostre fluxos de retorno significativos entre fases.", "Cartão 70, Cartão 58", level='facto')
@@ -2712,7 +3251,7 @@ def render_diagnostics_page():
 
     # --- Execução do Motor ---
     try:
-        engine = DiagnosticEngineV5(tables_pre, metrics, data_frames, tables_eda)
+        engine = DiagnosticEngineV5(tables_pre, metrics, data_frames, tables_eda, caps=st.session_state.get('caps'))
         report = engine.run()
     except Exception as e:
         st.error(f"Erro ao executar o motor de diagnóstico: {e}")
@@ -2723,12 +3262,11 @@ def render_diagnostics_page():
     st.markdown("---")
     st.markdown("<h4>1. Saúde Geral (KPIs de Baseline)</h4>", unsafe_allow_html=True)
     kpi_data = report.get('saude_geral', [])
-    if kpi_data and len(kpi_data) == 6:
-        cols1 = st.columns(3)
-        cols2 = st.columns(3)
-        for i, kpi in enumerate(kpi_data):
-            target_col = cols1[i] if i < 3 else cols2[i-3]
-            target_col.metric(label=kpi['label'], value=kpi['value'])
+    if kpi_data:
+        for start in range(0, len(kpi_data), 4):
+            row = st.columns(4)
+            for col, kpi in zip(row, kpi_data[start:start+4]):
+                col.metric(label=kpi['label'], value=kpi['value'])
     else: st.warning("Não foi possível calcular os KPIs de Saúde Geral.")
 
     # --- Bloco 2: Resumo Executivo e Recomendações (igual) ---
@@ -2806,6 +3344,92 @@ def login_page():
 
 
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
+
+def _upload_multi_files():
+    """Modo 'vários ficheiros': devolve o dict raw com as tabelas carregadas, ou None se faltar tasks."""
+    st.info("Carregue os ficheiros que tiver. Só o ficheiro de **tarefas** é obrigatório; com os 5 ficheiros a análise fica completa. "
+            "A app deteta automaticamente que análises os seus dados permitem e esconde as restantes.")
+    # Dicionário com os textos para as tooltips
+    tooltips = {
+        'projects': "OPCIONAL. 1 linha por processo. Colunas: project_id; recomendadas: project_name, start_date, end_date, planned_end_date (ativa a análise de atrasos), budget_impact (ativa a análise de orçamento), project_status, path_name. Se não existir, início/fim de cada processo são derivados das tarefas.",
+        'tasks': "OBRIGATÓRIO. 1 linha por tarefa. Colunas mínimas: project_id, task_name e uma data (start_date ou end_date). Com start_date E end_date ativam-se os tempos de execução e espera. Opcionais: task_id, task_type, priority, estimated_effort. Se não tiver resource_allocations, pode indicar aqui quem fez a tarefa com uma coluna resource_name (ou resource_id) e opcionalmente resource_type (função); várias pessoas separadas por ';'.",
+        'resources': "OPCIONAL. 1 linha por recurso: resource_id, resource_name, resource_type (função), cost_per_hour (ativa custos), daily_capacity, skill_level (ativa competências).",
+        'resource_allocations': "OPCIONAL. Horas efetivamente trabalhadas: task_id, resource_id, allocation_date, hours_worked. Ativa as análises de esforço, eficiência e (com cost_per_hour) custos.",
+        'dependencies': "OPCIONAL. project_id, task_id_predecessor, task_id_successor. Se não existir, a sequência é derivada da ordem das tarefas."
+    }
+    file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
+    labels = {'projects': 'projects.csv', 'tasks': 'tasks.csv ★', 'resources': 'resources.csv',
+              'resource_allocations': 'resource_allocations.csv', 'dependencies': 'dependencies.csv'}
+
+    upload_cols = st.columns(5)
+    for i, name in enumerate(file_names):
+        with upload_cols[i]:
+            uploaded_file = st.file_uploader(f"Carregar `{labels[name]}`", type="csv", key=f"upload_{name}", help=tooltips[name])
+            if uploaded_file:
+                df = pd.read_csv(uploaded_file)
+                # ids como string e datas em datetime; o resto é tratado na normalização (normalize_inputs)
+                for id_col in ['project_id', 'task_id', 'resource_id']:
+                    if id_col in df.columns:
+                        df[id_col] = df[id_col].astype(str)
+                for date_col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
+                    if date_col in df.columns:
+                        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+                st.session_state.dfs[name] = df
+                st.markdown(f'<p style="font-size: small; color: #198754;">✓ {len(df):,} linhas</p>', unsafe_allow_html=True)
+            else:
+                st.session_state.dfs[name] = None
+
+    raw = {k: v for k, v in st.session_state.dfs.items() if v is not None}
+    if 'tasks' not in raw:
+        st.warning("Carregue pelo menos o ficheiro de tarefas (tasks.csv) para poder iniciar a análise.")
+        return None
+    return raw
+
+def _upload_single_log():
+    """Modo 'log único': upload de 1 ficheiro + mapeamento de colunas. Devolve raw ou None."""
+    up = st.file_uploader("Carregar event log (CSV, Excel ou XES)", type=['csv', 'txt', 'xlsx', 'xls', 'xes'], key="upload_single_log",
+                          help="Uma linha por tarefa (com início e fim) ou uma linha por evento. O separador do CSV é detetado automaticamente.")
+    if not up:
+        st.info("Carregue um ficheiro. Colunas mínimas: identificador do processo, atividade e uma data.")
+        return None
+    sig = (up.name, up.size)
+    if st.session_state.get('_log_sig') != sig:
+        try:
+            st.session_state['_log_df'] = read_any_table(up)
+        except Exception as e:
+            st.error(f"Não foi possível ler o ficheiro: {e}")
+            return None
+        st.session_state['_log_sig'] = sig
+        st.session_state['_log_map'] = guess_log_mapping(st.session_state['_log_df'].columns)
+    df = st.session_state['_log_df']
+    st.caption(f"✓ {len(df):,} linhas · {len(df.columns)} colunas")
+    with st.expander("Pré-visualizar o ficheiro", expanded=False):
+        st.dataframe(df.head(10))
+
+    st.markdown("**Mapeamento de colunas** — confirme ou corrija o que a app sugeriu. Campos com * são obrigatórios; "
+                "para as datas basta uma (início ou fim). Os restantes são opcionais e desbloqueiam análises adicionais.")
+    options = ['— (não existe)'] + [str(c) for c in df.columns]
+    guess = st.session_state.get('_log_map', {})
+    mapping = {}
+    cols = st.columns(3)
+    for i, (key, label, required, _) in enumerate(LOG_FIELDS):
+        default = guess.get(key)
+        idx = options.index(str(default)) if default is not None and str(default) in options else 0
+        choice = cols[i % 3].selectbox(label + (" *" if required else ""), options, index=idx, key=f"map_{key}")
+        if choice != options[0]:
+            mapping[key] = df.columns[[str(c) for c in df.columns].index(choice)]
+    dup = [c for c in set(mapping.values()) if list(mapping.values()).count(c) > 1]
+    if dup:
+        st.warning(f"A mesma coluna está mapeada para mais de um campo: {', '.join(map(str, dup))}.")
+    try:
+        raw, warns = log_to_raw(df, mapping)
+    except ValueError as e:
+        st.warning(str(e))
+        return None
+    for w in warns:
+        st.caption(f"ℹ️ {w}")
+    return raw
+
 def settings_page():
     st.title("⚙️ Configurações e Upload de Dados")
     st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
@@ -2817,90 +3441,77 @@ def settings_page():
 
     st.markdown("---") # Para separar visualmente
     st.markdown("---")
-    st.subheader("Upload dos Ficheiros de Dados (.csv)")
-    st.info("Por favor, carregue os 5 ficheiros CSV necessários para a análise.")
-    # Dicionário com os textos para as tooltips
-    tooltips = {
-        'projects': "Ficheiro mestre (1 linha por processo). Colunas essenciais: project_id (ID único), start_date, end_date. Colunas recomendadas: project_name, planned_end_date, budget_impact (custo planeado), project_status. Colunas opcionais: complexity_score (numérico), ou outras métricas.",
-        'tasks': "Log de eventos (1 linha por tarefa). Colunas essenciais: task_id (ID único), project_id (liga ao processo), task_name (nome da atividade), start_date, end_date. Colunas recomendadas: task_type (categoria da tarefa), priority (numérico 1-5), estimated_effort (em dias).",
-        'resources': "Tabela de recursos (1 linha por recurso). Colunas essenciais: resource_id (ID único), resource_name, resource_type (função, ex: 'Analista'), cost_per_hour (numérico), daily_capacity (numérico, horas/dia).",
-        'resource_allocations': "Registo de trabalho diário (liga recursos a tarefas). Colunas essenciais: allocation_id (ID único), task_id, resource_id, project_id, allocation_date (data do trabalho), hours_worked (numérico).",
-        'dependencies': "Define a sequência do fluxo. Colunas essenciais: dependency_id (ID único), project_id, task_id_predecessor (ID da tarefa anterior), task_id_successor (ID da tarefa seguinte)."
-    }
-    file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
-    
-    upload_cols = st.columns(5)
-    for i, name in enumerate(file_names):
-        with upload_cols[i]:
-            uploaded_file = st.file_uploader(
-                f"Carregar `{name}.csv`", 
-                type="csv", 
-                key=f"upload_{name}",
-                help=tooltips[name]
-            )
-            if uploaded_file:
-                # normalização mínima após upload
-                df = pd.read_csv(uploaded_file)
-                
-                # ids como string onde existam
-                for id_col in ['project_id', 'task_id', 'resource_id']:
-                    if id_col in df.columns:
-                        df[id_col] = df[id_col].astype(str)
-                
-                # colunas numéricas importantes: forçar numeric e preencher NaN com 0
-                for num_col in ['hours_worked', 'cost_per_hour', 'daily_capacity', 'estimated_effort', 'priority', 'budget_impact']:
-                    if num_col in df.columns:
-                        df[num_col] = pd.to_numeric(df[num_col], errors='coerce').fillna(0)
-                
-                # Adiciona performance_factor se não existir
-                if name == 'resources' and 'performance_factor' not in df.columns:
-                    df['performance_factor'] = 1.0
-
-                # datas: parse imediato
-                for date_col in ['start_date', 'end_date', 'planned_end_date', 'allocation_date']:
-                    if date_col in df.columns:
-                        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-                
-                st.session_state.dfs[name] = df
-                st.markdown(f'<p style="font-size: small; color: #06B6D4;">`{name}.csv` carregado e normalizado.</p>', unsafe_allow_html=True)
-
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    all_files_uploaded = all(st.session_state.dfs.get(name) is not None for name in file_names)
-    
-    if all_files_uploaded:
-        if st.toggle("Visualizar as primeiras 5 linhas dos ficheiros", value=False):
-            for name, df in st.session_state.dfs.items():
-                st.markdown(f"**Ficheiro: `{name}.csv`**")
-                st.dataframe(df.head())
-        
-        st.subheader("Execução da Análise")
-        st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
-        if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
-            with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
-                plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(st.session_state.dfs)
-                st.session_state.plots_pre_mining = plots_pre
-                st.session_state.tables_pre_mining = tables_pre
-                st.session_state.data_frames_processed = {
-                    'projects': df_p,
-                    'tasks': df_t,
-                    'resources': df_r,
-                    'full_context': df_fc
-                }
-                log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
-                plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
-                st.session_state.plots_post_mining = plots_post
-                st.session_state.metrics = metrics
-                plots_eda, tables_eda = run_eda_analysis(st.session_state.dfs)
-                st.session_state.plots_eda = plots_eda
-                st.session_state.tables_eda = tables_eda
-
-            st.session_state.analysis_run = True
-            st.success("✅ Análise concluída! Navegue para o 'Process Mining' ou para a página de 'Reinforcement Learning'.")
-            st.balloons()
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.subheader("Upload dos Dados")
+    modo = st.radio("Como estão os seus dados?",
+                    ["Vários ficheiros (até 5 tabelas)", "Um único ficheiro (event log)"],
+                    horizontal=True, key="modo_upload",
+                    help="Vários ficheiros: projects, tasks, resources, resource_allocations, dependencies (só tasks é obrigatório). "
+                         "Event log: um ficheiro CSV, Excel ou XES com uma linha por tarefa ou por evento.")
+    if modo.startswith("Um único"):
+        raw = _upload_single_log()
     else:
-        st.warning("Aguardando o carregamento de todos os ficheiros CSV para poder iniciar a análise.")
+        raw = _upload_multi_files()
+    if raw is None:
+        return
+
+    sla_days = st.number_input("SLA / prazo-alvo por processo (dias) — opcional, usado só se não houver planned_end_date",
+                               min_value=0, max_value=3650, value=int(st.session_state.get('sla_days', 0) or 0), step=1,
+                               help="Permite analisar atrasos quando os dados não têm data planeada. 0 = não usar.")
+    st.session_state.sla_days = sla_days
+
+
+    # --- Painel de capacidades: o que estes dados permitem analisar ---
+    try:
+        dfs_norm, caps, notes = normalize_inputs(raw, sla_days=sla_days or None)
+    except Exception as e:
+        st.error(f"Não foi possível interpretar os ficheiros: {e}")
+        return
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("Dados detetados: o que é possível analisar")
+    cap_cols = st.columns(2)
+    for idx, (cap, (titulo, requisito)) in enumerate(CAPS_INFO.items()):
+        ok = cap in caps
+        icon = "✅" if ok else "❌"
+        txt = f"{icon} **{titulo}**" + ("" if ok else f" — falta: {requisito}")
+        cap_cols[idx % 2].markdown(txt)
+    for n in notes:
+        st.caption(f"ℹ️ {n}")
+
+    if st.toggle("Visualizar as primeiras 5 linhas dos ficheiros", value=False):
+        for name, df in raw.items():
+            st.markdown(f"**Ficheiro: `{name}.csv`**")
+            st.dataframe(df.head())
+
+    st.subheader("Execução da Análise")
+    st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
+    if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
+        with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
+            st.session_state.dfs_norm = dfs_norm
+            st.session_state.caps = caps
+            st.session_state.caps_notes = notes
+            plots_pre, tables_pre, event_log, df_p, df_t, df_r, df_fc = run_pre_mining_analysis(dfs_norm)
+            st.session_state.plots_pre_mining = plots_pre
+            st.session_state.tables_pre_mining = tables_pre
+            st.session_state.data_frames_processed = {
+                'projects': df_p,
+                'tasks': df_t,
+                'resources': df_r,
+                'full_context': df_fc
+            }
+            log_from_df = pm4py.convert_to_event_log(pm4py.convert_to_dataframe(event_log))
+            plots_post, metrics = run_post_mining_analysis(log_from_df, df_p, df_t, df_r, df_fc)
+            st.session_state.plots_post_mining = plots_post
+            st.session_state.metrics = metrics
+            plots_eda, tables_eda = run_eda_analysis(dfs_norm)
+            st.session_state.plots_eda = plots_eda
+            st.session_state.tables_eda = tables_eda
+            st.session_state.pop('rl_sample_ids', None)
+            st.session_state.rl_analysis_run = False
+
+        st.session_state.analysis_run = True
+        st.success("✅ Análise concluída! Navegue para o 'Process Mining' ou para a página de 'Reinforcement Learning'.")
+        st.balloons()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # --- FUNÇÃO AUXILIAR PARA GERAR O PDF ---
 def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda):
@@ -3254,11 +3865,7 @@ def dashboard_page():
                 with st.spinner("Gerando PDF... Este processo pode demorar."):
                     try:
                         # Reúne os dados necessários DENTRO do clique
-                        plots_pre = st.session_state.plots_pre_mining
-                        tables_pre = st.session_state.tables_pre_mining
-                        plots_post = st.session_state.plots_post_mining
-                        plots_eda = st.session_state.plots_eda
-                        tables_eda = st.session_state.tables_eda
+                        plots_pre, tables_pre, plots_post, plots_eda, tables_eda = get_visible_outputs()
                         pdf_bytes_output = generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda)
 
                         # Verifica se a geração foi bem-sucedida
@@ -3329,11 +3936,7 @@ def dashboard_page():
                 _error = None
                 try:
                     # Gerar PDF
-                    _plots_pre = st.session_state.plots_pre_mining
-                    _tables_pre = st.session_state.tables_pre_mining
-                    _plots_post = st.session_state.plots_post_mining
-                    _plots_eda = st.session_state.plots_eda
-                    _tables_eda = st.session_state.tables_eda
+                    _plots_pre, _tables_pre, _plots_post, _plots_eda, _tables_eda = get_visible_outputs()
                     _pdf_bytes = generate_pdf_report(_plots_pre, _tables_pre, _plots_post, _plots_eda, _tables_eda)
                     if _pdf_bytes and len(_pdf_bytes) > 100:
                         _pdf_ok = True
@@ -3413,11 +4016,12 @@ def dashboard_page():
     
     st.markdown("<hr style='margin-top: 25px; margin-bottom: 25px; border-color: var(--border-color);'>", unsafe_allow_html=True)
     
-    plots_pre = st.session_state.plots_pre_mining
-    tables_pre = st.session_state.tables_pre_mining
-    plots_post = st.session_state.plots_post_mining
-    plots_eda = st.session_state.plots_eda
-    tables_eda = st.session_state.tables_eda
+    plots_pre, tables_pre, plots_post, plots_eda, tables_eda = get_visible_outputs()
+    caps = st.session_state.get('caps')
+    if caps is not None:
+        missing = [CAPS_INFO[c][0] for c in CAPS_INFO if c not in caps]
+        if missing:
+            st.caption("ℹ️ Algumas análises estão escondidas porque os dados não as suportam: " + ", ".join(missing) + ". Veja o detalhe em Configurações.")
 
     if st.session_state.current_section == "diagnostico":
         render_diagnostics_page()
@@ -3425,11 +4029,11 @@ def dashboard_page():
     if st.session_state.current_section == "visao_geral":
         st.subheader("1. Visão Geral e Custos")
         kpi_data = tables_pre.get('kpi_data', {})
-        kpi_cols = st.columns(4)
-        kpi_cols[0].metric(label="Total de Processos", value=kpi_data.get('Total de Processos'))
-        kpi_cols[1].metric(label="Total de Tarefas", value=kpi_data.get('Total de Tarefas'))
-        kpi_cols[2].metric(label="Total de Recursos", value=kpi_data.get('Total de Recursos'))
-        kpi_cols[3].metric(label="Duração Média", value=f"{kpi_data.get('Duração Média (dias)')} dias")
+        top_kpis = [("Total de Processos", kpi_data.get('Total de Processos')), ("Total de Tarefas", kpi_data.get('Total de Tarefas'))]
+        if caps_ok({'RECURSOS'}, caps): top_kpis.append(("Total de Recursos", kpi_data.get('Total de Recursos')))
+        top_kpis.append(("Duração Média", f"{kpi_data.get('Duração Média (dias)')} dias"))
+        for col, (lbl, val) in zip(st.columns(len(top_kpis)), top_kpis):
+            col.metric(label=lbl, value=val)
         
         kpi_delay_data = tables_pre.get('cost_of_delay_kpis', {})
 
@@ -3437,10 +4041,14 @@ def dashboard_page():
         mean_delay = float(kpi_delay_data.get('Atraso Médio (dias)', 0.0) or 0.0)
         mean_cost_day = float(kpi_delay_data.get('Custo Médio/Dia Atraso', 0.0) or 0.0)
         
-        kpi_cols_2 = st.columns(3)
-        kpi_cols_2[0].metric(label="Custo Total em Atraso", value=f"€{total_cost:,.2f}")
-        kpi_cols_2[1].metric(label="Atraso Médio (dias)", value=f"{mean_delay:.1f}")
-        kpi_cols_2[2].metric(label="Custo Médio/Dia de Atraso", value=f"€{mean_cost_day:,.2f}")
+        perc_late = float(kpi_delay_data.get('% Processos Atrasados', 0.0) or 0.0)
+        mean_dev = float(kpi_delay_data.get('Desvio Médio face ao Plano (dias)', 0.0) or 0.0)
+        if caps_ok({'PLANO'}, caps):
+            kpis2 = [("% Processos Atrasados", f"{perc_late:.1f}%", None), ("Atraso Médio dos Atrasados", f"{mean_delay:.1f} dias", None),
+                     ("Desvio Médio face ao Plano", f"{mean_dev:+.1f} dias", "Negativo = termina antes do planeado")]
+            if caps_ok({'CUSTO'}, caps): kpis2.append(("Custo Total dos Processos Atrasados", f"€{total_cost:,.2f}", None))
+            for col, (lbl, val, hlp) in zip(st.columns(len(kpis2)), kpis2):
+                col.metric(label=lbl, value=val, help=hlp)
 
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
@@ -3590,10 +4198,18 @@ def rl_page():
         st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Configurações' para carregar os dados.")
         return
 
+    caps = st.session_state.get('caps')
+    if not caps_ok({'TEMPOS', 'RECURSOS'}, caps):
+        st.warning("A simulação precisa de datas de início e fim por tarefa **e** de saber quem executou cada tarefa. "
+                   "Os dados carregados não têm essa informação (ver 'Dados detetados' em Configurações).")
+        return
+    if not caps_ok({'ESFORCO'}, caps):
+        st.info("ℹ️ Sem horas trabalhadas: o esforço de cada tarefa é estimado em 8h por dia útil de duração. Os resultados são indicativos.")
+
     #  CRIAR A AMOSTRA DE RL APENAS UMA VEZ ---
     # Se a amostra de IDs ainda não foi criada, cria-a e guarda-a no estado da sessão.
     if 'rl_sample_ids' not in st.session_state:
-        proj_ids = st.session_state.dfs['projects']['project_id'].astype(str)
+        proj_ids = st.session_state.get('dfs_norm', st.session_state.dfs)['projects']['project_id'].astype(str)
         n = min(100, len(proj_ids))
         st.session_state['rl_sample_ids'] = proj_ids.sample(n=n, random_state=42).tolist()
 
@@ -3661,7 +4277,7 @@ def rl_page():
             status_text.info("A iniciar o treino do agente de RL...")
     
             plots_rl, tables_rl, logs_rl = run_rl_analysis(
-                st.session_state.dfs,
+                st.session_state.get('dfs_norm', st.session_state.dfs),
                 project_id_to_simulate,
                 num_episodes,
                 reward_config,
