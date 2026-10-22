@@ -3392,7 +3392,7 @@ def login_page():
 
 def _upload_multi_files():
     """Modo 'vários ficheiros': devolve o dict raw com as tabelas carregadas, ou None se faltar tasks."""
-    st.info("Carregue os ficheiros que tiver. Só o ficheiro de **tarefas** é obrigatório; com os 5 ficheiros a análise fica completa. "
+    st.info("Carregue os ficheiros que tiver. Só o ficheiro de **tarefas** é obrigatório; com os 4 ficheiros a análise fica completa. "
             "A app deteta automaticamente que análises os seus dados permitem e esconde as restantes.")
     # Dicionário com os textos para as tooltips
     tooltips = {
@@ -3487,7 +3487,7 @@ def settings_page():
     st.markdown("---")
     st.subheader("Upload dos Dados")
     modo = st.radio("Como estão os seus dados?",
-                    ["Vários ficheiros (até 5 tabelas)", "Um único ficheiro (event log)"],
+                    ["Vários ficheiros (até 4 tabelas)", "Um único ficheiro (event log)"],
                     horizontal=True, key="modo_upload",
                     help="Vários ficheiros: projects, tasks, resources, resource_allocations (só tasks é obrigatório). A sequência das tarefas é a observada nas datas. "
                          "Event log: um ficheiro CSV, Excel ou XES com uma linha por tarefa ou por evento.")
@@ -5149,31 +5149,84 @@ def _llm_settings():
     get = lambda k: st.session_state.get(f'llm_{k}') or sec.get(k.upper()) or os.environ.get(k.upper())
     keys = {'Anthropic (Claude)': st.session_state.get('llm_key_anthropic') or sec.get('ANTHROPIC_API_KEY') or os.environ.get('ANTHROPIC_API_KEY'),
             'Google (Gemini)': st.session_state.get('llm_key_gemini') or sec.get('GEMINI_API_KEY') or sec.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')}
-    prov = get('provider') or next((p for p, v in keys.items() if v), 'Anthropic (Claude)')
+    prov = get('provider') or next((p for p in ['Google (Gemini)', 'Anthropic (Claude)'] if keys[p]), 'Google (Gemini)')
     if prov not in keys: prov = 'Anthropic (Claude)' if 'anthropic' in str(prov).lower() or 'claude' in str(prov).lower() else 'Google (Gemini)'
     default_model = {'Anthropic (Claude)': 'claude-sonnet-5-5', 'Google (Gemini)': 'gemini-2.5-flash'}[prov]
     model = st.session_state.get('llm_model') or sec.get('ANTHROPIC_MODEL' if prov.startswith('Anthropic') else 'GEMINI_MODEL') or default_model
-    return {'provider': prov, 'key': keys[prov], 'model': model}
+    key = keys[prov]
+    bad = bool(key) and st.session_state.get('llm_bad_key') == key
+    return {'provider': prov, 'key': None if bad else key, 'model': model, 'bad_key': bad}
+
+
+class LLMError(Exception):
+    pass
+
+
+def _llm_friendly(status, txt, provider):
+    t = (txt or '').lower()
+    if status in (401, 403) or 'api key not valid' in t or 'api_key_invalid' in t or 'api key' in t or 'api_key' in t or 'authentication' in t or 'permission' in t:
+        return 'chave', f"A chave de API do {provider} não é válida (ou foi revogada). Confirme a chave em Configurar IA ou nos Secrets."
+    if any(w in t for w in ['max retries', 'connection', 'proxy', 'timed out', 'name resolution']) and not status:
+        return 'rede', "Não foi possível ligar ao serviço de IA (sem acesso à internet a partir do servidor, ou serviço em baixo). Tente novamente dentro de instantes."
+    if status == 429 or 'quota' in t or 'rate limit' in t or 'resource_exhausted' in t or 'resource has been exhausted' in t:
+        return 'limite', "Limite de utilização atingido (quota ou demasiados pedidos). Aguarde um minuto ou verifique o saldo/plano da conta."
+    if status == 404 or ('model' in t and 'not found' in t):
+        return 'modelo', "O modelo indicado não existe ou não está disponível nesta conta. Deixe o campo Modelo vazio (predefinido) ou escolha outro."
+    if status in (400,) and ('credit' in t or 'billing' in t or 'balance' in t):
+        return 'saldo', "A conta não tem saldo/crédito disponível. Carregue saldo na consola do fornecedor."
+    if (status and status >= 500) or 'overloaded' in t:
+        return 'servico', "O serviço de IA está temporariamente indisponível. Tente novamente dentro de instantes."
+    return 'outro', "Não foi possível contactar o serviço de IA. Tente novamente; se persistir, verifique a configuração."
 
 
 def call_llm(system, messages, json_mode=False, max_tokens=3000):
-    """messages: [{'role': 'user'|'assistant', 'content': str}]. Devolve texto."""
+    """messages: [{'role': 'user'|'assistant', 'content': str}]. Devolve texto. Erros -> LLMError com mensagem clara."""
     cfg = _llm_settings()
     if not cfg['key']:
-        raise RuntimeError("Não há chave de API configurada.")
+        raise LLMError("Não há chave de API configurada.")
+    try:
+        return _call_llm_raw(cfg, system, messages, json_mode, max_tokens)
+    except LLMError:
+        raise
+    except Exception as e:
+        status = getattr(e, 'status_code', None) or getattr(getattr(e, 'response', None), 'status_code', None) or getattr(e, 'code', None)
+        try: status = int(status)
+        except (TypeError, ValueError): status = None
+        kind, msg = _llm_friendly(status, str(e), cfg['provider'])
+        if kind == 'chave': st.session_state['llm_bad_key'] = cfg['key']
+        print(f"[IA] erro {status}: {e}")
+        raise LLMError(msg)
+
+
+def _call_llm_raw(cfg, system, messages, json_mode, max_tokens):
     if cfg['provider'].startswith('Anthropic'):
         import requests
         r = requests.post('https://api.anthropic.com/v1/messages', timeout=180,
                           headers={'x-api-key': cfg['key'], 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
                           json={'model': cfg['model'], 'max_tokens': max_tokens, 'system': system, 'messages': messages})
         if r.status_code != 200:
-            raise RuntimeError(f"Erro da API ({r.status_code}): {r.text[:300]}")
+            kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
+            if kind == 'chave': st.session_state['llm_bad_key'] = cfg['key']
+            print(f"[IA] erro {r.status_code}: {r.text[:300]}")
+            raise LLMError(msg)
         return ''.join(b.get('text', '') for b in r.json().get('content', []) if b.get('type') == 'text')
-    genai.configure(api_key=cfg['key'])
-    model = genai.GenerativeModel(cfg['model'], system_instruction=system)
-    contents = [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [m['content']]} for m in messages]
-    resp = model.generate_content(contents, generation_config={'max_output_tokens': max_tokens, **({'response_mime_type': 'application/json'} if json_mode else {})})
-    return resp.text
+    # Gemini por REST (com timeout e erros HTTP claros; a biblioteca google-generativeai está descontinuada)
+    import requests
+    body = {'systemInstruction': {'parts': [{'text': system}]},
+            'contents': [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [{'text': m['content']}]} for m in messages],
+            'generationConfig': {'maxOutputTokens': max_tokens, **({'responseMimeType': 'application/json'} if json_mode else {})}}
+    r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['model']}:generateContent", timeout=120,
+                      headers={'x-goog-api-key': cfg['key'], 'content-type': 'application/json'}, json=body)
+    if r.status_code != 200:
+        kind, msg = _llm_friendly(r.status_code, r.text, cfg['provider'])
+        if kind == 'chave' or (r.status_code == 400 and 'api key' in r.text.lower()): st.session_state['llm_bad_key'] = cfg['key']
+        print(f"[IA] erro {r.status_code}: {r.text[:300]}")
+        raise LLMError(msg)
+    cand = (r.json().get('candidates') or [{}])[0]
+    txt = ''.join(pt.get('text', '') for pt in cand.get('content', {}).get('parts', []))
+    if not txt:
+        raise LLMError("A IA não devolveu texto (possível bloqueio de conteúdo ou limite de tamanho). Tente novamente.")
+    return txt
 
 
 def _parse_json(txt):
@@ -5268,7 +5321,7 @@ def render_ai_section(caps):
     report = get_diag_report()
     ui_section_intro("O que se passa e o que fazer?", "Leitura para decisão: o veredicto, as prioridades ordenadas por impacto e onde ver a evidência. Usa sempre todos os dados (ignora filtros).")
     cfg = _llm_settings()
-    anon = st.session_state.get('llm_anon', True)
+    anon = True  # nomes de pessoas são sempre substituídos pela função (ex.: "Analista de Risco #3")
     facts = build_process_facts(V, caps, report, anonymize=anon)
     facts_json = json.dumps(facts, ensure_ascii=False, default=str)
     sig = hash(facts_json + cfg['provider'] + cfg['model'])
@@ -5276,9 +5329,13 @@ def render_ai_section(caps):
     c1, c2, c3 = st.columns([3.2, 1.4, 1.4], vertical_alignment='center')
     with c1:
         if cfg['key']:
-            st.caption(f"IA: {cfg['provider']} · {cfg['model']} · envia apenas números agregados" + (" (nomes de pessoas anonimizados)" if anon else ""))
+            st.caption(f"IA: {cfg['provider']} · {cfg['model']} · envia apenas números agregados, sem nomes de pessoas")
         else:
-            st.caption("Sem chave de IA configurada: a leitura abaixo é feita por regras. Configure a IA para uma leitura redigida e para fazer perguntas.")
+            if cfg.get('bad_key'):
+                st.markdown("<div class='pm-note' style='border-color:#fecaca;background:#fef2f2;color:#991b1b'><i class='bi bi-key'></i> A chave de IA configurada foi recusada pelo fornecedor. "
+                            "A leitura abaixo é feita por regras. Corrija a chave em <b>Configurar IA</b> (fundo da página) ou use <b>Exportar para IA externa</b>.</div>", unsafe_allow_html=True)
+            else:
+                st.caption("Sem IA configurada: a leitura abaixo é feita por regras (gratuita). Para texto redigido e perguntas, configure uma chave ou use «Exportar para IA externa».")
     with c2:
         gen = st.button("Gerar leitura com IA" if st.session_state.get('ai_reading_sig') != sig else "Gerar novamente", icon=":material/auto_awesome:",
                         type="primary", use_container_width=True, disabled=not cfg['key'], key='ai_gen')
@@ -5291,8 +5348,11 @@ def render_ai_section(caps):
             try:
                 txt = call_llm(AI_SYSTEM, [{'role': 'user', 'content': "FACTOS:\n" + facts_json}], json_mode=True, max_tokens=4000)
                 st.session_state.ai_reading = _parse_json(txt); st.session_state.ai_reading_sig = sig
-            except Exception as e:
-                st.error(f"Não foi possível obter a leitura da IA: {e}")
+            except LLMError as e:
+                st.warning(str(e))
+                if st.session_state.get('llm_bad_key'): st.rerun()
+            except (ValueError, KeyError):
+                st.warning("A IA respondeu num formato inesperado. Carregue em «Gerar novamente».")
 
     if st.session_state.get('ai_reading') and st.session_state.get('ai_reading_sig') == sig:
         render_reading(st.session_state.ai_reading, f"Redigido por IA ({cfg['provider']}) a partir dos factos calculados")
@@ -5302,7 +5362,7 @@ def render_ai_section(caps):
     with st.container(border=True):
         ui_card_header('Perguntar sobre o processo', 'Ex.: "Porque é que os processos CH_Reforço são mais caros?" · "Que função devo reforçar primeiro?"', 'bi-chat-dots')
         if not cfg['key']:
-            st.caption("Disponível depois de configurar a IA (abaixo).")
+            st.caption("Disponível com uma chave de IA válida (Configurar IA, abaixo). Sem chave: use «Exportar para IA externa» e faça as perguntas no seu assistente habitual.")
         else:
             hist = st.session_state.setdefault('ai_chat', [])
             for m in hist:
@@ -5311,28 +5371,34 @@ def render_ai_section(caps):
             if q:
                 hist.append({'role': 'user', 'content': q})
                 with st.chat_message('user'): st.markdown(q)
-                with st.chat_message('assistant'), st.spinner("A pensar..."):
-                    try:
+                try:
+                    with st.spinner("A pensar..."):
                         ans = call_llm(AI_CHAT_SYSTEM + "\n\nFACTOS:\n" + facts_json, hist[-10:], max_tokens=1200)
-                    except Exception as e:
-                        ans = f"Não foi possível responder: {e}"
-                    st.markdown(ans)
-                hist.append({'role': 'assistant', 'content': ans})
+                    with st.chat_message('assistant'): st.markdown(ans)
+                    hist.append({'role': 'assistant', 'content': ans})
+                except LLMError as e:
+                    hist.pop()  # a pergunta não fica no histórico sem resposta
+                    st.warning(str(e))
+                    if st.session_state.get('llm_bad_key'): time.sleep(2.5); st.rerun()
             if hist and st.button("Limpar conversa", key='ai_chat_clear'):
                 st.session_state.ai_chat = []; st.rerun()
 
     with st.expander("Configurar IA"):
-        st.markdown("A forma recomendada é guardar a chave nos *Secrets* do Streamlit Cloud (Settings → Secrets), por exemplo:\n"
-                    "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n# ou\nGEMINI_API_KEY = \"...\"\n```\n"
-                    "Em alternativa, cole a chave abaixo: fica só nesta sessão e não é guardada.")
+        st.markdown("**Opção gratuita (Gemini):** crie uma chave grátis em [aistudio.google.com/apikey](https://aistudio.google.com/apikey) com a sua conta Google "
+                    "e cole-a abaixo. Para ficar permanente, guarde-a nos *Secrets* da app no Streamlit Cloud (Settings → Secrets):\n"
+                    "```toml\nGEMINI_API_KEY = \"a-sua-chave\"\n```")
         a, b = st.columns(2)
-        prov = a.selectbox("Fornecedor", ['Anthropic (Claude)', 'Google (Gemini)'], index=0 if cfg['provider'].startswith('Anthropic') else 1, key='llm_provider')
+        prov = a.selectbox("Fornecedor", ['Google (Gemini)', 'Anthropic (Claude)'], index=0 if cfg['provider'].startswith('Google') else 1, key='llm_provider')
         b.text_input("Modelo (vazio = predefinido)", key='llm_model',
                      placeholder='claude-sonnet-5-5' if prov.startswith('Anthropic') else 'gemini-2.5-flash')
         st.text_input("Chave de API (só esta sessão)", type="password", key='llm_key_anthropic' if prov.startswith('Anthropic') else 'llm_key_gemini')
-        st.checkbox("Anonimizar nomes de pessoas antes de enviar", value=True, key='llm_anon')
-        with st.popover("Ver exatamente o que é enviado"):
-            st.json(facts, expanded=False)
+        if st.button("Testar ligação", icon=":material/wifi_tethering:", key='llm_test'):
+            st.session_state.pop('llm_bad_key', None)
+            try:
+                call_llm("Responde apenas: OK", [{'role': 'user', 'content': 'teste'}], max_tokens=10)
+                st.success(f"Ligação OK ({_llm_settings()['provider']} · {_llm_settings()['model']}).")
+            except LLMError as e:
+                st.warning(str(e))
 
     with st.expander("Diagnóstico detalhado (motor de regras): todos os factos e alertas por área"):
         render_diagnostics_page()
@@ -5343,13 +5409,16 @@ def _scroll_top_if_moved():
     loc = (st.session_state.get('current_page'), st.session_state.get('current_section'))
     if st.session_state.get('_last_loc') != loc:
         st.session_state['_last_loc'] = loc
-        components.html("""<script>
+        _embed = getattr(st, 'iframe', None)
+        _js = ("""<script>
         const go = () => { const d = window.parent.document;
           for (const sel of ['[data-testid="stMain"]', 'section.main', '[data-testid="stAppViewContainer"]']) {
             const el = d.querySelector(sel); if (el) el.scrollTo({top: 0, behavior: 'instant'}); }
           window.parent.scrollTo(0, 0); };
         go(); setTimeout(go, 150); setTimeout(go, 600);
-        </script>""", height=0)
+        </script>""")
+        if _embed: _embed(_js, height=1)
+        else: components.html(_js, height=0)
 
 
 def dashboard_page():
