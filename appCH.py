@@ -132,6 +132,11 @@ st.markdown("""
         box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04);
     }
     .pm-card-head { display:flex; align-items:flex-start; gap:12px; margin: 0.2rem 0 0.5rem; }
+    .pm-tip { position:relative; display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px; margin-left:8px; border-radius:50%;
+        border:1.5px solid #cbd5e1; color:#94a3b8; font-size:.68rem; font-weight:700; cursor:help; vertical-align:middle; line-height:1; }
+    .pm-tip:hover { color:#2563eb; border-color:#2563eb; }
+    .pm-tip:hover::after { content: attr(data-tip); position:absolute; left:0; top:22px; z-index:1000; width:min(380px, 70vw); background:#0f172a; color:#fff;
+        font-size:.8rem; font-weight:400; line-height:1.45; padding:10px 12px; border-radius:10px; box-shadow:0 8px 24px rgba(15,23,42,.25); white-space:normal; }
     .pm-card-icon { width:36px; height:36px; border-radius:10px; background:#f1f5f9; color:#0f172a; display:flex; align-items:center; justify-content:center; font-size:1.05rem; flex-shrink:0; }
     .pm-card-title { font-weight: 700; font-size: 1.02rem; color: #0f172a; }
     .pm-card-sub { color: #64748b; font-size: 0.84rem; margin-top: 1px; }
@@ -2881,7 +2886,7 @@ def settings_page():
 
     st.subheader("Execução da Análise")
     st.markdown('<div class="iniciar-analise-button">', unsafe_allow_html=True)
-    if st.button("🚀 Iniciar Análise Inicial (PM & EDA)", use_container_width=True):
+    if st.button("🚀 Iniciar Process Mining Analysis", use_container_width=True):
         with st.spinner("A executar a análise... Este processo pode demorar alguns minutos."):
             st.session_state.dfs_norm = dfs_norm
             st.session_state.caps = caps
@@ -3293,10 +3298,81 @@ def ui_kpis(items):
     st.markdown(f"<div class='pm-kpi-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
-def ui_card_header(title, subtitle=None, icon=None):
+CHART_TIPS = {
+ # Visão geral
+ 'Volume e duração ao longo do tempo': "Barras: processos concluídos por mês. Linhas: duração mediana (metade dos processos demora menos) e P90 (só 10% demoram mais). Se as linhas sobem, o processo está a ficar mais lento. Meses incompletos nas pontas não entram nas linhas.",
+ 'Entradas, conclusões e processos em curso': "Compara quantos processos entram e quantos terminam por mês, e quantos estão em curso. Se entram mais do que saem, acumula-se trabalho pendente e as esperas vão aumentar.",
+ 'Distribuição da duração dos processos': "Quantos processos demoraram cada número de dias. Uma cauda longa à direita indica casos problemáticos que merecem análise individual.",
+ 'Duração por tipo de processo': "Compara a duração entre tipos de processo (caixa = metade central dos casos; linha = mediana). Ajuda a perceber se algum tipo é sistematicamente mais lento.",
+ 'Estado dos processos': "Quantos processos existem em cada estado (ex.: concluído, em curso, cancelado).",
+ 'Processos mais longos': "Os 10 processos que mais demoraram. Útil para investigar caso a caso o que correu mal.",
+ # Fluxo
+ 'Mapa do processo': "Mapa real do processo, descoberto a partir dos dados. Caixas = atividades (nº de vezes executadas). Setas = passagens entre atividades; a espessura mostra a frequência. Em 'Espera média', a cor vai de azul (pouca espera) a vermelho (muita). Use o filtro para esconder passagens raras.",
+ 'Variantes do processo': "Uma variante é uma sequência completa de atividades. A #1 é o caminho principal. Os passos a vermelho são os que diferem do caminho principal (atividades a mais, a menos ou fora de ordem).",
+ 'Ciclos de retrabalho': "Retornos a uma atividade que já tinha sido feita (ex.: voltar à Análise de Risco depois da Decisão). Cada retorno custa tempo e esforço.",
+ 'Conformidade ao longo do tempo': "Percentagem de processos concluídos em cada mês que seguiram o caminho principal, e percentagem com retrabalho. Uma descida indica que o processo está a ficar menos padronizado.",
+ 'Frequência das atividades': "Quantas vezes cada atividade foi executada e em que percentagem dos processos aparece. Mais de 100% significa que a atividade se repete em alguns processos.",
+ # Tempos
+ 'Execução vs. espera por atividade': "Para cada atividade: tempo médio a trabalhar (azul) e tempo médio parado à espera antes de começar (laranja). Muita espera indica fila, falta de capacidade ou dependência de terceiros.",
+ 'Passagens onde os processos ficam mais tempo parados': "As passagens entre atividades com mais dias de espera acumulados (espera média × nº de processos). São os maiores pontos de perda de tempo do processo. Retrabalho excluído.",
+ 'Matriz de espera entre atividades': "Espera média (dias) entre o fim de uma atividade (linha) e o início da seguinte (coluna). Células vermelhas são as passagens mais lentas. Inclui retornos.",
+ 'Execução e espera ao longo do tempo': "Dias de trabalho e dias de espera por processo, por mês de conclusão. Mostra se a perda de tempo está a crescer ou a diminuir.",
+ 'Atividade por dia da semana': "Tarefas iniciadas e concluídas por dia da semana. Ajuda a ver picos de carga e o efeito dos fins de semana.",
+ 'Variabilidade da duração de cada atividade': "Dispersão da duração de cada atividade: caixa = metade central das execuções, pontos = casos extremos. Caixas largas indicam trabalho pouco normalizado e imprevisível.",
+ 'Linha do tempo de um processo': "As tarefas de um processo ao longo do tempo, com quem as executou. Os intervalos vazios entre barras são esperas.",
+ # Recursos
+ 'Carga de trabalho por pessoa': "Horas trabalhadas (ou nº de tarefas, se não houver horas) por pessoa, por função. Mostra concentração de trabalho em poucas pessoas.",
+ 'Utilização da capacidade por função': "Horas trabalhadas ÷ horas disponíveis das pessoas ativas em cada mês (média móvel de 3 meses). Acima de ~85% as filas crescem rapidamente; perto de 100% a função está no limite.",
+ 'Passagens de trabalho entre funções': "Quantas vezes o trabalho passa de uma função (linha) para outra (coluna). Cada passagem é um ponto de coordenação onde costuma haver espera (ver no hover).",
+ 'Rede de colaboração entre pessoas': "Cada círculo é uma pessoa (cor = função, tamanho = nº de tarefas). Cada linha liga duas pessoas que passam trabalho uma à outra; quanto mais grossa, mais passagens. Pessoas no centro, com muitas ligações, são pontos críticos: se faltarem, o fluxo é afetado.",
+ 'Eficiência comparada dentro de cada função': "Cada ponto é uma pessoa: horas que gasta por tarefa face à mediana da sua função. À direita = mais horas que os colegas. Diferenças podem refletir tarefas mais difíceis, não só eficiência.",
+ 'Espera gerada a seguir a cada pessoa': "Tempo médio até a tarefa seguinte do processo começar, depois de cada pessoa terminar a sua. Valores altos podem indicar entregas incompletas ou passagens mal coordenadas.",
+ 'Especialização: horas por pessoa e atividade': "Horas de cada pessoa em cada atividade. Mostra quem é especialista em quê e onde há pouca polivalência.",
+ 'Duração vs. nº de pessoas envolvidas': "Duração dos processos consoante o número de pessoas que participaram. Mais pessoas costuma significar mais passagens e mais espera.",
+ 'Pessoas por processo ao longo do tempo': "Número médio de pessoas envolvidas por processo, por trimestre de início.",
+ 'Competência vs. horas por tarefa': "Horas por tarefa consoante o nível de competência de quem a executou. Se não houver diferença, o nível de competência registado pode não refletir o desempenho real.",
+ 'Atraso vs. competência da equipa': "Desvio face ao prazo consoante a competência média da equipa do processo.",
+ 'Desvio de prazo dos processos de cada pessoa': "Desvio médio face ao prazo dos processos em que cada pessoa participou. É uma correlação: não prova que a pessoa causou o atraso.",
+ # Custos
+ 'Matriz de desempenho: prazo vs. orçamento': "Cada ponto é um processo. Direita = terminou depois do prazo; acima = custou mais do que o orçamento. O canto superior direito concentra os casos mais problemáticos.",
+ 'Pontualidade ao longo do tempo': "Barras: percentagem de processos atrasados por mês. Linha: desvio médio face ao prazo (negativo = termina antes do prazo).",
+ 'Distribuição do desvio face ao prazo': "Quantos processos terminaram cada número de dias antes (à esquerda da linha) ou depois (à direita) do prazo.",
+ 'Custo por função': "Custo total de mão-de-obra (horas × custo/hora) por função e percentagem do total.",
+ 'Custo por atividade': "Custo total de mão-de-obra por atividade e percentagem do total. Mostra onde se gasta o dinheiro.",
+ 'Custo médio por processo ao longo do tempo': "Custo médio real por processo e orçamento médio, por mês de conclusão.",
+ 'Custo real vs. orçamento': "Cada ponto é um processo. Acima da diagonal = custou mais do que o orçamentado.",
+ 'Processos mais caros': "Os 10 processos com maior custo real, para análise individual.",
+ 'Matriz de correlação': "Mede a relação linear entre pares de indicadores, de −1 a 1. Perto de 1: sobem juntos; perto de −1: um sobe quando o outro desce; perto de 0: sem relação. Correlação não é causa.",
+ 'Custo real vs. desvio de prazo': "Relação entre o custo de cada processo e o seu desvio face ao prazo.",
+ 'Custo vs. nº de pessoas envolvidas': "Custo dos processos consoante o número de pessoas envolvidas.",
+ 'Desvio de prazo por faixa de orçamento': "Desvio face ao prazo para processos agrupados em quatro faixas de orçamento (Q1 = 25% mais baratos).",
+ 'Custo por faixa de orçamento e função': "Custo médio por processo em cada faixa de orçamento, repartido por função.",
+ # Simulação
+ 'Real vs. simulado': "O simulador repete os mesmos processos, nas mesmas datas, 5 vezes. Se os números simulados ficam perto dos reais, o modelo é fiável para testar cenários.",
+ 'Duração ao longo do tempo: real vs. simulado': "Duração média por mês, real (preto) e simulada (azul, com intervalo entre réplicas). Se as linhas acompanham os mesmos altos e baixos, o modelo capta o efeito do volume e da capacidade.",
+ 'Espera antes de cada atividade': "Espera média antes de cada atividade, real vs. simulada (ou base vs. cenário). Serve para confirmar que o modelo reproduz cada etapa, não só o total.",
+ 'Duração de cada atividade': "Tempo médio de execução de cada atividade, real vs. simulado.",
+ 'De onde vem a espera?': "Divide a espera de cada passagem em duas partes. Vermelho: fila por falta de pessoas (desce com mais capacidade ou melhor alocação). Laranja: espera estrutural, como agendamentos, aprovações e terceiros (não desce com mais pessoas; exige mudar regras ou prazos).",
+ 'Ocupação da capacidade por função': "Percentagem do tempo em que a capacidade de cada função está ocupada na simulação. Acima de 85% qualquer aumento de volume cria filas rapidamente.",
+ 'Distribuição da duração': "Quantos processos demoram cada número de dias, na base e no cenário. Se a nuvem azul se desloca para a esquerda, o cenário torna os processos mais rápidos.",
+ 'Ocupação por função': "Ocupação da capacidade de cada função, na base e no cenário. Barras vermelhas: acima de 85%, risco de filas.",
+ 'Comparação de cenários': "Todos os cenários testados nesta sessão lado a lado com a base simulada (situação atual).",
+ 'Prática atual vs. regra simples vs. agente': "Compara três formas de decidir o que atender primeiro, nos mesmos processos: por ordem de chegada (prática atual), pelo prazo mais próximo (regra simples) e a política aprendida pelo agente. Menor = melhor.",
+ 'Efeito por tipo de processo': "Duração média por tipo com cada política. Serve para garantir que melhorar a média não prejudica um tipo de processo em particular.",
+ 'Evolução do treino': "Em cada iteração o agente testa várias políticas no simulador e fica com as melhores. A linha azul deve descer e ficar abaixo da linha vermelha (prática atual).",
+ 'Regras de decisão recomendadas': "O que o agente faz de diferente da prática atual, traduzido em regras que uma equipa pode aplicar.",
+ 'Definir cenário': "Escolha o que quer alterar. Tudo o que não alterar fica igual à situação atual.",
+ 'Contexto de treino': "Define em que situação o agente aprende. A forma de priorizar só faz diferença quando há filas; por isso o treino usa, por defeito, mais volume do que o atual.",
+ 'Resumo para o diretor': "Conclusão automática dos testes feitos nesta página, em linguagem de negócio, pronta a copiar para um email ou apresentação.",
+}
+
+
+def ui_card_header(title, subtitle=None, icon=None, help=None):
     ic = f"<span class='pm-card-icon'><i class='bi {icon}'></i></span>" if icon else ""
     sub = f"<div class='pm-card-sub'>{subtitle}</div>" if subtitle else ""
-    st.markdown(f"<div class='pm-card-head'>{ic}<div><div class='pm-card-title'>{title}</div>{sub}</div></div>", unsafe_allow_html=True)
+    tip = help or CHART_TIPS.get(title)
+    tip_html = f"<span class='pm-tip' data-tip='{html.escape(tip, quote=True)}'>?</span>" if tip else ""
+    st.markdown(f"<div class='pm-card-head'>{ic}<div style='flex:1'><div class='pm-card-title'>{title}{tip_html}</div>{sub}</div></div>", unsafe_allow_html=True)
 
 
 def ui_chart(fig, title, subtitle=None, icon=None, key=None):
@@ -3739,6 +3815,43 @@ def fig_efficiency(T, A):
     return _style(fig, max(260, 50 * e['resource_type'].nunique()), legend=False)
 
 
+def fig_social_network(T, top=35):
+    """Rede de colaboração: pessoas ligadas quando passam trabalho uma à outra no mesmo processo."""
+    d = T.dropna(subset=['resource_name']).sort_values(['project_id', 'start_date'])
+    d = d.assign(prev_res=d.groupby('project_id')['resource_name'].shift(1))
+    e = d.dropna(subset=['prev_res']); e = e[e['prev_res'] != e['resource_name']]
+    if e.empty: return None
+    w = e.groupby(['prev_res', 'resource_name']).size().reset_index(name='n')
+    w['a'] = w[['prev_res', 'resource_name']].min(axis=1); w['b'] = w[['prev_res', 'resource_name']].max(axis=1)
+    w = w.groupby(['a', 'b'])['n'].sum().reset_index()
+    deg = pd.concat([w.groupby('a')['n'].sum(), w.groupby('b')['n'].sum()]).groupby(level=0).sum().sort_values(ascending=False)
+    role0 = d.drop_duplicates('resource_name').set_index('resource_name')['resource_type'].fillna('—')
+    nr = max(role0.reindex(deg.index).nunique(), 1); per = int(np.ceil(top / nr))
+    keep = set(deg.groupby(role0.reindex(deg.index).fillna('—').values).head(per).index)   # as pessoas mais ligadas de cada função
+    w = w[w['a'].isin(keep) & w['b'].isin(keep)]
+    if len(w) > 2.5 * len(keep): w = w[w['n'] >= w['n'].quantile(0.7)]                       # só as ligações mais fortes
+    if w.empty: return None
+    G = nx.Graph()
+    for r in w.itertuples(): G.add_edge(r.a, r.b, weight=r.n)
+    pos = nx.spring_layout(G, k=1.6 / np.sqrt(max(G.number_of_nodes(), 1)), seed=42, weight='weight', iterations=200)
+    role = d.drop_duplicates('resource_name').set_index('resource_name')['resource_type'].fillna('—')
+    ntask = d.groupby('resource_name').size()
+    fig = go.Figure()
+    wmax = w['n'].max()
+    for r in w.itertuples():
+        (x0, y0), (x1, y1) = pos[r.a], pos[r.b]
+        fig.add_scatter(x=[x0, x1], y=[y0, y1], mode='lines', line=dict(width=0.5 + 5 * r.n / wmax, color='rgba(100,116,139,0.35)'),
+                        hoverinfo='skip', showlegend=False)
+    roles = sorted({role.get(n, '—') for n in G.nodes()})
+    for i, rl in enumerate(roles):
+        ns = [n for n in G.nodes() if role.get(n, '—') == rl]
+        fig.add_scatter(x=[pos[n][0] for n in ns], y=[pos[n][1] for n in ns], mode='markers', name=rl,
+                        marker=dict(size=[10 + 26 * np.sqrt(ntask.get(n, 1) / ntask.max()) for n in ns], color=UI_SEQ[i % len(UI_SEQ)], line=dict(color='white', width=1.5)),
+                        text=[f"{n}<br>{rl}<br>{ntask.get(n, 0):,} tarefas · {G.degree(n)} ligações" for n in ns], hovertemplate='%{text}<extra></extra>')
+    fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
+    return _style(fig, 520)
+
+
 def fig_role_handoffs(T):
     e = T.dropna(subset=['prev_role', 'resource_type'])
     e = e[e['prev_role'] != e['resource_type']]
@@ -4136,6 +4249,7 @@ def section_resources(V, caps):
     with c2:
         if has_h: ui_chart(fig_utilization(A, R), 'Utilização da capacidade por função', 'Horas trabalhadas ÷ horas disponíveis das pessoas ativas no mês (linha vermelha = 100%)', 'bi-speedometer2', key='rs_ut')
         else: ui_chart(fig_resource_wait(T), 'Espera gerada a seguir a cada pessoa', 'Tempo médio até a tarefa seguinte começar', 'bi-sign-stop', key='rs_rw0')
+    ui_chart(fig_social_network(T), 'Rede de colaboração entre pessoas', 'Quem passa trabalho a quem · as pessoas mais ligadas de cada função e as ligações mais fortes', 'bi-share', key='rs_net')
     c1, c2 = st.columns(2)
     with c1: ui_chart(fig_role_handoffs(T), 'Passagens de trabalho entre funções', 'Nº de passagens; no hover, a espera média em cada passagem', 'bi-arrow-left-right', key='rs_rh')
     with c2:
@@ -4702,7 +4816,11 @@ def sim_facts():
     B = st.session_state.get('sim_base_summary'); lst = st.session_state.get('sim_scen_list') or []
     if B and lst:
         def kp(S): return {k: _r(S.get(k)) for k in ['lead', 'p90', 'wait', 'late', 'cost', 'umax'] if S.get(k) is not None}
-        out['cenarios'] = {'base': kp(B), 'testados': [{'nome': n, 'parametros': {k: v for k, v in pr.items() if v and k != 'people'} |
+        def _clean(pr):
+            o = {k: v for k, v in pr.items() if v and k not in ('people', 'exo')}
+            if pr.get('exo'): o['reduzir_espera_pct'] = {f"{a} → {b}": v for (a, b), v in pr['exo'].items()}
+            return o
+        out['cenarios'] = {'base': kp(B), 'testados': [{'nome': n, 'parametros': _clean(pr) |
                                                         ({'pessoas': {r: d for r, d in pr['people'].items() if d}} if any((pr.get('people') or {}).values()) else {}),
                                                         'resultado': kp(S_)} for n, pr, S_ in lst]}
         out['cenarios']['legenda'] = 'lead=duração média (dias), p90=duração P90, wait=espera por processo, late=% atrasados, cost=custo mão-de-obra/processo (€), umax=ocupação máxima de uma função (%)'
@@ -5508,7 +5626,8 @@ def render_sim_validation(caps):
         ui_note("O simulador precisa de datas de início e de fim por tarefa."); return
     c1, c2 = st.columns([5, 1.4], vertical_alignment='center')
     with c2:
-        rerun = st.button("Recalibrar", icon=":material/refresh:", use_container_width=True, key='sim_recal')
+        rerun = st.button("Recalibrar", icon=":material/refresh:", use_container_width=True, key='sim_recal',
+                          help="Volta a construir e a ajustar o simulador a partir do histórico. Só é preciso depois de carregar dados novos; os resultados podem variar ligeiramente por causa da aleatoriedade.")
     if st.session_state.get('sim_validation') is None or rerun:
         bar = st.progress(0.0, text="A construir o modelo do processo...")
         try:
@@ -5528,7 +5647,8 @@ def render_sim_validation(caps):
     for ind, ic in [('Duração média (dias)', 'bi-stopwatch'), ('Espera média por processo (dias)', 'bi-pause-circle'), ('% atrasados', 'bi-alarm')]:
         if ind in v.index:
             k.append(dict(icon=ic, value=f"{v.loc[ind, 'Simulado']:.1f}" + ('%' if ind.startswith('%') else ' d'),
-                          label=f"{ind.split(' (')[0]} simulada · real {v.loc[ind, 'Real']:.1f}" + ('%' if ind.startswith('%') else ' d')))
+                          label=f"{ind.split(' (')[0]} simulada · real {v.loc[ind, 'Real']:.1f}" + ('%' if ind.startswith('%') else ' d'),
+                          help='Valor obtido pelo simulador (média de 5 réplicas) comparado com o valor real do histórico.'))
     ui_kpis(k)
     with st.container(border=True):
         ui_card_header('Real vs. simulado', 'Indicadores principais com os mesmos processos e datas de chegada', 'bi-clipboard-data')
@@ -5682,11 +5802,11 @@ def render_sim_scenarios(caps):
         ui_note(f"Atenção: a fidelidade do modelo é fraca (erro médio {SV['score']:.0f}%). Use os resultados como indicação de sentido, não como valores exatos.")
     st.markdown("<div class='pm-side-label' style='margin:4px 0 6px'>Cenários rápidos</div>", unsafe_allow_html=True)
     b = st.columns(5)
-    b[0].button("Volume +20%", on_click=_scen_preset, args=('vol',), use_container_width=True, icon=":material/trending_up:")
-    b[1].button("+1 pessoa", on_click=_scen_preset, args=('people',), use_container_width=True, icon=":material/person_add:", disabled=not M['has_cap'])
-    b[2].button("Metade da espera", on_click=_scen_preset, args=('exo',), use_container_width=True, icon=":material/hourglass_bottom:")
-    b[3].button("Retrabalho −50%", on_click=_scen_preset, args=('rework',), use_container_width=True, icon=":material/replay:")
-    b[4].button("Limpar", on_click=_scen_preset, args=('clear',), use_container_width=True, icon=":material/restart_alt:")
+    b[0].button("Volume +20%", on_click=_scen_preset, args=('vol',), use_container_width=True, icon=":material/trending_up:", help="Preenche o formulário com mais 20% de processos a entrar. Depois carregue em Simular cenário.")
+    b[1].button("+1 pessoa", on_click=_scen_preset, args=('people',), use_container_width=True, icon=":material/person_add:", disabled=not M['has_cap'], help="Junta uma pessoa à função mais ocupada.")
+    b[2].button("Metade da espera", on_click=_scen_preset, args=('exo',), use_container_width=True, icon=":material/hourglass_bottom:", help="Reduz para metade a maior espera estrutural (a passagem onde os processos ficam mais tempo parados).")
+    b[3].button("Retrabalho −50%", on_click=_scen_preset, args=('rework',), use_container_width=True, icon=":material/replay:", help="Metade dos retornos a atividades já feitas deixa de acontecer.")
+    b[4].button("Limpar", on_click=_scen_preset, args=('clear',), use_container_width=True, icon=":material/restart_alt:", help="Repõe todos os parâmetros na situação atual.")
 
     ws = SV['wait_split'].assign(tot=lambda d: d['estrutural'] * d['n']).sort_values('tot', ascending=False)
     exo_opts = [f"{r.prev} → {r.task_name}" for r in ws.head(10).itertuples()]
@@ -5701,18 +5821,19 @@ def render_sim_scenarios(caps):
             st.slider("Redução do retrabalho (%)", 0, 100, step=10, key='sc_rw', help='Percentagem dos retornos a atividades já feitas que deixam de acontecer.')
             st.multiselect("Reduzir esperas estruturais nestas passagens", exo_opts, key='sc_exo_sel', placeholder='Escolher passagens',
                            help='Esperas que não dependem de pessoas: agendamentos, aprovações, terceiros.')
-            st.slider("Redução dessas esperas (%)", 0, 100, step=10, key='sc_exo_pct')
-            st.multiselect("Acelerar estas atividades (automação, simplificação)", M['acts'], key='sc_dur_sel', placeholder='Escolher atividades')
-            st.slider("Redução da duração dessas atividades (%)", 0, 90, step=10, key='sc_dur_pct')
+            st.slider("Redução dessas esperas (%)", 0, 100, step=10, key='sc_exo_pct', help='Ex.: 50% = os processos passam a esperar metade do tempo nessas passagens.')
+            st.multiselect("Acelerar estas atividades (automação, simplificação)", M['acts'], key='sc_dur_sel', placeholder='Escolher atividades', help='Atividades cujo tempo de execução diminui (ex.: com automação ou menos verificações).')
+            st.slider("Redução da duração dessas atividades (%)", 0, 90, step=10, key='sc_dur_pct', help='Ex.: 20% = a atividade passa a demorar 80% do tempo atual.')
         with c2:
             if M['has_cap']:
                 st.markdown("**Pessoas por função** (variação face ao atual)")
                 for r in sorted(M['people']):
-                    st.number_input(f"{r} · hoje {M['people'][r]}", min_value=-(M['people'][r] - 1), max_value=50, step=1, key=f'sc_p_{r}')
+                    st.number_input(f"{r} · hoje {M['people'][r]}", min_value=-(M['people'][r] - 1), max_value=50, step=1, key=f'sc_p_{r}',
+                                    help='Quantas pessoas a mais (positivo) ou a menos (negativo) nesta função.')
             else:
                 st.caption("Sem dados de pessoas por tarefa: não é possível simular alterações de equipa.")
         st.text_input("Nome do cenário", key='sc_name', placeholder='ex.: +1 avaliador e metade da espera na avaliação')
-        go_ = st.form_submit_button("Simular cenário", type='primary', icon=":material/play_arrow:")
+        go_ = st.form_submit_button("Simular cenário", type='primary', icon=":material/play_arrow:", help="Corre o cenário 5 vezes e compara com a base (situação atual). Demora alguns segundos.")
 
     if 'sim_base_summary' not in st.session_state or st.session_state.get('sim_base_sig') != id(SV):
         with st.spinner("A simular a base..."):
@@ -5957,33 +6078,76 @@ def fig_rl_training(R):
     return _style(fig, 260)
 
 
+RL_SITUATIONS = [('Como hoje', 0), ('Mais trabalho (+20%)', 20), ('Pico de trabalho (+40%)', 40), ('Sobrecarga (+60%)', 60), ('Outro valor', None)]
+
+
+def _load_preview(M, vol):
+    """Como fica a carga numa dada situação (1 simulação rápida): ocupação da função mais carregada e fila por processo."""
+    cache = st.session_state.setdefault('rl_preview', {})
+    if vol not in cache:
+        c, t, u = simulate_process(M, arrivals=scenario_arrivals(M, vol, seed=0), seed=1)
+        r = max(u, key=u.get) if u else None
+        cache[vol] = dict(role=r, util=u.get(r, 0) if r else 0, queue=t['queue_wait'].sum() / max(len(c), 1),
+                          wait=c['wait'].mean(), n=len(c))
+    return cache[vol]
+
+
 def render_sim_rl(caps):
     V = st.session_state.view
     if not caps_ok({'TEMPOS'}, caps):
         ui_note("O simulador precisa de datas de início e de fim por tarefa."); return
     SV = _ensure_sim(V, caps); M = SV['model']
-    ui_section_intro('Qual a melhor forma de decidir no dia a dia?',
-                     'Um agente de reinforcement learning experimenta milhares de decisões no simulador (que trabalho atender primeiro, quando pedir ajuda a outra função) '
-                     'e aprende a política que melhor cumpre o objetivo. O resultado é comparado com a prática atual e traduzido em regras simples.')
+    ui_section_intro('Quando há trabalho em espera, o que se deve fazer primeiro?',
+                     'Hoje, quando várias tarefas esperam pela mesma equipa, assume-se que são atendidas por ordem de chegada. '
+                     'Aqui, um agente de inteligência artificial (reinforcement learning) testa no simulador outras formas de decidir: '
+                     'dar prioridade ao prazo mais próximo, às tarefas mais curtas, a certos tipos de processo, pedir ajuda a outra equipa... '
+                     'e diz qual funciona melhor, em regras que a equipa pode aplicar.')
     if not M['has_cap']:
         ui_note("Sem dados de quem executa as tarefas não há filas de trabalho para priorizar: a otimização precisa de pessoas/funções por tarefa."); return
-    with st.form('rl_form', border=True):
-        ui_card_header('Contexto de treino', 'A forma de priorizar só faz diferença quando há filas. Com o volume atual quase não há; por isso o treino usa, por defeito, um cenário de maior carga.', 'bi-sliders')
-        c1, c2, c3 = st.columns(3)
-        kind = c1.selectbox('Objetivo', list(RL_OBJECTIVES), format_func=lambda k: RL_OBJECTIVES[k], key='rl_kind',
-                            index=0 if caps_ok({'PLANO'}, caps) else 1)
-        vol = c2.slider('Volume de processos (%)', -20, 100, value=st.session_state.get('rl_vol', 40), step=10, key='rl_vol')
-        mode = c3.selectbox('Treino', ['Rápido (~1 min)', 'Completo (~3 min)'], key='rl_mode')
-        flex = st.checkbox('Permitir que outras funções ajudem quando uma está saturada (só em atividades que essas funções já fizeram no histórico)', value=True, key='rl_flex')
-        go_ = st.form_submit_button('Treinar agente', type='primary', icon=":material/model_training:")
-    if kind == 'atrasos' and not caps_ok({'PLANO'}, caps):
-        ui_note("Sem datas planeadas, o objetivo 'menos atrasos' usa a duração média.")
+    with st.container(border=True):
+        ui_card_header('1. O que quer melhorar?', None, 'bi-bullseye',
+                       help="O agente procura a forma de decidir que mais melhora este indicador.")
+        kind = st.radio('Objetivo', list(RL_OBJECTIVES), format_func=lambda k: RL_OBJECTIVES[k], key='rl_kind', horizontal=True,
+                        index=0 if caps_ok({'PLANO'}, caps) else 1, label_visibility='collapsed')
+        if kind == 'atrasos' and not caps_ok({'PLANO'}, caps):
+            st.caption("Sem datas planeadas, 'menos atrasos' usa a duração média.")
+    with st.container(border=True):
+        ui_card_header('2. Em que situação de trabalho?', 'A ordem de atendimento só importa quando há filas, ou seja, quando há mais trabalho do que as equipas conseguem fazer de imediato.', 'bi-speedometer2',
+                       help="Escolha o volume de processos a entrar, face ao que aconteceu no histórico. Ex.: +40% = entram 40% mais processos no mesmo período, com as mesmas pessoas. "
+                            "Serve para preparar a equipa para picos ou crescimento.")
+        labels = [l for l, _ in RL_SITUATIONS]
+        sit = st.radio('Situação', labels, index=2, key='rl_sit', horizontal=True, label_visibility='collapsed')
+        vol = dict(RL_SITUATIONS)[sit]
+        if vol is None:
+            vol = st.slider('Variação do volume de processos face ao histórico (%)', -20, 100, value=30, step=10, key='rl_vol_custom')
+        pv = _load_preview(M, vol); pv0 = _load_preview(M, 0)
+        cols = st.columns(3)
+        cols[0].metric("Processos a entrar", f"{pv['n']:,}".replace(',', ' '), f"{vol:+d}% face ao histórico" if vol else "igual ao histórico", delta_color='off',
+                       help="Nº de processos simulados no período histórico, com a variação escolhida.")
+        cols[1].metric(f"Ocupação de {pv['role']}", f"{pv['util']:.0f}%", f"{pv['util'] - pv0['util']:+.0f} pp vs. hoje" if vol else None, delta_color='inverse',
+                       help="A equipa mais carregada nesta situação. Acima de 85% formam-se filas.")
+        cols[2].metric("Espera em fila por processo", f"{pv['queue']:.1f} dias", f"{pv['queue'] - pv0['queue']:+.1f} vs. hoje" if vol else None, delta_color='inverse',
+                       help="Dias que cada processo passa, em média, à espera de alguém livre. É este tempo que uma melhor priorização pode reduzir.")
+        if pv['queue'] < 0.3:
+            ui_note("Nesta situação quase não há filas: as equipas têm folga e a ordem de atendimento praticamente não muda nada. Escolha uma situação com mais trabalho para ver diferenças.")
+        elif pv['util'] >= 92:
+            ui_note("Nesta situação as equipas estão em sobrecarga: nenhuma regra de prioridade compensa a falta de capacidade (veja os Cenários para testar reforços). O agente ainda pode reduzir os danos.")
+    with st.container(border=True):
+        ui_card_header('3. Opções', None, 'bi-gear')
+        c1, c2 = st.columns([2, 1])
+        flex = c1.checkbox('Permitir que outra equipa ajude quando uma está sobrecarregada', value=True, key='rl_flex',
+                           help="Só em atividades que essa outra equipa já fez no histórico (ex.: Analistas de Operações a fazer parte da Análise Documental). Assume-se que demora mais 10%.")
+        mode = c2.selectbox('Treino', ['Rápido (~1 min)', 'Completo (~3 min)'], key='rl_mode', label_visibility='collapsed',
+                            help="O treino completo testa mais alternativas e costuma encontrar resultados um pouco melhores.")
+        go_ = st.button('Procurar a melhor forma de decidir', type='primary', icon=":material/model_training:", key='rl_go',
+                        help="O agente experimenta centenas de regras de prioridade no simulador, confirma a melhor noutra amostra e compara-a com a prática atual.")
     if go_:
         bar = st.progress(0.0, text="A preparar o treino...")
         it, pop = (6, 10) if mode.startswith('Rápido') else (10, 16)
         try:
             R = train_policy(M, volume_pct=vol, kind=kind, allow_flex=flex, iters=it, pop=pop, progress=lambda p, t: bar.progress(min(p, 1.0), text=t))
-            bar.progress(1.0, text="A avaliar no período completo (prática atual vs. regra simples vs. política aprendida)...")
+            R['situation'] = sit
+            bar.progress(1.0, text="A comparar no período completo: prática atual, regra simples e política aprendida...")
             ev, logs = evaluate_policies(M, R)
             st.session_state.rl_result = (R, ev, policy_rules(M, R, logs, ev))
         except Exception as e:
@@ -5992,26 +6156,40 @@ def render_sim_rl(caps):
     if not st.session_state.get('rl_result'): return
     R, ev, rules = st.session_state.rl_result
     names = list(ev); base, edd, rl = ev[names[0]], ev[names[1]], ev[names[2]]
-    st.markdown(f"<div class='pm-h5'>Resultado · objetivo: {RL_OBJECTIVES[R['kind']].lower()} · volume {R['volume']:+d}%</div>", unsafe_allow_html=True)
     gain = (base['obj'] - rl['obj']) / base['obj'] * 100 if base['obj'] else 0
-    k = [dict(icon='bi-trophy', value=f"{gain:+.0f}%", label='Melhoria do objetivo face à prática atual', good=gain > 2 if abs(gain) > 2 else None),
+    if abs(gain) < 0.5: gain = 0.0
+    sit_txt = R.get('situation') or (f"volume {R['volume']:+d}%" if R['volume'] else 'como hoje')
+    pol_txt = {'fifo': 'Manter a ordem de chegada', 'edd': 'Atender primeiro os processos com o prazo mais próximo'}.get(R.get('chosen'), 'Aplicar a política aprendida pelo agente (regras abaixo)')
+    if R['kind'] == 'atrasos' and 'late' in rl:
+        eff = f"os processos atrasados passam de {base['late']:.1f}% para {rl['late']:.1f}%"
+    elif R['kind'] == 'p90':
+        eff = f"os 10% de processos mais lentos passam de {base['p90']:.1f} para {rl['p90']:.1f} dias"
+    else:
+        eff = f"a duração média passa de {base['lead']:.1f} para {rl['lead']:.1f} dias"
+    if abs(gain) <= 2:
+        vt, vd, colr = ("Nesta situação, a ordem de atendimento não faz diferença",
+                        "As equipas têm capacidade suficiente para quase não haver filas, por isso decidir o que fazer primeiro não muda os resultados. "
+                        "Para melhorar, atue nas esperas estruturais ou no retrabalho (ver Cenários), ou teste uma situação com mais trabalho.", '#64748b')
+    else:
+        vt, vd, colr = (f"{pol_txt}", f"Na situação «{sit_txt}», {eff} (melhoria de {gain:.0f}% no objetivo face à prática atual).", '#16a34a')
+    st.markdown(f"""<div class='pm-verdict' style='border-left-color:{colr}'><div class='pm-verdict-top'><span class='pm-pill' style='background:{colr}1a;color:{colr}'>Resposta</span>
+        <span class='pm-src'>Objetivo: {RL_OBJECTIVES[R['kind']].lower()} · situação: {html.escape(sit_txt)}</span></div>
+        <div class='pm-verdict-title'>{html.escape(vt)}</div><div class='pm-verdict-text'>{html.escape(vd)}</div></div>""", unsafe_allow_html=True)
+    k = [dict(icon='bi-trophy', value=(f"{gain:+.0f}%" if abs(gain) > 2 else "≈ 0%"), label='Melhoria do objetivo face à prática atual', good=gain > 2 if abs(gain) > 2 else None,
+              help='Quanto o objetivo escolhido melhora com a política recomendada, face a atender por ordem de chegada. Avaliado no período completo, 5 réplicas.'),
          dict(icon='bi-stopwatch', value=_fmt_days(rl['lead']), label='Duração média com a política', delta=_delta_txt(rl['lead'], base['lead'], ' d'), good=(rl['lead'] < base['lead'] * 0.99) or None),
          dict(icon='bi-graph-up-arrow', value=_fmt_days(rl['p90']), label='P90 com a política', delta=_delta_txt(rl['p90'], base['p90'], ' d'), good=(rl['p90'] < base['p90'] * 0.99) or None)]
     if 'late' in rl:
         k.append(dict(icon='bi-alarm', value=f"{rl['late']:.1f}%", label='Atrasados com a política', delta=_delta_txt(rl['late'], base['late'], pp=True), good=rl['late'] < base['late'] - 0.3 or None))
     ui_kpis(k)
-    if R.get('chosen') == 'fifo':
-        ui_note("Conclusão do agente: nenhuma alternativa bateu a prática atual neste contexto, por isso recomenda manter a ordem de chegada.")
-    elif R.get('chosen') == 'edd':
-        ui_note("Conclusão do agente: das políticas testadas, a que melhor generaliza é a regra simples 'prazo mais próximo primeiro'. É fácil de aplicar já, sem tecnologia.")
-    if abs(gain) <= 2:
-        ui_note("A política aprendida fica praticamente igual à prática atual: neste contexto há pouca fila, e a ordem de atendimento quase não mexe nos resultados. "
-                "Experimente um volume maior ou menos pessoas, ou atue nas esperas estruturais (ver Cenários).")
-    elif R.get('chosen') not in ('edd', 'fifo') and (edd['obj'] - rl['obj']) / max(edd['obj'], 1e-9) * 100 < 2:
+    if abs(gain) > 2 and R.get('chosen') == 'edd':
+        ui_note("O agente testou regras mais complexas, mas a que melhor resultou foi a regra simples do prazo mais próximo. Boa notícia: aplica-se já, sem tecnologia.")
+    elif abs(gain) > 2 and R.get('chosen') not in ('edd', 'fifo') and (edd['obj'] - rl['obj']) / max(edd['obj'], 1e-9) * 100 < 2:
         ui_note("A regra simples 'prazo mais próximo primeiro' consegue quase o mesmo que o agente: é uma regra fácil de aplicar já, sem tecnologia.")
-    with st.container(border=True):
-        ui_card_header('Regras de decisão recomendadas', 'O que o agente faz de diferente, em linguagem de negócio', 'bi-signpost-2')
-        if not rules:
+    if abs(gain) <= 2: rules = []
+    with st.container(border=True) if rules else st.empty():
+        if rules: ui_card_header('Regras de decisão recomendadas', 'O que o agente faz de diferente, em linguagem de negócio', 'bi-signpost-2')
+        if False:
             st.caption("Sem diferenças relevantes face à prática atual.")
         for i, (t, d, f) in enumerate(rules):
             st.markdown(f"<div class='pm-prio' style='margin:6px 0'><div class='pm-prio-num'>{i + 1}</div><div style='flex:1'><div class='pm-prio-title'>{html.escape(t)}</div>"
@@ -6028,12 +6206,33 @@ def render_sim_rl(caps):
         st.caption("Método: pesquisa direta de política (Cross-Entropy Method), uma família de reinforcement learning sem modelo de gradiente. A prioridade de cada trabalho em fila "
                    "é uma soma ponderada dos critérios acima; o agente aprende os pesos e o limiar a partir do qual pede ajuda a outra função. "
                    "Escolhido por ser rápido e explicável: cada decisão pode ser justificada.")
-    render_director_summary('rl', sim_facts(), [f"Com volume {R['volume']:+d}%, a política recomendada melhora o objetivo em {gain:+.0f}% face à prática atual."] +
+    render_director_summary('rl', sim_facts(), [f"{vt}. {vd}"] +
                             [f"{t}." for t, _, _ in rules[:3]])
 
 
 def rl_page():
     ui_page_header("Simulação e Otimização", "Teste decisões antes de as tomar: um simulador do seu processo, calibrado com o histórico")
+    with st.expander("Como funciona esta página (ler primeiro)", expanded=not st.session_state.get('sim_help_seen', False)):
+        st.session_state.sim_help_seen = True
+        st.markdown("""
+**O que é o simulador?** É uma réplica virtual do seu processo, construída a partir do histórico: que atividades existem, por que ordem acontecem,
+quanto tempo demoram, quanto tempo os processos esperam entre elas e quantas pessoas há em cada função. Em vez de experimentar mudanças na realidade
+(contratar, mudar regras, reorganizar), experimenta-as primeiro aqui e vê o efeito provável.
+
+**Os três passos**
+1. **Modelo e validação:** a app constrói o simulador e põe-no à prova, repetindo os processos reais. Se os resultados simulados ficam perto dos reais, pode confiar nos passos seguintes.
+2. **Cenários "e se":** altera uma coisa (mais volume, mais pessoas, menos espera, menos retrabalho...) e compara com a situação atual.
+3. **Otimização (RL):** um agente de inteligência artificial experimenta muitas formas de decidir *o que atender primeiro* e recomenda a melhor, em regras simples.
+
+**Termos usados**
+- **Base:** a situação atual, simulada. Os cenários comparam-se sempre com ela.
+- **Réplica:** cada simulação tem alguma aleatoriedade (como a realidade). Por isso cada cenário corre 5 vezes e mostramos a média.
+- **Calibrar / Recalibrar:** ajustar o simulador ao histórico. Acontece sozinho na primeira vez; só precisa de recalibrar se carregar dados novos.
+- **Fila (falta de capacidade):** espera porque as pessoas da função seguinte estão ocupadas. Desce com mais pessoas ou melhor organização.
+- **Espera estrutural:** espera que não depende de pessoas livres: agendamentos, aprovações, documentos de terceiros. Só desce mudando regras ou prazos.
+- **Ocupação:** percentagem do tempo em que a capacidade de uma função está em uso. Acima de 85% qualquer pico de trabalho gera filas.
+- **P90:** a duração que só 10% dos processos ultrapassam (os casos mais lentos).
+""")
     if not st.session_state.analysis_run:
         st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Dados e Configurações' para carregar os dados."); return
     caps = st.session_state.get('caps')
