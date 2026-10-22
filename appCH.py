@@ -5800,6 +5800,15 @@ def render_sim_scenarios(caps):
                      'Cada cenário é comparado com a base simulada, nos mesmos processos e com as mesmas sementes aleatórias.')
     if SV['score'] >= 20:
         ui_note(f"Atenção: a fidelidade do modelo é fraca (erro médio {SV['score']:.0f}%). Use os resultados como indicação de sentido, não como valores exatos.")
+    n_sc = len(st.session_state.get('sim_scen_list') or [])
+    if n_sc:
+        cc1, cc2 = st.columns([4, 1.4], vertical_alignment='center')
+        cc1.caption(f"{n_sc} cenário(s) testado(s) nesta sessão.")
+        if cc2.button("Recomeçar do zero", icon=":material/delete_sweep:", use_container_width=True, key='sc_reset_all',
+                      help="Apaga todos os cenários testados e repõe o formulário na situação atual."):
+            _scen_preset('clear'); st.session_state.sim_scen_list = []; st.session_state.sim_last = None
+            for k_ in [k for k in st.session_state if k.startswith('dir_txt_')]: st.session_state.pop(k_)
+            st.rerun()
     st.markdown("<div class='pm-side-label' style='margin:4px 0 6px'>Cenários rápidos</div>", unsafe_allow_html=True)
     b = st.columns(5)
     b[0].button("Volume +20%", on_click=_scen_preset, args=('vol',), use_container_width=True, icon=":material/trending_up:", help="Preenche o formulário com mais 20% de processos a entrar. Depois carregue em Simular cenário.")
@@ -5855,6 +5864,7 @@ def render_sim_scenarios(caps):
             name = st.session_state.get('sc_name') or f"Cenário {len(st.session_state.get('sim_scen_list', [])) + 1}"
             st.session_state.sim_last = (name, params, S)
             st.session_state.setdefault('sim_scen_list', []).append((name, params, S))
+            st.rerun()
 
     if st.session_state.get('sim_last'):
         name, params, S = st.session_state.sim_last
@@ -6023,10 +6033,15 @@ def policy_rules(M, R, logs, ev):
                 if abs(diff[i]) < 0.05: continue
                 n = names[i]
                 if i == 0:
-                    rules.append(("Dar prioridade a processos com o prazo mais apertado" if diff[i] > 0 else "Não deixar a urgência do prazo dominar a fila",
-                                  f"Quando passou à frente, o processo escolhido tinha em média {abs(diff[i]) * 10:.1f} dias úteis {'menos' if diff[i] > 0 else 'mais'} de folga do que os que ficaram à espera.", n))
+                    if diff[i] > 0:
+                        rules.append(("Dar prioridade a processos com o prazo mais apertado",
+                                      f"Quando passou à frente, o processo escolhido tinha em média {abs(diff[i]) * 10:.1f} dias úteis menos de folga do que os que ficaram à espera.", n))
+                    else:
+                        rules.append(("Dar prioridade aos processos que ainda vão a tempo de cumprir o prazo",
+                                      f"Em sobrecarga, o agente atende primeiro quem ainda pode cumprir o prazo (em média {abs(diff[i]) * 10:.1f} dias úteis mais de folga) "
+                                      "em vez de insistir nos que já estão atrasados. Salva mais processos, mas os já atrasados demoram mais: é uma decisão de gestão.", n))
                 elif i == 1:
-                    rules.append(("Não deixar trabalho envelhecer na fila" if diff[i] > 0 else "A antiguidade na fila não deve ser o único critério",
+                    rules.append(("Não deixar trabalho envelhecer na fila" if diff[i] > 0 else "Não dar prioridade automática ao que está há mais tempo na fila",
                                   f"O escolhido estava em fila {abs(diff[i]) * 5:.1f} dias úteis {'mais' if diff[i] > 0 else 'menos'} do que a média dos restantes.", n))
                 elif i == 2:
                     rules.append(("Despachar primeiro as tarefas curtas" if diff[i] < 0 else "Começar primeiro as tarefas longas",
@@ -6172,6 +6187,10 @@ def render_sim_rl(caps):
                         "Para melhorar, atue nas esperas estruturais ou no retrabalho (ver Cenários), ou teste uma situação com mais trabalho.", '#64748b')
     else:
         vt, vd, colr = (f"{pol_txt}", f"Na situação «{sit_txt}», {eff} (melhoria de {gain:.0f}% no objetivo face à prática atual).", '#16a34a')
+        if rl['p90'] > base['p90'] * 1.05:
+            vd += (f" Atenção: os processos mais lentos ficam ainda mais lentos (P90 de {base['p90']:.0f} para {rl['p90']:.0f} dias). "
+                   "A política sacrifica alguns casos já perdidos para salvar mais processos dentro do prazo.")
+            colr = '#d97706'
     st.markdown(f"""<div class='pm-verdict' style='border-left-color:{colr}'><div class='pm-verdict-top'><span class='pm-pill' style='background:{colr}1a;color:{colr}'>Resposta</span>
         <span class='pm-src'>Objetivo: {RL_OBJECTIVES[R['kind']].lower()} · situação: {html.escape(sit_txt)}</span></div>
         <div class='pm-verdict-title'>{html.escape(vt)}</div><div class='pm-verdict-text'>{html.escape(vd)}</div></div>""", unsafe_allow_html=True)
