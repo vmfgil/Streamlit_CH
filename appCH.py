@@ -785,7 +785,7 @@ def run_post_mining_analysis(_event_log_pm4py, _df_projects, _df_tasks_raw, _df_
         all_activities = sorted(list(set([act for seq in variant_sequences.values() for act in seq])))
         if all_activities:
             activity_to_y = {activity: i for i, activity in enumerate(all_activities)}
-            colors = plt.cm.get_cmap('tab10', len(variant_sequences.keys()))
+            colors = plt.get_cmap('tab10', len(variant_sequences.keys()))
             for i, (variant_name, sequence) in enumerate(variant_sequences.items()):
                 ax.plot(range(len(sequence)), [activity_to_y[activity] for activity in sequence], marker='o', linestyle='-', label=variant_name, color=colors(i))
             ax.set_yticks(list(activity_to_y.values()))
