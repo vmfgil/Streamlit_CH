@@ -530,13 +530,20 @@ def normalize_inputs(raw, sla_days=None):
 LOG_FIELDS = [
     ('case',       'Identificador do processo (caso)', True,  ['case:concept:name', 'case_id', 'caseid', 'case', 'project_id', 'processo', 'process_id', 'dossier', 'id_processo', 'pedido', 'ticket']),
     ('activity',   'Atividade / tarefa',               True,  ['concept:name', 'activity', 'atividade', 'actividade', 'task_name', 'tarefa', 'task', 'etapa', 'step', 'evento', 'event']),
+    ('task_key',   'Identificador da tarefa (agrupa várias linhas, ex.: registos de horas, numa só tarefa)', False, ['task_id', 'id_tarefa', 'task_key', 'tarefa_id']),
+    ('activity_type', 'Tipo / fase da atividade',      False, ['task_type', 'tipo_tarefa', 'activity_type', 'fase', 'phase']),
+    ('case_name',  'Nome do processo',                 False, ['project_name', 'case_name', 'nome_processo', 'descricao_processo']),
     ('start',      'Data de início',                   False, ['start_timestamp', 'start_date', 'start', 'inicio', 'início', 'data_inicio', 'data inicio', 'started']),
     ('end',        'Data de fim (ou data do evento)',  False, ['time:timestamp', 'end_date', 'end', 'fim', 'data_fim', 'data fim', 'timestamp', 'complete', 'completed', 'data', 'date', 'datetime']),
     ('lifecycle',  'Ciclo de vida (start/complete)',   False, ['lifecycle:transition', 'lifecycle', 'transition', 'event_type', 'ciclo']),
-    ('resource',   'Pessoa / recurso',                 False, ['org:resource', 'resource', 'resource_name', 'recurso', 'pessoa', 'user', 'utilizador', 'colaborador', 'owner', 'assignee', 'analista']),
+    ('resource',   'Pessoa / recurso',                 False, ['org:resource', 'resource_id', 'resource', 'resource_name', 'recurso', 'pessoa', 'user', 'utilizador', 'colaborador', 'owner', 'assignee', 'analista']),
+    ('resource_label', 'Nome da pessoa (se o campo acima for um código)', False, ['resource_name', 'nome_recurso', 'nome_pessoa', 'nome_colaborador']),
     ('role',       'Função do recurso',                False, ['org:role', 'role', 'resource_type', 'funcao', 'função', 'perfil', 'departamento', 'team', 'equipa']),
     ('hours',      'Horas trabalhadas',                False, ['hours_worked', 'hours', 'horas', 'effort_hours', 'esforco_horas', 'duration_hours']),
+    ('work_date',  'Data do registo de horas',         False, ['allocation_date', 'work_date', 'data_registo', 'data_horas']),
     ('cost_hour',  'Custo por hora',                   False, ['cost_per_hour', 'custo_hora', 'custo/hora', 'hourly_rate', 'rate']),
+    ('capacity',   'Capacidade diária (horas)',        False, ['daily_capacity', 'capacidade', 'capacity']),
+    ('skill',      'Nível de competência',             False, ['skill_level', 'skill', 'competencia', 'competência', 'nivel']),
     ('planned',    'Data planeada de fim do processo', False, ['planned_end_date', 'due_date', 'data_prevista', 'data_planeada', 'deadline', 'sla_date', 'prazo']),
     ('budget',     'Orçamento do processo',            False, ['budget_impact', 'budget', 'orcamento', 'orçamento', 'custo_planeado']),
     ('status',     'Estado do processo',               False, ['project_status', 'status', 'estado', 'case_status']),
@@ -609,7 +616,7 @@ def log_to_raw(df, mapping):
         raise ValueError("É preciso mapear pelo menos uma data (início ou fim).")
     d = pd.DataFrame({k: df[c].values for k, c in m.items()})
     d['case'] = d['case'].astype(str); d['activity'] = d['activity'].astype(str)
-    for c in ['start', 'end', 'planned']:
+    for c in ['start', 'end', 'planned', 'work_date']:
         if c in d.columns: d[c] = _to_dt(d[c])
     n0 = len(d)
 
@@ -642,46 +649,67 @@ def log_to_raw(df, mapping):
     if swap.any():
         warns.append(f"{int(swap.sum()):,} tarefas com fim anterior ao início: datas trocadas.")
         d.loc[swap, ['start', 'end']] = d.loc[swap, ['end', 'start']].values
-    d = d.sort_values(['case', 'start', 'end']).reset_index(drop=True)
-    d['task_id'] = (d.index + 1).astype(str)
-
-    tasks = pd.DataFrame({'task_id': d['task_id'], 'project_id': d['case'], 'task_name': d['activity'],
-                          'start_date': d['start'], 'end_date': d['end']})
-    if 'priority' in d.columns: tasks['priority'] = d['priority']
+    if 'task_key' in d.columns:
+        # várias linhas (ex.: registos de horas por pessoa/dia) pertencem à mesma tarefa
+        d['task_id'] = d['task_key'].astype(str)
+        g = d.groupby('task_id')
+        tasks = pd.DataFrame({'project_id': g['case'].first(), 'task_name': g['activity'].first(),
+                              'start_date': g['start'].min(), 'end_date': g['end'].max()}).reset_index()
+        for src, dst in [('priority', 'priority'), ('activity_type', 'task_type')]:
+            if src in d.columns: tasks[dst] = g[src].first().values
+        if g.size().max() > 1:
+            warns.append(f"{len(d):,} linhas agrupadas em {len(tasks):,} tarefas pelo identificador da tarefa.")
+        tasks = tasks.sort_values(['project_id', 'start_date', 'end_date']).reset_index(drop=True)
+    else:
+        d = d.sort_values(['case', 'start', 'end']).reset_index(drop=True)
+        d['task_id'] = (d.index + 1).astype(str)
+        tasks = pd.DataFrame({'task_id': d['task_id'], 'project_id': d['case'], 'task_name': d['activity'],
+                              'start_date': d['start'], 'end_date': d['end']})
+        if 'priority' in d.columns: tasks['priority'] = d['priority']
+        if 'activity_type' in d.columns: tasks['task_type'] = d['activity_type']
     raw = {'tasks': tasks}
 
     # Recursos: com horas -> resource_allocations reais; sem horas -> coluna de pessoa nas tarefas
     if 'resource' in d.columns:
         if 'hours' in d.columns:
-            a = d[['task_id', 'case', 'resource', 'start', 'hours']].copy()
+            a = d[['task_id', 'case', 'resource', 'start', 'hours'] + (['work_date'] if 'work_date' in d.columns else [])].copy()
+            if 'work_date' in a.columns: a['start'] = a['work_date'].fillna(a['start'])
             a['resource'] = a['resource'].apply(_split_people)
+            a['hours'] = pd.to_numeric(a['hours'], errors='coerce').fillna(0) / a['resource'].apply(lambda x: max(len(x), 1))
             a = a.explode('resource').dropna(subset=['resource'])
-            a['hours'] = pd.to_numeric(a['hours'], errors='coerce').fillna(0)
             raw['resource_allocations'] = pd.DataFrame({'task_id': a['task_id'], 'project_id': a['case'], 'resource_id': a['resource'].astype(str),
                                                         'allocation_date': a['start'], 'hours_worked': a['hours']})
             raw['resource_allocations']['allocation_id'] = range(1, len(a) + 1)
         else:
-            tasks['resource_name'] = d['resource'].astype(str).where(d['resource'].notna())
-            if 'role' in d.columns: tasks['resource_type'] = d['role']
-        ppl = d[['resource'] + [c for c in ['role', 'cost_hour'] if c in d.columns]].copy()
+            per_task = d.dropna(subset=['resource']).groupby('task_id')['resource'].agg(lambda x: '; '.join(dict.fromkeys(';'.join(map(str, x)).split(';'))))
+            tasks['resource_id'] = tasks['task_id'].map(per_task)
+            if 'role' in d.columns: tasks['resource_type'] = tasks['task_id'].map(d.groupby('task_id')['role'].first())
+            raw['_resource_from_tasks'] = True
+        extra = [c for c in ['role', 'cost_hour', 'resource_label', 'capacity', 'skill'] if c in d.columns]
+        ppl = d[['resource'] + extra].copy()
         ppl['resource'] = ppl['resource'].apply(_split_people)
         ppl = ppl.explode('resource').dropna(subset=['resource'])
-        agg = {'role': (lambda x: x.mode().iat[0] if not x.mode().empty else 'Desconhecido')} if 'role' in ppl.columns else {}
-        if 'cost_hour' in ppl.columns:
-            ppl['cost_hour'] = pd.to_numeric(ppl['cost_hour'], errors='coerce'); agg['cost_hour'] = 'mean'
+        mode_ = lambda x: x.mode().iat[0] if not x.mode().empty else np.nan
+        agg = {c: mode_ for c in ['role', 'resource_label'] if c in ppl.columns}
+        for c in ['cost_hour', 'capacity', 'skill']:
+            if c in ppl.columns:
+                ppl[c] = pd.to_numeric(ppl[c], errors='coerce'); agg[c] = 'mean'
         r = ppl.groupby('resource').agg(agg).reset_index() if agg else ppl[['resource']].drop_duplicates()
-        res = pd.DataFrame({'resource_id': r['resource'].astype(str), 'resource_name': r['resource'].astype(str)})
-        res['resource_type'] = r['role'].values if 'role' in r.columns else 'Desconhecido'
-        if 'cost_hour' in r.columns: res['cost_per_hour'] = r['cost_hour'].values
+        res = pd.DataFrame({'resource_id': r['resource'].astype(str)})
+        res['resource_name'] = r['resource_label'].fillna(r['resource']).astype(str).values if 'resource_label' in r.columns else r['resource'].astype(str).values
+        res['resource_type'] = r['role'].fillna('Desconhecido').values if 'role' in r.columns else 'Desconhecido'
+        for src, dst in [('cost_hour', 'cost_per_hour'), ('capacity', 'daily_capacity'), ('skill', 'skill_level')]:
+            if src in r.columns: res[dst] = r[src].values
         raw['resources'] = res
     elif 'hours' in d.columns:
         warns.append("Foram mapeadas horas mas não o recurso: as horas não podem ser atribuídas a ninguém e foram ignoradas.")
 
     # Atributos ao nível do processo
-    proj_cols = {k: v for k, v in {'planned': 'planned_end_date', 'budget': 'budget_impact', 'status': 'project_status', 'case_type': 'path_name'}.items() if k in d.columns}
+    proj_cols = {k: v for k, v in {'planned': 'planned_end_date', 'budget': 'budget_impact', 'status': 'project_status', 'case_type': 'path_name', 'case_name': 'project_name'}.items() if k in d.columns}
     if proj_cols:
         p = d.groupby('case')[list(proj_cols)].first().reset_index().rename(columns={'case': 'project_id', **proj_cols})
         raw['projects'] = p
+    raw.pop('_resource_from_tasks', None)
     return raw, warns
 
 # --- INICIALIZAÇÃO DO ESTADO DA SESSÃO ---
