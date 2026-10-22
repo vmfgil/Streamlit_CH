@@ -1,3 +1,4 @@
+import difflib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -53,125 +54,103 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ESTILO CSS ---
+# --- ESTILO CSS (tema claro, estilo SaaS moderno) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     @import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css");
 
-    html, body, [class*="st-"] { font-family: 'Poppins', sans-serif; }
-    
-    /* Nova Paleta de Cores - Tema Claro e Profissional */
     :root {
-        --primary-color: #0d6efd;       /* Azul Principal para botões e links */
-        --secondary-color: #6c757d;      /* Cinza para texto secundário e bordas */
-        --success-color: #198754;       /* Verde para indicadores positivos */
-        --warning-color: #ffc107;       /* Amarelo para alertas e destaques */
-        
-        --background-color: #f8f9fa;      /* Fundo Principal (Cinza muito claro) */
-        --sidebar-background: #ffffff;    /* Fundo da Sidebar (Branco) */
-        --card-background-color: #ffffff; /* Fundo dos Cartões (Branco) */
-        
-        --text-color: #212529;            /* Texto Principal (Quase Preto) */
-        --text-muted-color: #6c757d;     /* Texto Secundário (Cinza) */
-        --border-color: #dee2e6;          /* Cor da Borda/Separador */
+        --primary-color: #0f172a; --accent: #2563eb; --success-color: #16a34a; --danger: #dc2626; --warning-color: #d97706;
+        --secondary-color: #64748b; --background-color: #f7f8fa; --sidebar-background: #ffffff; --card-background-color: #ffffff;
+        --text-color: #0f172a; --text-muted-color: #64748b; --border-color: #e5e7eb;
     }
-    
+    html, body, [class*="st-"], .stMarkdown, button, input, textarea, select { font-family: 'Inter', sans-serif; }
     .stApp { background-color: var(--background-color); color: var(--text-color); }
-    h1, h2, h3, h4 { color: var(--text-color); font-weight: 600; }
-    
-    /* Painel Lateral */
-    [data-testid="stSidebar"] {
-        background-color: var(--sidebar-background);
-        border-right: 1px solid var(--border-color);
-    }
+    h1, h2, h3, h4, h5 { color: var(--text-color); font-weight: 700; letter-spacing: -0.01em; }
+    .block-container { padding-top: 2.2rem; max-width: 1500px; }
+    header[data-testid="stHeader"] { background: transparent; }
+
+    /* Barra lateral */
+    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid var(--border-color); }
     [data-testid="stSidebar"] .stButton>button {
-        background-color: transparent !important;
-        color: var(--text-color) !important;
-        border: 1px solid transparent !important;
-        font-weight: 600;
+        justify-content: flex-start; background: transparent !important; color: #334155 !important;
+        border: none !important; font-weight: 500; padding: 0.55rem 0.8rem; border-radius: 10px !important; box-shadow: none !important;
     }
-    [data-testid="stSidebar"] .stButton>button:hover {
-        background-color: #f8f9fa !important; /* Cinza claro no hover */
-        border: 1px solid transparent !important;
+    [data-testid="stSidebar"] .stButton>button:hover { background: #f1f5f9 !important; color: #0f172a !important; }
+    [data-testid="stSidebar"] .stButton>button[kind="primary"] { background: #f1f5f9 !important; color: #0f172a !important; font-weight: 600; box-shadow: inset 3px 0 0 #0f172a !important; }
+    .pm-brand { display:flex; align-items:center; gap:10px; font-weight:800; font-size:1.05rem; color:#0f172a; padding: 0 0.3rem 0.6rem; }
+    .pm-brand-badge { width:34px; height:34px; border-radius:10px; background:#0f172a; color:#fff; display:flex; align-items:center; justify-content:center; font-size:1rem; }
+    .pm-user { display:flex; align-items:center; gap:10px; padding:0.5rem 0.3rem; }
+    .pm-avatar { width:34px; height:34px; border-radius:50%; background:#0f172a; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:0.85rem; }
+    .pm-user-name { font-weight:600; font-size:0.9rem; color:#0f172a; line-height:1.1; } .pm-user-role { font-size:0.75rem; color:#64748b; }
+    .pm-side-label { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:#94a3b8; font-weight:600; margin:0.4rem 0 0.2rem; }
+
+    /* Cabeçalho de página e secções */
+    .pm-page-title { font-size: 2rem; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; line-height: 1.15; }
+    .pm-page-sub { color: #64748b; font-size: 1rem; margin-top: 4px; }
+    .pm-section-q { font-size: 1.35rem; font-weight: 700; color: #0f172a; margin-top: 0.6rem; }
+    .pm-section-t { color: #64748b; margin-bottom: 0.9rem; }
+    .pm-note { background:#eff6ff; border:1px solid #dbeafe; color:#1e3a8a; border-radius:12px; padding:0.6rem 0.9rem; font-size:0.88rem; margin:0.4rem 0 0.8rem; }
+
+    /* Cartões (containers com borda) */
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) , div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 16px !important; border-color: var(--border-color) !important; background: #ffffff;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04);
     }
-    
-    /* --- CARTÕES (Cards) --- */
-    .card {
-        background-color: var(--card-background-color);
-        color: var(--text-color);
-        border-radius: 8px;
-        padding: 20px 25px;
-        border: 1px solid var(--border-color);
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        margin-bottom: 25px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); /* Sombra suave */
-    }
-    .card-header { padding-bottom: 10px; border-bottom: 1px solid var(--border-color); }
-    .card .card-header h4 {
-        color: var(--text-color);
-        font-size: 1.1rem;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        gap: 10px; /* Espaço entre ícone e texto */
-    }
-    .card .card-header h4 i { /* Estilo para os ícones */
-        font-size: 1.2rem;
-        color: var(--primary-color);
-    }
-    .card-body { flex-grow: 1; padding-top: 15px; }
-    .dataframe-card-body {
-        max-height: 300px;
-        overflow-y: auto;
-        overflow-x: auto;
-        padding: 0;
-    }
-    
-    /* --- CARTÕES DE MÉTRICAS (KPIs) --- */
-    [data-testid="stMetric"] {
-        background-color: var(--card-background-color);
-        border: 1px solid var(--border-color);
-        border-left: 4px solid var(--primary-color); /* Borda de destaque à esquerda */
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
+    .pm-card-head { display:flex; align-items:flex-start; gap:12px; margin: 0.2rem 0 0.5rem; }
+    .pm-card-icon { width:36px; height:36px; border-radius:10px; background:#f1f5f9; color:#0f172a; display:flex; align-items:center; justify-content:center; font-size:1.05rem; flex-shrink:0; }
+    .pm-card-title { font-weight: 700; font-size: 1.02rem; color: #0f172a; }
+    .pm-card-sub { color: #64748b; font-size: 0.84rem; margin-top: 1px; }
+
+    /* KPIs */
+    .pm-kpi-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin: 0.3rem 0 1.1rem; }
+    .pm-kpi { background:#ffffff; border:1px solid var(--border-color); border-radius:16px; padding:18px 20px;
+              box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04); }
+    .pm-kpi-top { display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px; }
+    .pm-kpi-icon { width:40px; height:40px; border-radius:12px; background:#f1f5f9; display:flex; align-items:center; justify-content:center; font-size:1.15rem; color:#0f172a; }
+    .pm-kpi-value.small { font-size: 1.05rem !important; line-height:1.3; }
+    .pm-kpi-value { font-size: 1.75rem; font-weight: 800; color:#0f172a; letter-spacing:-0.02em; line-height:1.1; overflow-wrap:anywhere; }
+    .pm-kpi-label { color:#64748b; font-size:0.88rem; margin-top:4px; }
+    .pm-kpi-delta { font-size:0.8rem; font-weight:600; white-space:nowrap; } .pm-kpi-delta.up { color:#16a34a; } .pm-kpi-delta.down { color:#dc2626; } .pm-kpi-delta.neu { color:#64748b; }
+
+    /* Tabela de variantes */
+    .pm-table { width:100%; border-collapse:collapse; font-size:0.86rem; }
+    .pm-table th { text-align:left; color:#64748b; font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border-color); }
+    .pm-table td { padding:10px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    .pm-table tr:hover td { background:#f8fafc; }
+    .pm-vr { color:#94a3b8; font-weight:600; width:36px; } .pm-num { text-align:right; white-space:nowrap; font-weight:600; color:#0f172a; }
+    .pm-sub { color:#94a3b8; font-size:0.75rem; font-weight:400; }
+    .pm-chips { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+    .pm-chip { background:#f1f5f9; color:#334155; border-radius:999px; padding:3px 10px; font-size:0.78rem; white-space:nowrap; }
+    .pm-chip.dev { background:#fee2e2; color:#991b1b; font-weight:600; }
+    .pm-sep { color:#cbd5e1; font-size:0.7rem; }
+
+    /* Navegação por secções (segmented control) */
+    [data-testid="stButtonGroup"] { margin: 0.6rem 0 0.4rem; }
+    [data-testid="stButtonGroup"] button { border-radius: 10px !important; font-weight: 500; }
+
+    /* Métricas nativas e botões */
+    [data-testid="stMetric"] { background:#ffffff; border:1px solid var(--border-color); border-radius:16px; padding:18px 20px; box-shadow: 0 1px 2px rgba(15,23,42,0.04); }
     [data-testid="stMetric"] label { color: var(--text-muted-color) !important; }
-    [data-testid="stMetric"] [data-testid="stMetricValue"] { color: var(--text-color) !important; }
-    [data-testid="stMetric"] [data-testid="stMetricDelta"] svg { display: none; } /* Opcional: Esconde setas padrão */
+    [data-testid="stMetricValue"] { font-weight: 800; color:#0f172a !important; }
+    .stButton>button, .stDownloadButton>button { border-radius: 10px !important; font-weight: 600; }
+    .stButton>button[kind="primary"] { background:#0f172a; border-color:#0f172a; }
+    [data-testid="stExpander"] { border-radius: 14px; background:#ffffff; border-color: var(--border-color); }
+    [data-testid="stDataFrame"] { border-radius: 12px; }
 
-    /* --- ÍCONE DE TOOLTIP PARA OS CARTÕES --- */
-    .card-header {
-        position: relative; /* Necessário para posicionar o ícone */
-    }
-    .tooltip-icon {
-        position: absolute;
-        top: 15px;
-        right: 15px;
-        font-size: 1rem;
-        color: var(--secondary-color);
-        cursor: help; /* Muda o cursor para indicar que é clicável/informativo */
-    }
-    .tooltip-icon:hover {
-        color: var(--primary-color);
-    }
-    
-    /* Botões */
-    .stButton>button {
-        border-radius: 8px !important;
-        font-weight: 600;
-    }
+    /* Cartões antigos (relatório RL, etc.) */
+    .card { background:#ffffff; border-radius:16px; padding:18px 22px; border:1px solid var(--border-color); margin-bottom:20px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 16px rgba(15,23,42,0.04); }
+    .card-header { padding-bottom:10px; border-bottom:1px solid #f1f5f9; position:relative; }
+    .card .card-header h4 { font-size:1.02rem; margin:0; display:flex; align-items:center; gap:10px; }
+    .card .card-header h4 i { font-size:1.1rem; color:#0f172a; }
+    .card-body { padding-top: 14px; } .dataframe-card-body { max-height:320px; overflow:auto; padding:0; }
+    .tooltip-icon { position:absolute; top:4px; right:0; color:#94a3b8; cursor:help; }
+    .iniciar-analise-button .stButton>button { background:#0f172a !important; color:#fff !important; border-color:#0f172a !important; }
 
-    /* Botão de Análise (cor de destaque) */
-    .iniciar-analise-button .stButton>button {
-        background-color: var(--warning-color) !important;
-        color: var(--text-color) !important;
-        border: 2px solid var(--warning-color) !important;
-    }
-
+    /* Login */
+    .pm-login-title { font-size:1.6rem; font-weight:800; color:#0f172a; text-align:center; margin-top:0.5rem; }
+    .pm-login-sub { color:#64748b; text-align:center; margin-bottom:1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3358,17 +3337,23 @@ def render_diagnostics_page():
 # --- PÁGINA DE LOGIN ---
 
 def login_page():
-    st.markdown("<h2>✨ Transformação Inteligente de Processos</h2>", unsafe_allow_html=True)
-    username = st.text_input("Utilizador", placeholder="Vasco", value="Vasco")
-    password = st.text_input("Senha", type="password", placeholder="1234", value="1234")
-    if st.button("Entrar", use_container_width=True):
+    _, mid, _ = st.columns([1, 1.1, 1])
+    with mid:
+        st.markdown("<div style='height:8vh'></div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("<div style='display:flex;justify-content:center;margin-top:10px'><span class='pm-brand-badge' style='width:48px;height:48px;font-size:1.4rem'><i class='bi bi-diagram-3-fill'></i></span></div>"
+                        "<div class='pm-login-title'>Process Intelligence</div><div class='pm-login-sub'>Transformação inteligente de processos</div>", unsafe_allow_html=True)
+            username = st.text_input("Utilizador", placeholder="Vasco", value="Vasco")
+            password = st.text_input("Senha", type="password", placeholder="1234", value="1234")
+            entrar = st.button("Entrar", use_container_width=True, type="primary")
+    if entrar:
         if username == "Vasco" and password == "1234":
             st.session_state.authenticated = True
             st.session_state.user_name = "Vasco"
             st.session_state.show_welcome_message = True
             st.rerun()
         else:
-            st.error("Utilizador ou senha inválidos.")
+            with mid: st.error("Utilizador ou senha inválidos.")
 
 
 # --- PÁGINA DE CONFIGURAÇÕES / UPLOAD ---
@@ -3459,7 +3444,7 @@ def _upload_single_log():
     return raw
 
 def settings_page():
-    st.title("⚙️ Configurações e Upload de Dados")
+    ui_page_header("Dados e Configurações", "Carregue o histórico de processos e veja que análises os dados permitem")
     st.warning("Se carregou novos ficheiros CSV, clique primeiro neste botão para limpar a memória da aplicação antes de iniciar a nova análise.")
     if st.button("🔴 Limpar Cache e Recomeçar Análise"):
         st.cache_data.clear()
@@ -3534,6 +3519,7 @@ def settings_page():
             st.session_state.plots_eda = plots_eda
             st.session_state.tables_eda = tables_eda
             st.session_state.pop('rl_sample_ids', None)
+            st.session_state.view = None
             st.session_state.rl_analysis_run = False
 
         st.session_state.analysis_run = True
@@ -3871,8 +3857,866 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
 
 
 # --- PÁGINA DO DASHBOARD ---
+
+# =====================================================================================
+# --- CAMADA VISUAL V2: gráficos interativos (Plotly), cartões e secções por área ---
+# Os cálculos partem das tabelas já normalizadas/processadas (não das imagens matplotlib).
+# Os gráficos matplotlib continuam a ser gerados para o relatório PDF.
+# =====================================================================================
+import plotly.graph_objects as go
+import plotly.express as px
+
+UI = dict(ink='#0f172a', text='#334155', muted='#64748b', line='#e5e7eb', grid='#f1f5f9', bg='#f7f8fa',
+          blue='#2563eb', green='#16a34a', red='#dc2626', amber='#d97706', purple='#7c3aed', teal='#0d9488')
+UI_SEQ = ['#2563eb', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#16a34a', '#64748b', '#ea580c', '#4f46e5', '#0891b2']
+
+
+def _style(fig, height=340, legend=True):
+    fig.update_layout(template='plotly_white', height=height, margin=dict(l=8, r=8, t=12, b=8),
+                      font=dict(family='Inter, Poppins, sans-serif', size=12, color=UI['text']),
+                      colorway=UI_SEQ, showlegend=legend, plot_bgcolor='white', paper_bgcolor='white',
+                      legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0, title_text=''),
+                      hoverlabel=dict(bgcolor='white', bordercolor=UI['line'], font=dict(color=UI['ink'])))
+    fig.update_xaxes(showgrid=False, linecolor=UI['line'], ticks='', title_font=dict(color=UI['muted']))
+    fig.update_yaxes(gridcolor=UI['grid'], zeroline=False, linecolor=UI['line'], title_font=dict(color=UI['muted']))
+    return fig
+
+
+def ui_page_header(title, subtitle):
+    st.markdown(f"<div class='pm-page-title'>{title}</div><div class='pm-page-sub'>{subtitle}</div>", unsafe_allow_html=True)
+
+
+def ui_section_intro(question, text):
+    st.markdown(f"<div class='pm-section-q'>{question}</div><div class='pm-section-t'>{text}</div>", unsafe_allow_html=True)
+
+
+def ui_kpis(items):
+    """items: lista de dicts {icon, value, label, delta (texto), good (True/False/None), help}"""
+    if not items:
+        return
+    cards = []
+    for it in items:
+        delta = it.get('delta')
+        if delta:
+            good = it.get('good')
+            cls = 'up' if good is True else ('down' if good is False else 'neu')
+            arrow = 'bi-arrow-up-right' if good is True else ('bi-arrow-down-right' if good is False else 'bi-dash')
+            delta_html = f"<span class='pm-kpi-delta {cls}'><i class='bi {arrow}'></i> {delta}</span>"
+        else:
+            delta_html = ""
+        title_attr = f" title='{html.escape(it.get('help', ''), quote=True)}'" if it.get('help') else ""
+        cards.append(f"<div class='pm-kpi'{title_attr}><div class='pm-kpi-top'><span class='pm-kpi-icon'><i class='bi {it.get('icon', 'bi-graph-up')}'></i></span>{delta_html}</div>"
+                     f"<div class='pm-kpi-value{' small' if len(str(it['value'])) > 12 else ''}'>{it['value']}</div><div class='pm-kpi-label'>{it['label']}</div></div>")
+    st.markdown(f"<div class='pm-kpi-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def ui_card_header(title, subtitle=None, icon=None):
+    ic = f"<span class='pm-card-icon'><i class='bi {icon}'></i></span>" if icon else ""
+    sub = f"<div class='pm-card-sub'>{subtitle}</div>" if subtitle else ""
+    st.markdown(f"<div class='pm-card-head'>{ic}<div><div class='pm-card-title'>{title}</div>{sub}</div></div>", unsafe_allow_html=True)
+
+
+def ui_chart(fig, title, subtitle=None, icon=None, key=None):
+    if fig is None:
+        return
+    with st.container(border=True):
+        ui_card_header(title, subtitle, icon)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False}, key=key)
+
+
+def ui_note(text):
+    st.markdown(f"<div class='pm-note'><i class='bi bi-info-circle'></i> {text}</div>", unsafe_allow_html=True)
+
+
+def _fmt_days(x):
+    return "—" if x is None or pd.isna(x) else f"{x:,.1f} dias".replace(',', ' ')
+
+
+def _fmt_eur(x):
+    return "—" if x is None or pd.isna(x) else f"€{x:,.0f}".replace(',', ' ')
+
+
+def _pct_change(new, old):
+    if old is None or new is None or pd.isna(old) or pd.isna(new) or old == 0:
+        return None
+    return (new - old) / abs(old) * 100
+
+
+# ---------------------------------------------------------------------------------
+# Preparação da "vista": tabelas derivadas, calculadas uma vez e depois filtradas
+# ---------------------------------------------------------------------------------
+def prepare_view(dp, dt, dr, alloc):
+    P = dp.copy()
+    for c in ['start_date', 'end_date', 'planned_end_date']:
+        if c in P.columns: P[c] = pd.to_datetime(P[c], errors='coerce')
+    P['project_id'] = P['project_id'].astype(str)
+    P['lead_time'] = (P['end_date'] - P['start_date']).dt.days
+    P['end_month'] = P['end_date'].dt.to_period('M').dt.to_timestamp()
+    P['start_month'] = P['start_date'].dt.to_period('M').dt.to_timestamp()
+
+    T = dt.copy()
+    T['project_id'] = T['project_id'].astype(str); T['task_id'] = T['task_id'].astype(str)
+    for c in ['start_date', 'end_date']: T[c] = pd.to_datetime(T[c], errors='coerce')
+    T['_o'] = pd.to_numeric(T['task_id'], errors='coerce')
+    T = T.sort_values(['project_id', 'start_date', 'end_date', '_o']).drop(columns='_o')
+    T['dur_days'] = (T['end_date'] - T['start_date']).dt.total_seconds() / 86400
+    T['prev_task'] = T.groupby('project_id')['task_name'].shift(1)
+    T['prev_end'] = T.groupby('project_id')['end_date'].shift(1)
+    T['wait_days'] = ((T['start_date'] - T['prev_end']).dt.total_seconds() / 86400).clip(lower=0)
+    T['seq'] = T.groupby('project_id').cumcount()
+    T['repeat'] = T.groupby(['project_id', 'task_name']).cumcount() > 0
+
+    var = T.groupby('project_id')['task_name'].agg(tuple)
+    vc = var.value_counts()
+    rank = {v: i + 1 for i, v in enumerate(vc.index)}
+    P['variant'] = P['project_id'].map(var)
+    P['variant_rank'] = P['variant'].map(rank)
+    P['happy_path'] = P['variant_rank'] == 1
+    P['has_rework'] = P['project_id'].map(T.groupby('project_id')['repeat'].any()).fillna(False)
+    P['n_tasks'] = P['project_id'].map(T.groupby('project_id').size())
+    P['wait_total'] = P['project_id'].map(T.groupby('project_id')['wait_days'].sum())
+
+    A = alloc.copy()
+    A['task_id'] = A['task_id'].astype(str); A['resource_id'] = A['resource_id'].astype(str); A['project_id'] = A['project_id'].astype(str)
+    A['allocation_date'] = pd.to_datetime(A['allocation_date'], errors='coerce')
+    R = dr.copy(); R['resource_id'] = R['resource_id'].astype(str)
+    A = A.merge(R[['resource_id', 'resource_name', 'resource_type', 'cost_per_hour']], on='resource_id', how='left')
+    A['cost'] = A['hours_worked'] * A['cost_per_hour'].fillna(0)
+    A = A.merge(T[['task_id', 'task_name']], on='task_id', how='left')
+    # recurso principal de cada tarefa
+    main = A.groupby(['task_id', 'resource_id', 'resource_name', 'resource_type'])['hours_worked'].sum().reset_index() \
+            .sort_values('hours_worked', ascending=False).drop_duplicates('task_id')
+    T = T.merge(main[['task_id', 'resource_name', 'resource_type']], on='task_id', how='left')
+    T['prev_role'] = T.groupby('project_id')['resource_type'].shift(1)
+    return {'P': P, 'T': T, 'A': A, 'R': R}
+
+
+def apply_view_filters(V, period=None, types=None, variant_mode='Todos'):
+    P = V['P']
+    m = pd.Series(True, index=P.index)
+    if period is not None:
+        m &= (P['end_date'] >= pd.Timestamp(period[0])) & (P['end_date'] <= pd.Timestamp(period[1]) + pd.Timedelta(days=1))
+    if types:
+        m &= P['path_name'].isin(types)
+    if variant_mode == 'Só caminho principal':
+        m &= P['happy_path']
+    elif variant_mode == 'Só desvios ao caminho principal':
+        m &= ~P['happy_path']
+    ids = set(P.loc[m, 'project_id'])
+    return {'P': P[m], 'T': V['T'][V['T']['project_id'].isin(ids)], 'A': V['A'][V['A']['project_id'].isin(ids)], 'R': V['R']}
+
+
+def _full_months(P):
+    """Meses com volume representativo (>= 30% da mediana mensal). Os meses das pontas costumam estar incompletos."""
+    c = P.groupby('end_month').size()
+    return set(c[c >= 0.3 * c.median()].index) if len(c) else set()
+
+
+def _monthly(P):
+    g = P.groupby('end_month').agg(concluidos=('project_id', 'count'), lead_mean=('lead_time', 'mean'),
+                                   lead_p50=('lead_time', 'median'), lead_p90=('lead_time', lambda x: x.quantile(0.9))).reset_index()
+    full = _full_months(P)
+    g.loc[~g['end_month'].isin(full), ['lead_mean', 'lead_p50', 'lead_p90']] = np.nan  # não desenhar médias de meses incompletos
+    return g
+
+
+def _recent_vs_prev(P, col, agg='mean', months=3):
+    """Compara os últimos N meses (por mês de conclusão) com os N anteriores. Devolve (atual, anterior)."""
+    mm = sorted(_full_months(P))
+    if len(mm) < 2 * months:
+        return None, None
+    cur = P[P['end_month'].isin(mm[-months:])][col]; prev = P[P['end_month'].isin(mm[-2 * months:-months])][col]
+    f = (lambda s: s.mean()) if agg == 'mean' else (lambda s: s.median()) if agg == 'median' else agg
+    return f(cur), f(prev)
+
+
+def _delta_kpi(P, col, agg='mean', lower_is_better=True, unit='%'):
+    """Variação dos últimos 3 meses completos face aos 3 anteriores. unit='pp' para taxas (diferença em pontos percentuais)."""
+    cur, prev = _recent_vs_prev(P, col, agg)
+    if cur is None or prev is None or pd.isna(cur) or pd.isna(prev):
+        return None, None
+    if unit == 'pp':
+        ch = (cur - prev) * 100
+        if abs(ch) < 0.5: return f"{ch:+.1f} p.p. (estável)", None
+        return f"{ch:+.1f} p.p. vs 3 meses anteriores", (ch < 0) if lower_is_better else (ch > 0)
+    ch = _pct_change(cur, prev)
+    if ch is None:
+        return None, None
+    if abs(ch) < 1: return f"{ch:+.1f}% (estável)", None
+    return f"{ch:+.1f}% vs 3 meses anteriores", (ch < 0) if lower_is_better else (ch > 0)
+
+
+# ---------------------------------------------------------------------------------
+# Gráficos (cada função devolve uma figura Plotly ou None)
+# ---------------------------------------------------------------------------------
+def fig_volume_leadtime(P):
+    m = _monthly(P)
+    if m.empty: return None
+    fig = go.Figure()
+    fig.add_bar(x=m['end_month'], y=m['concluidos'], name='Processos concluídos', marker_color='#cbd5e1', yaxis='y2',
+                hovertemplate='%{x|%b %Y}<br>%{y} concluídos<extra></extra>')
+    fig.add_scatter(x=m['end_month'], y=m['lead_p50'], name='Duração mediana (P50)', mode='lines+markers', line=dict(color=UI['blue'], width=3),
+                    hovertemplate='%{x|%b %Y}<br>P50: %{y:.1f} dias<extra></extra>')
+    fig.add_scatter(x=m['end_month'], y=m['lead_p90'], name='Duração P90 (10% mais lentos)', mode='lines', line=dict(color=UI['amber'], width=2, dash='dot'),
+                    hovertemplate='%{x|%b %Y}<br>P90: %{y:.1f} dias<extra></extra>')
+    fig.update_layout(yaxis=dict(title='Duração (dias)'), yaxis2=dict(title='Concluídos', overlaying='y', side='right', showgrid=False))
+    return _style(fig, 360)
+
+
+def fig_wip(P):
+    """NOVO: entradas vs saídas por mês e processos em curso (backlog)."""
+    if P.empty: return None
+    months = pd.period_range(P['start_date'].min(), P['end_date'].max(), freq='M').to_timestamp()
+    ent = P.groupby('start_month').size().reindex(months, fill_value=0)
+    sai = P.groupby('end_month').size().reindex(months, fill_value=0)
+    wip = [((P['start_date'] <= m + pd.offsets.MonthEnd(0)) & (P['end_date'] > m + pd.offsets.MonthEnd(0))).sum() for m in months]
+    fig = go.Figure()
+    fig.add_bar(x=months, y=ent.values, name='Entradas', marker_color=UI['blue'], opacity=0.85)
+    fig.add_bar(x=months, y=sai.values, name='Conclusões', marker_color=UI['teal'], opacity=0.85)
+    fig.add_scatter(x=months, y=wip, name='Em curso no fim do mês', mode='lines', line=dict(color=UI['ink'], width=2.5))
+    fig.update_layout(barmode='group', yaxis_title='Nº de processos')
+    return _style(fig, 340)
+
+
+def fig_leadtime_dist(P):
+    s = P['lead_time'].dropna()
+    if s.empty: return None
+    fig = px.histogram(P, x='lead_time', nbins=40, color_discrete_sequence=[UI['blue']])
+    fig.update_traces(hovertemplate='%{x} dias<br>%{y} processos<extra></extra>', marker_line_width=0)
+    for q, lbl, col in [(0.5, 'P50', UI['ink']), (0.9, 'P90', UI['amber'])]:
+        v = s.quantile(q)
+        fig.add_vline(x=v, line=dict(color=col, dash='dash', width=2))
+        fig.add_annotation(x=v, y=1, yref='paper', text=f"{lbl}: {v:.0f} d", showarrow=False, xanchor='left', yanchor='top', font=dict(color=col))
+    fig.update_layout(xaxis_title='Duração do processo (dias)', yaxis_title='Nº de processos', bargap=0.05)
+    return _style(fig, 320, legend=False)
+
+
+def fig_leadtime_by_type(P):
+    """NOVO: comparação da duração por tipo de processo."""
+    if P['path_name'].nunique() < 2: return None
+    order = P.groupby('path_name')['lead_time'].median().sort_values().index.tolist()
+    fig = px.box(P, x='lead_time', y='path_name', category_orders={'path_name': order}, points=False, color_discrete_sequence=[UI['blue']])
+    fig.update_layout(xaxis_title='Duração (dias)', yaxis_title='')
+    return _style(fig, max(260, 46 * len(order)), legend=False)
+
+
+def fig_status(P):
+    s = P['project_status'].value_counts()
+    fig = go.Figure(go.Pie(labels=s.index, values=s.values, hole=0.62, marker=dict(colors=UI_SEQ), textinfo='percent',
+                           hovertemplate='%{label}: %{value}<extra></extra>'))
+    return _style(fig, 300)
+
+
+def build_dfg_dot(T, metric='freq', min_share=0.02, total_cases=None):
+    """DFG em Graphviz (nativo no Streamlit, nítido). metric: 'freq' (nº de casos) ou 'wait' (espera média)."""
+    if T.empty: return None
+    total_cases = total_cases or T['project_id'].nunique()
+    starts = T.groupby('project_id').first()['task_name'].value_counts()
+    ends = T.groupby('project_id').last()['task_name'].value_counts()
+    e = T.dropna(subset=['prev_task']).groupby(['prev_task', 'task_name']).agg(n=('project_id', 'nunique'), wait=('wait_days', 'mean')).reset_index()
+    e = e[e['n'] >= max(1, min_share * total_cases)]
+    acts = T['task_name'].value_counts()
+    keep = set(e['prev_task']) | set(e['task_name']) | set(starts.index[:3])
+    wmax = max(e['wait'].max(), 0.01) if not e.empty else 1
+    def wcol(w):
+        r = min(w / wmax, 1.0)
+        c1, c2 = (37, 99, 235), (220, 38, 38)
+        return '#%02x%02x%02x' % tuple(int(c1[i] + (c2[i] - c1[i]) * r) for i in range(3))
+    lines = ['digraph G {', 'rankdir=TB; bgcolor="transparent"; nodesep=0.35; ranksep=0.35; size="9,11";',
+             'node [shape=box style="rounded,filled" fillcolor="#ffffff" color="#cbd5e1" fontname="Helvetica" fontsize=11 fontcolor="#0f172a" margin="0.18,0.08"];',
+             'edge [fontname="Helvetica" fontsize=9 fontcolor="#475569" arrowsize=0.6];',
+             '"__start" [label="" shape=circle width=0.22 style=filled fillcolor="#16a34a" color="#16a34a"];',
+             '"__end" [label="" shape=doublecircle width=0.18 style=filled fillcolor="#0f172a" color="#0f172a"];']
+    for a in keep:
+        lines.append(f'"{a}" [label="{a}\\n{acts.get(a, 0):,} ×"];')
+    for a, n in starts.items():
+        if a in keep and n >= min_share * total_cases:
+            lines.append(f'"__start" -> "{a}" [color="#94a3b8" penwidth={1 + 4 * n / total_cases:.2f} label="{n / total_cases:.0%}"];')
+    for a, n in ends.items():
+        if a in keep and n >= min_share * total_cases:
+            lines.append(f'"{a}" -> "__end" [color="#94a3b8" penwidth={1 + 4 * n / total_cases:.2f}];')
+    for _, r in e.iterrows():
+        pw = 1 + 5 * r['n'] / total_cases
+        if metric == 'wait':
+            lab = f"{r['wait']:.1f} d" if r['wait'] >= 0.05 else "0 d"; col = wcol(r['wait'])
+        else:
+            lab = f"{r['n'] / total_cases:.0%}"; col = '#475569'
+        lines.append(f'"{r["prev_task"]}" -> "{r["task_name"]}" [label="{lab}" color="{col}" penwidth={pw:.2f}];')
+    lines.append('}')
+    return '\n'.join(lines)
+
+
+def variants_table_html(P, T, top=8):
+    vc = P['variant'].value_counts()
+    if vc.empty: return ""
+    happy = vc.index[0]
+    stats = P.groupby('variant').agg(n=('project_id', 'count'), dur=('lead_time', 'median'))
+    rows = []
+    for i, (v, n) in enumerate(vc.head(top).items()):
+        dur = stats.loc[[v], 'dur'].iloc[0]
+        chips = []
+        okpos = set()
+        for blk in difflib.SequenceMatcher(None, list(happy), list(v), autojunk=False).get_matching_blocks():
+            okpos.update(range(blk.b, blk.b + blk.size))
+        for k, a in enumerate(v):
+            dev = k not in okpos
+            chips.append(f"<span class='pm-chip{' dev' if dev and i > 0 else ''}'>{html.escape(str(a))}</span>")
+        sep = "<i class='bi bi-chevron-right pm-sep'></i>"
+        rows.append(f"<tr><td class='pm-vr'>#{i + 1}</td><td><div class='pm-chips'>{sep.join(chips)}</div></td>"
+                    f"<td class='pm-num'>{n:,}<div class='pm-sub'>{n / len(P):.1%}</div></td><td class='pm-num'>{dur:.0f} d</td></tr>")
+    return ("<table class='pm-table'><thead><tr><th></th><th>Sequência de atividades</th><th>Processos</th><th>Duração mediana</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table><div class='pm-sub' style='margin-top:6px'>A vermelho: passos que diferem do caminho principal (#1). "
+            f"Total de variantes: {len(vc):,}.</div>")
+
+
+def fig_rework_impact(P):
+    """NOVO: impacto do rework na duração."""
+    if not P['has_rework'].any() or P['has_rework'].all(): return None
+    d = P.assign(grupo=np.where(P['has_rework'], 'Com rework', 'Sem rework'))
+    fig = px.box(d, x='lead_time', y='grupo', color='grupo', points=False,
+                 color_discrete_map={'Com rework': UI['red'], 'Sem rework': UI['blue']})
+    fig.update_layout(xaxis_title='Duração do processo (dias)', yaxis_title='')
+    return _style(fig, 220, legend=False)
+
+
+def rework_loops_df(T):
+    r = T[T['repeat']]
+    if r.empty: return pd.DataFrame()
+    back = r.groupby(['prev_task', 'task_name']).agg(ocorrencias=('project_id', 'size'), processos=('project_id', 'nunique'), espera_media=('wait_days', 'mean')).reset_index()
+    back['Retorno'] = back['prev_task'] + ' → ' + back['task_name']
+    return back.sort_values('processos', ascending=False)[['Retorno', 'processos', 'ocorrencias', 'espera_media']].rename(
+        columns={'processos': 'Processos', 'ocorrencias': 'Ocorrências', 'espera_media': 'Espera (d)'}).head(10)
+
+
+def fig_activity_freq(T, P):
+    n = P['project_id'].nunique()
+    a = T.groupby('task_name').agg(ocorr=('task_id', 'size'), casos=('project_id', 'nunique')).reset_index()
+    a['pct'] = a['casos'] / max(n, 1) * 100
+    a = a.sort_values('ocorr')
+    fig = go.Figure(go.Bar(x=a['ocorr'], y=a['task_name'], orientation='h', marker_color=UI['blue'],
+                           customdata=a[['pct', 'casos']], text=[f"{p:.0f}% dos processos" for p in a['pct']], textposition='inside', insidetextanchor='end', textfont=dict(color='white'),
+                           hovertemplate='%{y}<br>%{x:,} execuções · %{customdata[1]:,} processos (%{customdata[0]:.0f}%)<extra></extra>'))
+    fig.update_layout(xaxis_title='Nº de execuções', yaxis_title='')
+    return _style(fig, max(260, 30 * len(a)), legend=False)
+
+
+def fig_conformance_month(P):
+    m = P.groupby('end_month').agg(happy=('happy_path', 'mean'), rework=('has_rework', 'mean')).reset_index()
+    m = m[m['end_month'].isin(_full_months(P))]
+    if len(m) < 2: return None
+    fig = go.Figure()
+    fig.add_scatter(x=m['end_month'], y=m['happy'] * 100, name='% no caminho principal', mode='lines+markers', line=dict(color=UI['blue'], width=3))
+    fig.add_scatter(x=m['end_month'], y=m['rework'] * 100, name='% com rework', mode='lines+markers', line=dict(color=UI['red'], width=2))
+    fig.update_layout(yaxis_title='% dos processos concluídos', yaxis_range=[0, 105])
+    return _style(fig, 300)
+
+
+def fig_service_vs_wait(T):
+    a = T.groupby('task_name').agg(exec=('dur_days', 'mean'), wait=('wait_days', 'mean'), n=('task_id', 'size')).reset_index()
+    a['total'] = a['exec'] + a['wait']; a = a.sort_values('total')
+    fig = go.Figure()
+    fig.add_bar(y=a['task_name'], x=a['exec'], name='Execução', orientation='h', marker_color=UI['blue'],
+                hovertemplate='%{y}<br>Execução: %{x:.1f} dias<extra></extra>')
+    fig.add_bar(y=a['task_name'], x=a['wait'], name='Espera antes de começar', orientation='h', marker_color=UI['amber'],
+                hovertemplate='%{y}<br>Espera: %{x:.1f} dias<extra></extra>')
+    fig.update_layout(barmode='stack', xaxis_title='Dias (média por execução)', yaxis_title='')
+    return _style(fig, max(280, 32 * len(a)))
+
+
+def fig_top_handoffs(T, cost_per_day=None):
+    e = T.dropna(subset=['prev_task'])
+    e = e[~e['repeat']]
+    h = e.groupby(['prev_task', 'task_name']).agg(wait=('wait_days', 'mean'), n=('project_id', 'nunique'), tot=('wait_days', 'sum')).reset_index()
+    h = h[h['n'] >= max(3, 0.01 * T['project_id'].nunique())]
+    if h.empty: return None
+    h['lbl'] = h['prev_task'] + ' → ' + h['task_name']
+    h = h.sort_values('tot').tail(10)
+    txt = [f"{w:.1f} d · {n:,} proc." for w, n in zip(h['wait'], h['n'])]
+    hov = '%{y}<br>Espera média: %{customdata[0]:.1f} dias<br>Processos: %{customdata[1]:,}<br>Total de dias parados: %{x:,.0f}'
+    cd = h[['wait', 'n']].values
+    if cost_per_day:
+        h['custo'] = h['tot'] * cost_per_day; cd = h[['wait', 'n', 'custo']].values; hov += '<br>Custo estimado: €%{customdata[2]:,.0f}'
+    fig = go.Figure(go.Bar(x=h['tot'], y=h['lbl'], orientation='h', marker_color=UI['amber'], text=txt, textposition='inside', insidetextanchor='end',
+                           customdata=cd, hovertemplate=hov + '<extra></extra>'))
+    fig.update_layout(xaxis_title='Total de dias de espera (soma em todos os processos)', yaxis_title='')
+    return _style(fig, max(320, 38 * len(h)), legend=False)
+
+
+def fig_wait_matrix(T):
+    e = T.dropna(subset=['prev_task'])
+    mtx = e.pivot_table(index='prev_task', columns='task_name', values='wait_days', aggfunc='mean')
+    cnt = e.pivot_table(index='prev_task', columns='task_name', values='wait_days', aggfunc='size')
+    if mtx.empty: return None
+    order = T.groupby('task_name')['seq'].median().sort_values().index.tolist()
+    mtx = mtx.reindex(index=[o for o in order if o in mtx.index], columns=[o for o in order if o in mtx.columns])
+    cnt = cnt.reindex_like(mtx)
+    txt = np.where(mtx.notna(), mtx.round(1).astype(str), '')
+    fig = go.Figure(go.Heatmap(z=mtx.values, x=mtx.columns, y=mtx.index, colorscale=[[0, '#eff6ff'], [0.5, '#93c5fd'], [1, '#b91c1c']],
+                               text=txt, texttemplate='%{text}', customdata=cnt.values, xgap=2, ygap=2,
+                               hovertemplate='De: %{y}<br>Para: %{x}<br>Espera média: %{z:.1f} dias<br>Ocorrências: %{customdata}<extra></extra>',
+                               colorbar=dict(title='dias', thickness=10)))
+    fig.update_layout(xaxis_title='Atividade seguinte', yaxis_title='Atividade anterior', yaxis_autorange='reversed')
+    fig.update_xaxes(tickangle=-30)
+    return _style(fig, 460, legend=False)
+
+
+def fig_wait_month(T, P):
+    d = T.merge(P[['project_id', 'end_month']], on='project_id')
+    m = d.groupby('end_month').agg(exec=('dur_days', 'sum'), wait=('wait_days', 'sum'), n=('project_id', 'nunique')).reset_index()
+    m = m[m['end_month'].isin(_full_months(P))]
+    if len(m) < 2: return None
+    m['exec'] /= m['n']; m['wait'] /= m['n']
+    fig = go.Figure()
+    fig.add_scatter(x=m['end_month'], y=m['wait'], name='Espera por processo', stackgroup='a', line=dict(color=UI['amber']))
+    fig.add_scatter(x=m['end_month'], y=m['exec'], name='Execução por processo', stackgroup='a', line=dict(color=UI['blue']))
+    fig.update_layout(yaxis_title='Dias por processo')
+    return _style(fig, 300)
+
+
+def fig_task_duration_box(T):
+    order = T.groupby('task_name')['dur_days'].median().sort_values().index.tolist()
+    fig = px.box(T, x='dur_days', y='task_name', category_orders={'task_name': order}, points='outliers', color_discrete_sequence=[UI['blue']])
+    fig.update_traces(marker=dict(size=3, opacity=0.4))
+    fig.update_layout(xaxis_title='Duração da tarefa (dias)', yaxis_title='')
+    return _style(fig, max(280, 32 * len(order)), legend=False)
+
+
+def fig_weekday(T):
+    wd = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+    s = T['start_date'].dt.weekday.value_counts().reindex(range(7), fill_value=0)
+    e = T['end_date'].dt.weekday.value_counts().reindex(range(7), fill_value=0)
+    fig = go.Figure()
+    fig.add_bar(x=wd, y=s.values, name='Tarefas iniciadas', marker_color=UI['blue'])
+    fig.add_bar(x=wd, y=e.values, name='Tarefas concluídas', marker_color=UI['teal'])
+    fig.update_layout(barmode='group', yaxis_title='Nº de tarefas')
+    return _style(fig, 280)
+
+
+def fig_gantt_case(T, pid):
+    d = T[T['project_id'] == str(pid)].copy()
+    if d.empty: return None
+    d['fim'] = d['end_date'].where(d['end_date'] > d['start_date'], d['start_date'] + pd.Timedelta(hours=12))
+    d['quem'] = d['resource_name'].fillna('—')
+    order = d.sort_values('start_date')['task_name'].drop_duplicates().tolist()
+    fig = px.timeline(d, x_start='start_date', x_end='fim', y='task_name', color='resource_type' if d['resource_type'].notna().any() else None,
+                      hover_data={'quem': True, 'wait_days': ':.1f', 'dur_days': ':.1f'}, color_discrete_sequence=UI_SEQ, category_orders={'task_name': order})
+    fig.update_yaxes(autorange='reversed', title='')
+    return _style(fig, max(260, 34 * len(d)))
+
+
+def fig_workload(T, A, R, has_hours):
+    if has_hours:
+        w = A.groupby(['resource_name', 'resource_type'])['hours_worked'].sum().reset_index(name='v')
+        xt = 'Horas trabalhadas'
+    else:
+        w = T.groupby(['resource_name', 'resource_type']).size().reset_index(name='v')
+        xt = 'Nº de tarefas (principal responsável)'
+    w = w.sort_values('v').tail(25)
+    fig = px.bar(w, x='v', y='resource_name', color='resource_type', orientation='h', color_discrete_sequence=UI_SEQ)
+    fig.update_layout(xaxis_title=xt, yaxis_title='', legend_title_text='')
+    return _style(fig, max(320, 22 * len(w)))
+
+
+def fig_utilization(A, R):
+    """NOVO: utilização da capacidade por função (horas trabalhadas / horas disponíveis), por mês."""
+    if A.empty or 'daily_capacity' not in R.columns: return None
+    a = A.assign(m=A['allocation_date'].dt.to_period('M').dt.to_timestamp()).groupby(['m', 'resource_type'])['hours_worked'].sum().reset_index()
+    act = A.assign(m=A['allocation_date'].dt.to_period('M').dt.to_timestamp()).groupby(['m', 'resource_type'])['resource_id'].nunique()
+    capd = R.set_index('resource_id')['daily_capacity']
+    cap_role = A.drop_duplicates('resource_id').assign(c=lambda x: x['resource_id'].map(capd)).groupby('resource_type')['c'].mean()
+    a['ativos'] = [act.get((m, r), 0) for m, r in zip(a['m'], a['resource_type'])]
+    a['dias_uteis'] = [np.busday_count(m.date(), (m + pd.offsets.MonthBegin(1)).date()) for m in a['m']]
+    a['util'] = a['hours_worked'] / (a['ativos'] * a['dias_uteis'] * a['resource_type'].map(cap_role)) * 100
+    vol = a.groupby('m')['hours_worked'].sum()
+    a = a[a['m'].isin(vol[vol >= 0.3 * vol.median()].index)]
+    if a.empty: return None
+    a['util'] = a.sort_values('m').groupby('resource_type')['util'].transform(lambda x: x.rolling(3, min_periods=1).mean())
+    fig = px.line(a, x='m', y='util', color='resource_type', markers=False, color_discrete_sequence=UI_SEQ)
+    fig.add_hline(y=100, line=dict(color=UI['red'], dash='dash', width=1))
+    fig.update_layout(yaxis_title='% da capacidade (média móvel 3 meses)', xaxis_title='')
+    return _style(fig, 340)
+
+
+def fig_efficiency(T, A):
+    h = A.groupby(['task_id', 'resource_name', 'resource_type'])['hours_worked'].sum().reset_index()
+    e = h.groupby(['resource_name', 'resource_type'])['hours_worked'].agg(['mean', 'count']).reset_index()
+    e = e[e['count'] >= 5]
+    if e.empty: return None
+    e['vs'] = e['mean'] / e.groupby('resource_type')['mean'].transform('median') * 100 - 100
+    fig = px.strip(e, x='vs', y='resource_type', color='resource_type', hover_name='resource_name',
+                   hover_data={'mean': ':.1f', 'count': True, 'vs': ':.0f', 'resource_type': False}, color_discrete_sequence=UI_SEQ)
+    fig.add_vline(x=0, line=dict(color=UI['muted'], dash='dash'))
+    fig.update_traces(marker=dict(size=10, opacity=0.8))
+    fig.update_layout(xaxis_title='% face à mediana da função (direita = mais horas)', yaxis_title='')
+    return _style(fig, max(260, 50 * e['resource_type'].nunique()), legend=False)
+
+
+def fig_role_handoffs(T):
+    e = T.dropna(subset=['prev_role', 'resource_type'])
+    e = e[e['prev_role'] != e['resource_type']]
+    if e.empty: return None
+    m = e.groupby(['prev_role', 'resource_type']).agg(n=('task_id', 'size'), w=('wait_days', 'mean')).reset_index()
+    pv = m.pivot(index='prev_role', columns='resource_type', values='n')
+    wv = m.pivot(index='prev_role', columns='resource_type', values='w').reindex_like(pv)
+    fig = go.Figure(go.Heatmap(z=pv.values, x=pv.columns, y=pv.index, customdata=wv.values, colorscale='Blues', xgap=2, ygap=2,
+                               text=np.where(pv.notna(), pv.fillna(0).astype(int).astype(str), ''), texttemplate='%{text}',
+                               hovertemplate='De: %{y}<br>Para: %{x}<br>Passagens: %{z:,}<br>Espera média: %{customdata:.1f} dias<extra></extra>',
+                               colorbar=dict(title='passagens', thickness=10)))
+    fig.update_layout(xaxis_title='Função que recebe', yaxis_title='Função que entrega')
+    fig.update_xaxes(tickangle=-25)
+    return _style(fig, 460, legend=False)
+
+
+def fig_resource_activity(A, has_hours):
+    if A.empty: return None
+    top = A.groupby('resource_name')['hours_worked'].sum().sort_values(ascending=False).head(25).index
+    d = A[A['resource_name'].isin(top)]
+    pv = d.pivot_table(index='resource_name', columns='task_name', values='hours_worked', aggfunc='sum' if has_hours else 'count').reindex(top)
+    fig = go.Figure(go.Heatmap(z=pv.values, x=pv.columns, y=pv.index, colorscale='Blues', xgap=1, ygap=1,
+                               hovertemplate='%{y}<br>%{x}<br>%{z:,.0f}' + (' h' if has_hours else ' registos') + '<extra></extra>', colorbar=dict(thickness=10)))
+    fig.update_xaxes(tickangle=-30)
+    return _style(fig, max(380, 20 * len(top)), legend=False)
+
+
+def fig_teamsize(P):
+    if 'num_resources' not in P.columns or P['num_resources'].nunique() < 2: return None
+    d = P.dropna(subset=['num_resources']).copy()
+    d['equipa'] = d['num_resources'].astype(int).astype(str) + ' pessoas'
+    order = sorted(d['equipa'].unique(), key=lambda x: int(x.split()[0]))
+    fig = px.box(d, x='equipa', y='lead_time', category_orders={'equipa': order}, points=False, color_discrete_sequence=[UI['blue']])
+    fig.update_layout(xaxis_title='Pessoas envolvidas no processo', yaxis_title='Duração (dias)')
+    return _style(fig, 300, legend=False)
+
+
+def fig_resource_wait(T):
+    d = T.dropna(subset=['resource_name']).copy()
+    d['next_wait'] = d.groupby('project_id')['wait_days'].shift(-1)
+    g = d.groupby(['resource_name', 'resource_type']).agg(w=('next_wait', 'mean'), n=('task_id', 'size')).reset_index()
+    g = g[g['n'] >= 10].sort_values('w').tail(15)
+    if g.empty: return None
+    fig = px.bar(g, x='w', y='resource_name', color='resource_type', orientation='h', color_discrete_sequence=UI_SEQ,
+                 hover_data={'n': True})
+    fig.update_layout(xaxis_title='Espera média até a tarefa seguinte começar (dias)', yaxis_title='')
+    return _style(fig, 380)
+
+
+def fig_perf_matrix(P):
+    d = P.dropna(subset=['days_diff', 'cost_diff'])
+    if d.empty: return None
+    fig = px.scatter(d, x='days_diff', y='cost_diff', color='path_name', hover_name='project_name', opacity=0.7,
+                     hover_data={'lead_time': True, 'total_actual_cost': ':,.0f', 'path_name': False}, color_discrete_sequence=UI_SEQ)
+    fig.add_hline(y=0, line=dict(color=UI['muted'], dash='dash')); fig.add_vline(x=0, line=dict(color=UI['muted'], dash='dash'))
+    for x, y, t in [(1, 1, 'Atrasado e acima do orçamento'), (0, 0, 'Adiantado e abaixo do orçamento')]:
+        fig.add_annotation(x=x, y=y, xref='paper', yref='paper', text=t, showarrow=False, xanchor='right' if x else 'left',
+                           yanchor='top' if y else 'bottom', font=dict(color=UI['muted'], size=11))
+    fig.update_traces(marker=dict(size=7))
+    fig.update_layout(xaxis_title='Desvio face ao prazo (dias) · negativo = antes do prazo', yaxis_title='Desvio face ao orçamento (€)')
+    return _style(fig, 400)
+
+
+def fig_delay_month(P):
+    m = P.groupby('end_month').agg(late=('days_diff', lambda x: (x > 0).mean() * 100), dev=('days_diff', 'mean')).reset_index()
+    m = m[m['end_month'].isin(_full_months(P))]
+    if len(m) < 2: return None
+    fig = go.Figure()
+    fig.add_bar(x=m['end_month'], y=m['late'], name='% processos atrasados', marker_color='#fecaca', yaxis='y2')
+    fig.add_scatter(x=m['end_month'], y=m['dev'], name='Desvio médio face ao prazo (dias)', mode='lines+markers', line=dict(color=UI['ink'], width=2.5))
+    fig.add_hline(y=0, line=dict(color=UI['muted'], dash='dot'))
+    fig.update_layout(yaxis_title='Dias', yaxis2=dict(title='% atrasados', overlaying='y', side='right', showgrid=False, rangemode='tozero'))
+    return _style(fig, 320)
+
+
+def fig_delay_dist(P):
+    fig = px.histogram(P, x='days_diff', nbins=40, color_discrete_sequence=[UI['blue']])
+    fig.add_vline(x=0, line=dict(color=UI['red'], width=2))
+    fig.update_layout(xaxis_title='Dias face ao prazo (à direita da linha = atrasado)', yaxis_title='Nº de processos', bargap=0.05)
+    return _style(fig, 300, legend=False)
+
+
+def fig_cost_role(A):
+    c = A.groupby('resource_type').agg(cost=('cost', 'sum'), h=('hours_worked', 'sum')).reset_index().sort_values('cost')
+    fig = go.Figure(go.Bar(x=c['cost'], y=c['resource_type'], orientation='h', marker_color=UI['blue'], customdata=c[['h']].values,
+                           text=[f"{v / c['cost'].sum():.0%}" for v in c['cost']], textposition='inside', insidetextanchor='end', textfont=dict(color='white'),
+                           hovertemplate='%{y}<br>€%{x:,.0f}<br>%{customdata[0]:,.0f} horas<extra></extra>'))
+    fig.update_layout(xaxis_title='Custo total de mão-de-obra (€)', yaxis_title='')
+    return _style(fig, max(260, 36 * len(c)), legend=False)
+
+
+def fig_cost_activity(A):
+    """NOVO: onde se gasta o dinheiro, por atividade."""
+    c = A.groupby('task_name')['cost'].sum().sort_values()
+    fig = go.Figure(go.Bar(x=c.values, y=c.index, orientation='h', marker_color=UI['teal'],
+                           text=[f"{v / c.sum():.0%}" for v in c.values], textposition='inside', insidetextanchor='end', textfont=dict(color='white'), hovertemplate='%{y}<br>€%{x:,.0f}<extra></extra>'))
+    fig.update_layout(xaxis_title='Custo total (€)', yaxis_title='')
+    return _style(fig, max(260, 32 * len(c)), legend=False)
+
+
+def fig_cost_vs_budget(P):
+    d = P[P['budget_impact'] > 0]
+    if d.empty: return None
+    fig = px.scatter(d, x='budget_impact', y='total_actual_cost', color='path_name', hover_name='project_name', opacity=0.7, color_discrete_sequence=UI_SEQ)
+    mx = max(d['budget_impact'].max(), d['total_actual_cost'].max())
+    fig.add_scatter(x=[0, mx], y=[0, mx], mode='lines', line=dict(color=UI['muted'], dash='dash'), name='Custo = orçamento')
+    fig.update_layout(xaxis_title='Orçamento (€)', yaxis_title='Custo real (€)')
+    return _style(fig, 360)
+
+
+def fig_cost_month(P):
+    m = P.groupby('end_month').agg(c=('total_actual_cost', 'mean'), b=('budget_impact', 'mean')).reset_index()
+    if len(m) < 2: return None
+    fig = go.Figure()
+    fig.add_scatter(x=m['end_month'], y=m['c'], name='Custo médio real', mode='lines+markers', line=dict(color=UI['blue'], width=3))
+    if (m['b'] > 0).any():
+        fig.add_scatter(x=m['end_month'], y=m['b'], name='Orçamento médio', mode='lines', line=dict(color=UI['muted'], dash='dash'))
+    fig.update_layout(yaxis_title='€ por processo')
+    return _style(fig, 300)
+
+
+def outliers_df(P, by, n=10, caps=None):
+    cols = {'project_name': 'Processo', 'path_name': 'Tipo', 'lead_time': 'Duração (dias)', 'n_tasks': 'Nº tarefas', 'has_rework': 'Rework'}
+    if caps_ok({'CUSTO'}, caps): cols['total_actual_cost'] = 'Custo (€)'
+    if caps_ok({'PLANO'}, caps): cols['days_diff'] = 'Desvio prazo (dias)'
+    d = P.sort_values(by, ascending=False).head(n)[list(cols)].rename(columns=cols)
+    if 'Custo (€)' in d.columns: d['Custo (€)'] = d['Custo (€)'].round(0)
+    d['Rework'] = d['Rework'].map({True: 'Sim', False: ''})
+    return d
+
+
+# ---------------------------------------------------------------------------------
+# Secções do dashboard
+# ---------------------------------------------------------------------------------
+def _caps():
+    return st.session_state.get('caps')
+
+
+def section_overview(V, caps):
+    P, T = V['P'], V['T']
+    ui_section_intro("Como está o processo, em geral?", "Volume, duração e principais indicadores no período e filtros selecionados.")
+    d_lead, g_lead = _delta_kpi(P, 'lead_time', 'median')
+    k = [dict(icon='bi-collection', value=f"{len(P):,}".replace(',', ' '), label='Processos concluídos'),
+         dict(icon='bi-stopwatch', value=_fmt_days(P['lead_time'].median()), label='Duração mediana (P50)', delta=d_lead, good=g_lead,
+              help='Metade dos processos demora menos do que isto.'),
+         dict(icon='bi-hourglass-split', value=_fmt_days(P['lead_time'].quantile(0.9)), label='P90 — 10% mais lentos demoram mais de',
+              help='Indicador de previsibilidade: o prazo que se consegue garantir a 90% dos clientes.'),
+         dict(icon='bi-signpost-split', value=f"{P['happy_path'].mean():.0%}", label='Seguem o caminho principal')]
+    if caps_ok({'PLANO'}, caps):
+        d, g = _delta_kpi(P.assign(_l=(P['days_diff'] > 0).astype(float)), '_l', 'mean', unit='pp')
+        k.append(dict(icon='bi-alarm', value=f"{(P['days_diff'] > 0).mean():.1%}", label='Processos atrasados', delta=d, good=g))
+    if caps_ok({'TEMPOS'}, caps):
+        pw = (P['wait_total'] / P['lead_time'].replace(0, np.nan)).mean()
+        k.append(dict(icon='bi-pause-circle', value=f"{pw:.0%}", label='Do tempo é espera entre tarefas'))
+    if caps_ok({'CUSTO'}, caps):
+        d, g = _delta_kpi(P, 'total_actual_cost', 'mean')
+        k.append(dict(icon='bi-currency-euro', value=_fmt_eur(P['total_actual_cost'].mean()), label='Custo médio por processo', delta=d, good=g))
+    ui_kpis(k[:8])
+    ui_chart(fig_volume_leadtime(P), 'Volume e duração ao longo do tempo', 'Barras: processos concluídos por mês · Linhas: duração mediana e P90 (meses incompletos sem linha)', 'bi-graph-up-arrow', key='ov_vol')
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_wip(P), 'Entradas, conclusões e processos em curso', 'Se as entradas superam as conclusões, o backlog cresce', 'bi-inboxes', key='ov_wip')
+    with c2: ui_chart(fig_leadtime_dist(P), 'Distribuição da duração dos processos', 'Com as marcas de P50 e P90', 'bi-bar-chart', key='ov_dist')
+    f_type = fig_leadtime_by_type(P)
+    show_status = caps_ok({'ESTADO'}, caps) and P['project_status'].nunique() > 1
+    if f_type is not None or show_status:
+        c1, c2 = st.columns([3, 2]) if f_type is not None and show_status else (st.container(), None)
+        with c1: ui_chart(f_type, 'Duração por tipo de processo', 'Comparação entre segmentos (mediana, quartis e extremos)', 'bi-diagram-2', key='ov_type')
+        if c2 is not None:
+            with c2: ui_chart(fig_status(P), 'Estado dos processos', None, 'bi-pie-chart', key='ov_status')
+        elif f_type is None and show_status:
+            ui_chart(fig_status(P), 'Estado dos processos', None, 'bi-pie-chart', key='ov_status2')
+    with st.container(border=True):
+        ui_card_header('Processos mais longos', 'Os 10 casos com maior duração, para investigação individual', 'bi-list-ol')
+        st.dataframe(outliers_df(P, 'lead_time', caps=caps), hide_index=True, use_container_width=True)
+
+
+def section_flow(V, caps):
+    P, T = V['P'], V['T']
+    ui_section_intro("Que caminhos seguem os processos?", "Mapa do processo real, variantes, retrabalho e conformidade com o caminho principal.")
+    n_var = P['variant'].nunique()
+    k = [dict(icon='bi-signpost-split', value=f"{n_var:,}", label='Variantes diferentes'),
+         dict(icon='bi-check2-circle', value=f"{P['happy_path'].mean():.1%}", label='Seguem o caminho principal'),
+         dict(icon='bi-arrow-repeat', value=f"{P['has_rework'].mean():.1%}", label='Processos com rework'),
+         dict(icon='bi-list-task', value=f"{P['n_tasks'].median():.0f}", label='Tarefas por processo (mediana)')]
+    if P['has_rework'].any() and not P['has_rework'].all():
+        extra = P.loc[P['has_rework'], 'lead_time'].median() - P.loc[~P['has_rework'], 'lead_time'].median()
+        k.append(dict(icon='bi-clock-history', value=f"{extra:+.1f} dias", label='Duração extra quando há rework'))
+    ui_kpis(k)
+    with st.container(border=True):
+        ui_card_header('Mapa do processo', 'Caixas: atividades (nº de execuções) · Setas: passagens mais frequentes', 'bi-diagram-3')
+        c1, c2 = st.columns([2, 3])
+        metric = c1.segmented_control('Mostrar nas setas', ['% de processos', 'Espera média'], default='% de processos', key='dfg_metric') \
+            if caps_ok({'TEMPOS'}, caps) else '% de processos'
+        share = c2.slider('Esconder passagens com menos de (% dos processos)', 0, 20, 2, key='dfg_share')
+        dot = build_dfg_dot(T, 'wait' if metric == 'Espera média' else 'freq', share / 100, P['project_id'].nunique())
+        if dot: st.graphviz_chart(dot, use_container_width=False)
+        if metric == 'Espera média': ui_note("Cor das setas: azul = espera curta, vermelho = espera longa antes de a atividade seguinte começar.")
+    with st.container(border=True):
+        ui_card_header('Variantes do processo', 'As sequências de atividades mais frequentes', 'bi-list-columns')
+        st.markdown(variants_table_html(P, T), unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        with st.container(border=True):
+            ui_card_header('Ciclos de retrabalho', 'Retornos a uma atividade já feita', 'bi-arrow-counterclockwise')
+            rl = rework_loops_df(T)
+            if rl.empty: st.caption('Não foram detetados ciclos de retrabalho.')
+            else:
+                if not caps_ok({'TEMPOS'}, caps): rl = rl.drop(columns=['Espera média (dias)'])
+                st.dataframe(rl.round(1), hide_index=True, use_container_width=True)
+            f = fig_rework_impact(P)
+            if f is not None:
+                st.caption('Duração dos processos com e sem retrabalho')
+                st.plotly_chart(f, use_container_width=True, config={'displayModeBar': False}, key='fl_rwimp')
+    with c2: ui_chart(fig_conformance_month(P), 'Conformidade ao longo do tempo', '% de processos no caminho principal e com retrabalho, por mês', 'bi-check2-square', key='fl_conf')
+    ui_chart(fig_activity_freq(T, P), 'Frequência das atividades', 'Execuções e % de processos em que cada atividade aparece', 'bi-bar-chart-steps', key='fl_freq')
+    with st.expander("Análise detalhada: modelos formais de processo (Petri nets) e métricas de qualidade"):
+        po = gate_outputs(st.session_state.plots_post_mining, caps)
+        me = st.session_state.get('metrics', {})
+        if me.get('inductive_miner'):
+            mt = pd.DataFrame({'Inductive Miner': me['inductive_miner'], 'Heuristics Miner': me.get('heuristics_miner', {})}).T.round(2)
+            st.dataframe(mt, use_container_width=True)
+            st.caption("Fitness: o modelo reproduz o que aconteceu · Precisão: o modelo não permite caminhos que nunca aconteceram · "
+                       "Generalização e Simplicidade: robustez e legibilidade do modelo.")
+        for k_, t_ in [('model_inductive_petrinet', 'Modelo — Inductive Miner'), ('model_heuristic_petrinet', 'Modelo — Heuristics Miner')]:
+            if po.get(k_) is not None:
+                st.markdown(f"**{t_}**"); st.image(po[k_].getvalue(), use_container_width=True)
+        pe = gate_outputs(st.session_state.plots_eda, caps)
+        for k_, t_ in [('plot_26', 'Dependências de um processo exemplo'), ('plot_24', 'Distribuição da complexidade dos processos')]:
+            if pe.get(k_) is not None:
+                st.markdown(f"**{t_}**"); st.image(pe[k_].getvalue(), use_container_width=True)
+
+
+def section_times(V, caps):
+    P, T = V['P'], V['T']
+    if not caps_ok({'TEMPOS'}, caps):
+        ui_note("Esta secção precisa de datas de início e de fim por tarefa."); return
+    ui_section_intro("Onde se perde tempo?", "Separação entre tempo de execução e tempo de espera, e as passagens onde os processos ficam parados.")
+    ex = T.groupby('project_id')['dur_days'].sum().mean(); wt = P['wait_total'].mean()
+    top = T.dropna(subset=['prev_task'])[~T.dropna(subset=['prev_task'])['repeat']].groupby(['prev_task', 'task_name'])['wait_days'].sum().sort_values()
+    k = [dict(icon='bi-play-circle', value=_fmt_days(ex), label='Execução por processo (média)'),
+         dict(icon='bi-pause-circle', value=_fmt_days(wt), label='Espera por processo (média)'),
+         dict(icon='bi-percent', value=f"{(P['wait_total'] / P['lead_time'].replace(0, np.nan)).mean():.0%}", label='Do tempo total é espera')]
+    if not top.empty:
+        k.append(dict(icon='bi-sign-stop', value=top.index[-1][1], label=f"Maior espera acumulada: antes desta atividade"))
+    ui_kpis(k)
+    ui_chart(fig_service_vs_wait(T), 'Execução vs. espera por atividade', 'Tempo médio a trabalhar e tempo médio parado antes de começar', 'bi-hourglass-split', key='tm_sw')
+    cpd = None
+    if caps_ok({'CUSTO'}, caps) and 'cost_per_day' in P.columns:
+        cpd = P['cost_per_day'].mean()
+    ui_chart(fig_top_handoffs(T, cpd), 'Passagens onde os processos ficam mais tempo parados', 'Top 10 por total de dias de espera (frequência × espera média)', 'bi-sign-stop', key='tm_ho')
+    ui_chart(fig_wait_matrix(T), 'Matriz de espera entre atividades', 'Espera média (dias) entre o fim de uma atividade e o início da seguinte — inclui retornos', 'bi-grid-3x3-gap', key='tm_mx')
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_wait_month(T, P), 'Execução e espera ao longo do tempo', 'Dias por processo, por mês de conclusão', 'bi-graph-up', key='tm_wm')
+    with c2: ui_chart(fig_weekday(T), 'Atividade por dia da semana', 'Tarefas iniciadas e concluídas', 'bi-calendar-week', key='tm_wd')
+    ui_chart(fig_task_duration_box(T), 'Variabilidade da duração de cada atividade', 'Mediana, quartis e casos extremos', 'bi-distribute-horizontal', key='tm_box')
+    with st.container(border=True):
+        ui_card_header('Linha do tempo de um processo', 'Escolha um processo para ver as suas tarefas, quem as fez e onde esperou', 'bi-kanban')
+        opts = P.sort_values('lead_time', ascending=False)
+        lab = {r.project_id: f"{r.project_name} · {r.lead_time:.0f} dias" for r in opts.itertuples()}
+        if lab:
+            pid = st.selectbox('Processo', list(lab), format_func=lambda x: lab[x], key='gantt_pid')
+            f = fig_gantt_case(T, pid)
+            if f is not None: st.plotly_chart(f, use_container_width=True, config={'displayModeBar': False}, key='tm_gantt')
+
+
+def section_resources(V, caps):
+    P, T, A, R = V['P'], V['T'], V['A'], V['R']
+    if not caps_ok({'RECURSOS'}, caps):
+        ui_note("Esta secção precisa de saber quem executou cada tarefa."); return
+    has_h = caps_ok({'ESFORCO'}, caps)
+    ui_section_intro("Quem faz o trabalho e onde há pressão?", "Carga, capacidade, eficiência e passagens de trabalho entre funções.")
+    roles = R[R['resource_id'].isin(A['resource_id'].unique())]['resource_type'].value_counts()
+    k = [dict(icon='bi-people', value=f"{A['resource_id'].nunique():,}", label='Pessoas envolvidas'),
+         dict(icon='bi-diagram-2', value=f"{len(roles)}", label='Funções')]
+    single = roles[roles <= 1]
+    if len(single): k.append(dict(icon='bi-exclamation-triangle', value=f"{len(single)}", label='Funções com 1 só pessoa',
+                                  help='Ponto único de falha: ' + ', '.join(single.index[:5])))
+    if has_h:
+        hw = A.groupby('resource_id')['hours_worked'].sum().sort_values(ascending=False)
+        top20 = hw.head(max(1, int(len(hw) * 0.2))).sum() / hw.sum()
+        k.append(dict(icon='bi-bar-chart', value=f"{top20:.0%}", label='Das horas feitas por 20% das pessoas'))
+    ui_kpis(k)
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_workload(T, A, R, has_h), 'Carga de trabalho por pessoa', 'Top 25, por função', 'bi-person-workspace', key='rs_wl')
+    with c2:
+        if has_h: ui_chart(fig_utilization(A, R), 'Utilização da capacidade por função', 'Horas trabalhadas ÷ horas disponíveis das pessoas ativas no mês (linha vermelha = 100%)', 'bi-speedometer2', key='rs_ut')
+        else: ui_chart(fig_resource_wait(T), 'Espera gerada a seguir a cada pessoa', 'Tempo médio até a tarefa seguinte começar', 'bi-sign-stop', key='rs_rw0')
+    c1, c2 = st.columns(2)
+    with c1: ui_chart(fig_role_handoffs(T), 'Passagens de trabalho entre funções', 'Nº de passagens; no hover, a espera média em cada passagem', 'bi-arrow-left-right', key='rs_rh')
+    with c2:
+        if has_h: ui_chart(fig_efficiency(T, A), 'Eficiência comparada dentro de cada função', 'Cada ponto é uma pessoa (≥5 tarefas)', 'bi-person-check', key='rs_ef')
+        else: ui_chart(fig_teamsize(P), 'Duração vs. nº de pessoas envolvidas', None, 'bi-people', key='rs_ts0')
+    if has_h:
+        ui_chart(fig_resource_wait(T), 'Espera gerada a seguir a cada pessoa', 'Tempo médio até a tarefa seguinte começar (pessoas com ≥10 tarefas)', 'bi-sign-stop', key='rs_rw')
+        ui_chart(fig_resource_activity(A, has_h), 'Especialização: horas por pessoa e atividade', 'Top 25 pessoas por horas', 'bi-grid', key='rs_ra')
+    with st.expander("Análise detalhada: tamanho das equipas, competências e composição"):
+        if has_h: ui_chart(fig_teamsize(P), 'Duração vs. nº de pessoas envolvidas', None, 'bi-people', key='rs_ts')
+        pe = gate_outputs(st.session_state.plots_eda, caps); po = gate_outputs(st.session_state.plots_post_mining, caps)
+        for src, k_, t_ in [(po, 'skill_vs_performance_adv', 'Competência vs. horas por tarefa'), (pe, 'plot_23', 'Atraso por nível de competência'),
+                            (pe, 'plot_14', 'Atraso médio por recurso'), (pe, 'plot_07', 'Nº médio de recursos por processo, por trimestre')]:
+            if src.get(k_) is not None:
+                st.markdown(f"**{t_}**"); st.image(src[k_].getvalue(), use_container_width=True)
+
+
+def section_costs(V, caps):
+    P, A = V['P'], V['A']
+    has_c, has_p, has_b = caps_ok({'CUSTO'}, caps), caps_ok({'PLANO'}, caps), caps_ok({'ORCAMENTO'}, caps)
+    if not (has_c or has_p):
+        ui_note("Esta secção precisa de custos (custo/hora + horas) ou de prazos (data planeada ou SLA)."); return
+    ui_section_intro("Cumprimos prazos e orçamentos? Onde se gasta?", "Desvios face ao planeado e distribuição dos custos.")
+    k = []
+    if has_p:
+        late = P[P['days_diff'] > 0]
+        k += [dict(icon='bi-alarm', value=f"{(P['days_diff'] > 0).mean():.1%}", label='Processos atrasados'),
+              dict(icon='bi-calendar-x', value=_fmt_days(late['days_diff'].mean()) if len(late) else '—', label='Atraso médio dos atrasados'),
+              dict(icon='bi-calendar-check', value=f"{P['days_diff'].mean():+.1f} dias", label='Desvio médio face ao prazo', help='Negativo = termina antes do prazo')]
+    if has_c:
+        k += [dict(icon='bi-currency-euro', value=_fmt_eur(P['total_actual_cost'].mean()), label='Custo médio por processo'),
+              dict(icon='bi-cash-stack', value=_fmt_eur(A['cost'].sum()), label='Custo total no período')]
+    if has_c and caps_ok({'TEMPOS'}, caps) and 'cost_per_day' in P.columns:
+        k.append(dict(icon='bi-hourglass-bottom', value=_fmt_eur(P['wait_total'].sum() * P['cost_per_day'].mean()), label='Custo estimado da espera',
+                      help='Dias de espera × custo médio por dia de processo. É uma estimativa de custo de oportunidade.'))
+    ui_kpis(k)
+    if has_p and has_c and has_b:
+        ui_chart(fig_perf_matrix(P), 'Matriz de desempenho: prazo vs. orçamento', 'Cada ponto é um processo', 'bi-bullseye', key='cs_pm')
+    if has_p:
+        c1, c2 = st.columns(2)
+        with c1: ui_chart(fig_delay_month(P), 'Pontualidade ao longo do tempo', '% de atrasados e desvio médio por mês', 'bi-calendar-range', key='cs_dm')
+        with c2: ui_chart(fig_delay_dist(P), 'Distribuição do desvio face ao prazo', None, 'bi-bar-chart', key='cs_dd')
+    if has_c:
+        c1, c2 = st.columns(2)
+        with c1: ui_chart(fig_cost_role(A), 'Custo por função', None, 'bi-tags', key='cs_cr')
+        with c2: ui_chart(fig_cost_activity(A), 'Custo por atividade', None, 'bi-list-check', key='cs_ca')
+        c1, c2 = st.columns(2)
+        with c1: ui_chart(fig_cost_month(P), 'Custo médio por processo ao longo do tempo', None, 'bi-graph-up', key='cs_cm')
+        with c2:
+            if has_b: ui_chart(fig_cost_vs_budget(P), 'Custo real vs. orçamento', 'Acima da diagonal = acima do orçamento', 'bi-credit-card', key='cs_cb')
+        with st.container(border=True):
+            ui_card_header('Processos mais caros', None, 'bi-list-ol')
+            st.dataframe(outliers_df(P, 'total_actual_cost', caps=caps), hide_index=True, use_container_width=True)
+    with st.expander("Análise detalhada: correlações e relações entre variáveis"):
+        pe = gate_outputs(st.session_state.plots_eda, caps)
+        for k_, t_ in [('plot_29', 'Matriz de correlação'), ('plot_18', 'Custo real vs. atraso'), ('plot_19', 'Custo/hora médio vs. atraso'),
+                       ('plot_20', 'Nº de recursos vs. custo'), ('plot_22', 'Atraso por faixa de orçamento'), ('plot_27', 'Complexidade vs. atraso'),
+                       ('plot_28', 'Dependências vs. desvio de custo'), ('plot_17', 'Custo por faixa de orçamento e função')]:
+            if pe.get(k_) is not None:
+                st.markdown(f"**{t_}**"); st.image(pe[k_].getvalue(), use_container_width=True)
+
+
+def render_filters(V):
+    """Filtros globais na barra lateral. Devolve a vista filtrada."""
+    P = V['P']
+    with st.sidebar:
+        st.markdown("<div class='pm-side-label'>Filtros</div>", unsafe_allow_html=True)
+        dmin, dmax = P['end_date'].min().date(), P['end_date'].max().date()
+        period = st.date_input('Período (data de conclusão)', value=(dmin, dmax), min_value=dmin, max_value=dmax, key='flt_period', format='DD/MM/YYYY')
+        if not isinstance(period, (list, tuple)) or len(period) != 2: period = (dmin, dmax)
+        types = None
+        if P['path_name'].nunique() > 1:
+            types = st.multiselect('Tipo de processo', sorted(P['path_name'].dropna().unique()), key='flt_types', placeholder='Todos')
+        vmode = st.selectbox('Variantes', ['Todos', 'Só caminho principal', 'Só desvios ao caminho principal'], key='flt_var')
+    FV = apply_view_filters(V, period, types or None, vmode)
+    return FV, (period != (dmin, dmax)) or bool(types) or vmode != 'Todos'
+
+
 def dashboard_page():
-    st.title("🏠 Process Mining")
 
     ### START PDF/AI STATE INIT (if not global) ###
     if 'show_ai_modal' not in st.session_state: st.session_state.show_ai_modal = False
@@ -3882,7 +4726,12 @@ def dashboard_page():
 
     ### START PDF/AI BUTTONS & MODAL ###
     if st.session_state.analysis_run:
-        col_buffer, col_pdf, col_ai = st.columns([10, 1, 1]) # Ajuste rácios [espaço, pdf, ai]
+        col_buffer, col_pdf, col_ai = st.columns([6, 1.25, 1.25], vertical_alignment='center')
+        with col_buffer:
+            _p = st.session_state.data_frames_processed.get('projects', pd.DataFrame())
+            _sub = (f"{len(_p):,} processos · {pd.to_datetime(_p['start_date']).min():%m/%Y} a {pd.to_datetime(_p['end_date']).max():%m/%Y}"
+                    if len(_p) else "Análise do histórico de processos")
+            ui_page_header("Análise de Processos", _sub.replace(',', ' '))
     
         with col_pdf:
             # Flag para controlar se o botão de download deve ser mostrado
@@ -4025,202 +4874,45 @@ def dashboard_page():
         st.warning("A análise ainda não foi executada. Vá à página de 'Configurações' para carregar os dados e iniciar.")
         return
         
-    sections = {
-        "visao_geral": "1. Visão Geral e Custos",
-        "performance": "2. Performance e Prazos",
-        "recursos": "3. Recursos e Equipa",
-        "gargalos": "4. Handoffs e Espera",
-        "fluxo": "5. Fluxo e Conformidade", "diagnostico": "💡 Diagnóstico preliminar"
-    }
-    
-    nav_cols = st.columns(len(sections))
-    for i, (key, name) in enumerate(sections.items()):
-        with nav_cols[i]:
-            st.markdown(f'<div class="{"active-button" if st.session_state.current_section == key else ""}">', unsafe_allow_html=True)
-            if st.button(name, key=f"nav_{key}", use_container_width=True):
-                st.session_state.current_section = key
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<hr style='margin-top: 25px; margin-bottom: 25px; border-color: var(--border-color);'>", unsafe_allow_html=True)
-    
-    plots_pre, tables_pre, plots_post, plots_eda, tables_eda = get_visible_outputs()
     caps = st.session_state.get('caps')
+    # Vista derivada (calculada uma vez por análise) e filtros globais
+    if st.session_state.get('view') is None:
+        _dfp = st.session_state.data_frames_processed
+        _alloc = st.session_state.get('dfs_norm', st.session_state.dfs)['resource_allocations']
+        st.session_state.view = prepare_view(_dfp['projects'], _dfp['tasks'], _dfp['resources'], _alloc)
+    V, filtered = render_filters(st.session_state.view)
+
+    sections = {"visao_geral": ("Visão Geral", ":material/dashboard:"), "diagnostico": ("Diagnóstico", ":material/lightbulb:"),
+                "fluxo": ("Fluxo e Variantes", ":material/account_tree:")}
+    if caps_ok({'TEMPOS'}, caps): sections["tempos"] = ("Tempos e Esperas", ":material/schedule:")
+    if caps_ok({'RECURSOS'}, caps): sections["recursos"] = ("Recursos e Equipas", ":material/groups:")
+    if caps_ok({'CUSTO'}, caps) or caps_ok({'PLANO'}, caps): sections["custos"] = ("Custos e Prazos", ":material/payments:")
+    if st.session_state.current_section not in sections: st.session_state.current_section = "visao_geral"
+    choice = st.segmented_control("Secção", list(sections), format_func=lambda k: sections[k][0], selection_mode='single',
+                                  default=st.session_state.current_section, key='nav_sections', label_visibility='collapsed')
+    if choice: st.session_state.current_section = choice
+
     if caps is not None:
         missing = [CAPS_INFO[c][0] for c in CAPS_INFO if c not in caps]
         if missing:
-            st.caption("ℹ️ Algumas análises estão escondidas porque os dados não as suportam: " + ", ".join(missing) + ". Veja o detalhe em Configurações.")
+            ui_note("Algumas análises não aparecem porque os dados não as suportam: " + ", ".join(missing) + ". O detalhe está em Configurações.")
+    if filtered:
+        ui_note(f"Filtros ativos: {len(V['P']):,} de {len(st.session_state.view['P']):,} processos. O Diagnóstico usa sempre todos os dados.".replace(',', ' '))
+    if len(V['P']) == 0:
+        st.warning("Nenhum processo corresponde aos filtros escolhidos."); return
 
-    if st.session_state.current_section == "diagnostico":
-        render_diagnostics_page()
-    
-    if st.session_state.current_section == "visao_geral":
-        st.subheader("1. Visão Geral e Custos")
-        kpi_data = tables_pre.get('kpi_data', {})
-        top_kpis = [("Total de Processos", kpi_data.get('Total de Processos')), ("Total de Tarefas", kpi_data.get('Total de Tarefas'))]
-        if caps_ok({'RECURSOS'}, caps): top_kpis.append(("Total de Recursos", kpi_data.get('Total de Recursos')))
-        top_kpis.append(("Duração Média", f"{kpi_data.get('Duração Média (dias)')} dias"))
-        for col, (lbl, val) in zip(st.columns(len(top_kpis)), top_kpis):
-            col.metric(label=lbl, value=val)
-        
-        kpi_delay_data = tables_pre.get('cost_of_delay_kpis', {})
+    sec = st.session_state.current_section
+    if sec == "diagnostico": render_diagnostics_page()
+    elif sec == "visao_geral": section_overview(V, caps)
+    elif sec == "fluxo": section_flow(V, caps)
+    elif sec == "tempos": section_times(V, caps)
+    elif sec == "recursos": section_resources(V, caps)
+    elif sec == "custos": section_costs(V, caps)
 
-        total_cost = float(kpi_delay_data.get('Custo Total Processos Atrasados', 0.0) or 0.0)
-        mean_delay = float(kpi_delay_data.get('Atraso Médio (dias)', 0.0) or 0.0)
-        mean_cost_day = float(kpi_delay_data.get('Custo Médio/Dia Atraso', 0.0) or 0.0)
-        
-        perc_late = float(kpi_delay_data.get('% Processos Atrasados', 0.0) or 0.0)
-        mean_dev = float(kpi_delay_data.get('Desvio Médio face ao Plano (dias)', 0.0) or 0.0)
-        if caps_ok({'PLANO'}, caps):
-            kpis2 = [("% Processos Atrasados", f"{perc_late:.1f}%", None), ("Atraso Médio dos Atrasados", f"{mean_delay:.1f} dias", None),
-                     ("Desvio Médio face ao Plano", f"{mean_dev:+.1f} dias", "Negativo = termina antes do planeado")]
-            if caps_ok({'CUSTO'}, caps): kpis2.append(("Custo Total dos Processos Atrasados", f"€{total_cost:,.2f}", None))
-            for col, (lbl, val, hlp) in zip(st.columns(len(kpis2)), kpis2):
-                col.metric(label=lbl, value=val, help=hlp)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            create_card("Matriz de Performance (Custo vs Prazo) (PM)", '<i class="bi bi-bullseye"></i>', chart_bytes=plots_pre.get('performance_matrix'), tooltip="Este gráfico cruza o desvio de custo (eixo Y) com o desvio de prazo (eixo X). O objetivo é identificar rapidamente processos problemáticos. Quadrante Superior Direito: Processos que custaram mais e demoraram mais que o planeado. Quadrante Inferior Esquerdo: Processos eficientes, que terminaram abaixo do custo e antes do prazo.")
-            create_card("Top 5 Processos Mais Caros", '<i class="bi bi-cash-coin"></i>', dataframe=tables_pre.get('outlier_cost'), tooltip="Lista os cinco processos individuais que tiveram o maior custo real. Útil para focar a análise em outliers de custo significativo.")
-            create_card("Séries Temporais de KPIs de Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('kpi_time_series'), tooltip="Apresenta a evolução do Lead Time (tempo médio do processo, em azul) e do Throughput (nº de processos concluídos, em cinza) ao longo do tempo. Permite analisar se a performance geral está a melhorar ou a piorar.")
-            create_card("Distribuição do Status dos Processos", '<i class="bi bi-bar-chart-line-fill"></i>', chart_bytes=plots_eda.get('plot_01'), tooltip="Mostra a contagem de processos por estado (ex: 'Concluído', 'Em Andamento'). Oferece uma visão rápida do volume de trabalho atual e do histórico.")
-            create_card("Custo Médio dos Processos por Trimestre", '<i class="bi bi-currency-euro"></i>', chart_bytes=plots_eda.get('plot_06'), tooltip="Agrega o custo médio de todos os processos concluídos em cada trimestre. Ajuda a identificar tendências sazonais ou mudanças de custo ao longo do ano.")
-            create_card("Alocação de Custos por Orçamento e Recurso", '<i class="bi bi-pie-chart-fill"></i>', chart_bytes=plots_eda.get('plot_17'), tooltip="Gráfico de barras empilhadas que mostra como o custo total, segmentado por tipo de recurso, se distribui por diferentes faixas de orçamento dos processos. Ajuda a perceber se processos mais caros consomem tipos de recursos diferentes.")
-        with c2:
-            create_card("Custo por Tipo de Recurso", '<i class="bi bi-tags-fill"></i>', chart_bytes=plots_pre.get('cost_by_resource_type'), tooltip="Mostra o custo total acumulado para cada função ou tipo de recurso envolvido nos processos. Ajuda a identificar quais são as funções mais dispendiosas para a operação.")
-            create_card("Top 5 Processos Mais Longos", '<i class="bi bi-hourglass-split"></i>', dataframe=tables_pre.get('outlier_duration'), tooltip="Lista os cinco processos individuais que tiveram a maior duração real (em dias). Útil para focar a análise em outliers de tempo e identificar possíveis gargalos crónicos.")
-            create_card("Custo Médio por Dia ao Longo do Tempo", '<i class="bi bi-wallet2"></i>', chart_bytes=plots_post.get('cost_per_day_time_series'), tooltip="Analisa a evolução do custo médio diário dos processos. Picos neste gráfico podem indicar períodos de menor eficiência ou a execução de processos mais caros.")
-            create_card("Custo Real vs. Orçamento por Processo", '<i class="bi bi-credit-card"></i>', chart_bytes=plots_eda.get('plot_04'), tooltip="Compara o custo planeado (orçamento) com o custo real para cada processo. Ideal para detetar desvios de orçamento e analisar a precisão das estimativas.")
-            create_card("Distribuição do Custo por Dia (Eficiência)", '<i class="bi bi-lightbulb"></i>', chart_bytes=plots_eda.get('plot_16'), tooltip="Este histograma mostra a frequência de diferentes níveis de 'custo por dia'. Uma concentração em valores mais baixos indica maior eficiência de custos na execução dos processos.")
-            create_card("Evolução do Volume e Tamanho dos Processos", '<i class="bi bi-reception-4"></i>', chart_bytes=plots_eda.get('plot_31'), tooltip="Apresenta o número de processos concluídos por mês (barras) e a evolução da sua duração média (linha). Permite correlacionar o volume de trabalho com a eficiência.")
-
-    elif st.session_state.current_section == "performance":
-        st.subheader("2. Performance e Prazos")
-        c1, c2 = st.columns(2)
-        with c1:
-            create_card("Relação Lead Time vs Throughput", '<i class="bi bi-link-45deg"></i>', chart_bytes=plots_pre.get('lead_time_vs_throughput'), tooltip="Este gráfico de dispersão explora a relação entre o tempo médio para concluir uma tarefa (Throughput) e o tempo total do processo (Lead Time). Idealmente, um throughput mais rápido deveria levar a um lead time menor.")
-            create_card("Distribuição do Lead Time", '<i class="bi bi-stopwatch"></i>', chart_bytes=plots_pre.get('lead_time_hist'), tooltip="Mostra a frequência das diferentes durações totais dos processos (do início ao fim). Permite perceber se a maioria dos processos termina dentro de um prazo esperado ou se existem muitos outliers.")
-            create_card("Distribuição da Duração dos Processos (PM)", '<i class="bi bi-distribute-vertical"></i>', chart_bytes=plots_pre.get('case_durations_boxplot'), tooltip="Um boxplot que resume estatisticamente a duração dos processos, mostrando a mediana, os quartis e os outliers. Oferece uma visão rápida da consistência dos prazos.")
-            create_card("Gráfico Acumulado de Throughput", '<i class="bi bi-graph-up"></i>', chart_bytes=plots_post.get('cumulative_throughput_plot'), tooltip="Mostra o número total de processos concluídos ao longo do tempo. A inclinação da linha indica a velocidade de conclusão: quanto mais íngreme, maior o ritmo de entrega.")
-            create_card("Performance de Prazos por Trimestre", '<i class="bi bi-graph-down-arrow"></i>', chart_bytes=plots_eda.get('plot_05'), tooltip="Analisa o desvio de prazo (dias de atraso ou adiantamento) por trimestre. Permite ver se a pontualidade tem vindo a melhorar ou piorar ao longo do tempo.")
-        with c2:
-            create_card("Duração Média por Fase do Processo", '<i class="bi bi-folder2-open"></i>', chart_bytes=plots_pre.get('cycle_time_breakdown'), tooltip="Decompõe a duração total do processo, mostrando o tempo médio gasto em cada fase principal (ex: Onboarding, Análise de Risco, etc.). Essencial para identificar as fases mais demoradas.")
-            create_card("Distribuição do Throughput (horas)", '<i class="bi bi-rocket-takeoff"></i>', chart_bytes=plots_pre.get('throughput_hist'), tooltip="Apresenta a distribuição do tempo médio entre a conclusão de tarefas consecutivas dentro de um mesmo processo. Valores mais baixos indicam maior velocidade e fluidez.")
-            create_card("Boxplot do Throughput (horas)", '<i class="bi bi-box-seam"></i>', chart_bytes=plots_pre.get('throughput_boxplot'), tooltip="Um boxplot que resume estatisticamente o tempo de throughput. Ajuda a visualizar a variabilidade e a identificar casos com tempos de espera anormais entre tarefas.")
-            create_card("Atividades por Dia da Semana", '<i class="bi bi-calendar-week"></i>', chart_bytes=plots_post.get('temporal_heatmap_fixed'), tooltip="Conta o número de eventos (início/fim de tarefas) que ocorrem em cada dia da semana. Útil para identificar padrões de trabalho e possíveis sobrecargas ou ociosidades.")
-            create_card("Evolução da Performance (Prazo e Custo)", '<i class="bi bi-activity"></i>', chart_bytes=plots_eda.get('plot_30'), tooltip="Apresenta a evolução mensal do desvio médio de prazo e do desvio médio de custo. Permite uma análise de alto nível sobre a saúde e eficiência do processo ao longo do tempo.")
-        c3, c4 = st.columns(2)
-        with c3:
-                create_card("Diferença entre Data Real e Planeada", '<i class="bi bi-calendar-range"></i>', chart_bytes=plots_eda.get('plot_03'), tooltip="Histograma que mostra a distribuição dos desvios de prazo. Uma concentração em torno do zero indica boa previsibilidade. Valores à direita indicam atrasos; à esquerda, adiantamentos.")
-        with c4:
-            create_card("Estatísticas de Performance", '<i class="bi bi-table"></i>', dataframe=tables_pre.get('perf_stats'), tooltip="Tabela com um resumo descritivo do Lead Time (duração total do processo) e do Throughput (tempo entre tarefas), incluindo média, mediana, desvio padrão, etc.")
-        create_card("Linha do Tempo de Todos os Processos (Gantt Chart)", '<i class="bi bi-kanban"></i>', chart_bytes=plots_post.get('gantt_chart_all_projects'), tooltip="Visualiza a duração e o sequenciamento das tarefas para cada processo. É uma ferramenta poderosa para entender a sobreposição de trabalho e a linha do tempo de projetos específicos.")
-
-    elif st.session_state.current_section == "recursos":
-        st.subheader("3. Recursos e Equipa")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            create_card("Distribuição de Recursos por Tipo", '<i class="bi bi-tools"></i>', chart_bytes=plots_eda.get('plot_12'), tooltip="Mostra quantos colaboradores existem em cada função. Ajuda a entender a composição da equipa.")
-            create_card("Recursos por Média de Tarefas/Processo", '<i class="bi bi-person-workspace"></i>', chart_bytes=plots_pre.get('resource_avg_events'), tooltip="Classifica os recursos pela quantidade média de tarefas que executam por cada processo em que participam. Pode revelar especialistas ou recursos que são envolvidos em muitas etapas.")
-            create_card("Eficiência Semanal (Horas Trabalhadas)", '<i class="bi bi-calendar3-week"></i>', chart_bytes=plots_pre.get('weekly_efficiency'), tooltip="Soma das horas de trabalho registadas em cada dia da semana. Permite identificar os dias de maior e menor produtividade ou esforço.")
-            create_card("Impacto do Tamanho da Equipa no Atraso (PM)", '<i class="bi bi-people"></i>', chart_bytes=plots_pre.get('delay_by_teamsize'), tooltip="Analisa como o número de pessoas alocadas a um processo impacta o desvio de prazo. Ajuda a responder se equipas maiores são, de facto, mais rápidas ou se geram mais custos de coordenação.")
-            create_card("Benchmark de Throughput por Equipa", '<i class="bi bi-trophy"></i>', chart_bytes=plots_pre.get('throughput_benchmark_by_teamsize'), tooltip="Compara a velocidade de execução (throughput) entre equipas de diferentes tamanhos. Permite identificar o 'tamanho ideal' de equipa para máxima eficiência.")
-        with c2:
-            create_card("Top 10 Recursos por Horas Trabalhadas (PM)", '<i class="bi bi-lightning-charge-fill"></i>', chart_bytes=plots_pre.get('resource_workload'), tooltip="Lista os 10 colaboradores que registaram o maior número de horas de trabalho. Pode indicar tanto os mais produtivos como os mais sobrecarregados.")
-            create_card("Top 10 Handoffs entre Recursos", '<i class="bi bi-arrow-repeat"></i>', chart_bytes=plots_pre.get('resource_handoffs'), tooltip="Mostra as transições de trabalho mais frequentes entre dois colaboradores diferentes. Ajuda a visualizar as principais interações e dependências na equipa.")
-            create_card("Métricas de Eficiência: Top 10 Melhores e Piores Recursos", '<i class="bi bi-person-check"></i>', chart_bytes=plots_post.get('resource_efficiency_plot'), tooltip="Compara os recursos com base na média de horas que demoram a completar uma tarefa. 'Melhores' são os mais rápidos (menos horas/tarefa), e 'Piores' são os mais lentos.")
-            create_card("Duração Mediana por Tamanho da Equipa", '<i class="bi bi-speedometer"></i>', chart_bytes=plots_pre.get('median_duration_by_teamsize'), tooltip="Mostra a duração mediana dos processos com base no tamanho da equipa. Complementa o gráfico de atraso, focando na duração total e não no desvio.")
-            create_card("Nº Médio de Recursos por Processo a Cada Trimestre", '<i class="bi bi-person-plus"></i>', chart_bytes=plots_eda.get('plot_07'), tooltip="Analisa a evolução do tamanho médio das equipas alocadas aos processos ao longo do tempo.")
-            create_card("Atraso Médio por Recurso", '<i class="bi bi-person-exclamation"></i>', chart_bytes=plots_eda.get('plot_14'), tooltip="Lista os 20 recursos associados ao maior atraso médio nos processos em que participaram.")
-
-        c3, c4 = st.columns(2)
-        with c3:
-            if 'skill_vs_performance_adv' in plots_post:
-                create_card("Relação entre Skill e Performance", '<i class="bi bi-graph-up-arrow"></i>', chart_bytes=plots_post.get('skill_vs_performance_adv'), tooltip="Explora se existe uma correlação entre o nível de competência (skill level) de um recurso e a sua performance (medida em horas médias por tarefa).")
-        with c4:
-            create_card("Atraso por Nível de Competência", '<i class="bi bi-mortarboard"></i>', chart_bytes=plots_eda.get('plot_23'), tooltip="Analisa a distribuição dos atrasos dos processos com base no nível de competência dos recursos envolvidos.")
-
-        # Gráficos complexos que ocupam a largura total
-        if 'resource_network_bipartite' in plots_post:
-            create_card("Rede de Recursos por Função", '<i class="bi bi-node-plus-fill"></i>', chart_bytes=plots_post.get('resource_network_bipartite'), tooltip="gráfico que conecta os recursos às suas funções/skills. Útil para visualizar a polivalência dos colaboradores e a distribuição de competências na equipa.")
-
-        create_card("Rede Social de Recursos (Handovers)", '<i class="bi bi-diagram-3-fill"></i>', chart_bytes=plots_post.get('resource_network_adv'), tooltip="gráfico onde os nós são os recursos e as arestas representam a passagem de trabalho (handoff) entre eles. A espessura da aresta indica a frequência. Mostra os fluxos de comunicação e colaboração centrais.")
-        
-        create_card("Heatmap de Esforço (Recurso vs Atividade)", '<i class="bi bi-map"></i>', chart_bytes=plots_pre.get('resource_activity_matrix'), tooltip="Matriz que cruza recursos com atividades, mostrando as horas totais trabalhadas. Permite identificar rapidamente quem são os especialistas em cada tipo de tarefa.")
-    
-    elif st.session_state.current_section == "gargalos":
-        st.subheader("4. Handoffs e Espera")
-        create_card("Heatmap de Performance no Processo (Gargalos)", '<i class="bi bi-fire"></i>', chart_bytes=plots_post.get('performance_heatmap'), tooltip="Este é um mapa visual do seu processo, focado em identificar os tempos de espera, que são os verdadeiros gargalos. Como ler o gráfico: ● Caixas (Nós): Representam as atividades. ● Setas (Transições): Mostram o fluxo de trabalho. ● Números e Cores nas Setas: Este é o ponto mais importante. O valor (ex: 2d 4h 15m) e a cor da seta representam o tempo médio de espera entre a conclusão da atividade de origem e o início da atividade de destino. Análise Prática: Procure as setas com as cores mais quentes (ex: laranja, vermelho) e os valores de tempo mais altos. Estes são os seus maiores gargalos.")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            create_card("Atividades Mais Frequentes", '<i class="bi bi-speedometer2"></i>', chart_bytes=plots_pre.get('top_activities_plot'), tooltip="Gráfico de barras que mostra as atividades que ocorrem com maior frequência em todos os processos. Ajuda a identificar os passos mais comuns e centrais do fluxo de trabalho.")
-            create_card("Gargalos: Tempo de Serviço vs. Espera", '<i class="bi bi-traffic-light"></i>', chart_bytes=plots_pre.get('service_vs_wait_stacked'), tooltip="Compara o tempo em que uma tarefa está a ser ativamente trabalhada (Tempo de Serviço) com o tempo em que fica parada à espera (Tempo de Espera). Atividades com alto tempo de espera são os principais gargalos.")
-            create_card("Top 10 Handoffs por Custo de Espera", '<i class="bi bi-currency-exchange"></i>', chart_bytes=plots_pre.get('top_handoffs_cost'), tooltip="Estima o custo financeiro do tempo de espera entre as 10 transições mais lentas. Quantifica o impacto dos gargalos, traduzindo tempo perdido em perdas financeiras.")
-            create_card("Top Recursos por Tempo de Espera Gerado", '<i class="bi bi-sign-stop"></i>', chart_bytes=plots_pre.get('bottleneck_by_resource'), tooltip="Identifica os recursos que, em média, geram o maior tempo de espera para a tarefa seguinte após concluírem o seu trabalho. Pode indicar sobrecarga ou necessidade de otimização no trabalho desse recurso.")
-            create_card("Custo Real vs. Atraso", '<i class="bi bi-cash-stack"></i>', chart_bytes=plots_eda.get('plot_18'), tooltip="Analisa a correlação entre o custo total de um processo e o seu atraso em dias.")
-            create_card("Nº de Recursos vs. Custo Total", '<i class="bi bi-people-fill"></i>', chart_bytes=plots_eda.get('plot_20'), tooltip="Analisa a correlação entre o número de recursos alocados a um processo e o seu custo final.")
-            
-        with c2:
-            create_card("Tempo Médio de Execução por Atividade", '<i class="bi bi-hammer"></i>', chart_bytes=plots_pre.get('activity_service_times'), tooltip="Mostra o tempo médio que cada tipo de atividade leva para ser concluída (tempo de serviço). Permite identificar as tarefas que, isoladamente, são as mais demoradas.")
-            create_card("Espera vs. Execução (Dispersão)", '<i class="bi bi-search"></i>', chart_bytes=plots_pre.get('wait_vs_service_scatter'), tooltip="Analisa a correlação entre o tempo de execução de uma tarefa e o tempo de espera que a sucede. Pode revelar se tarefas longas tendem a gerar mais espera a jusante.")
-            create_card("Evolução do Tempo Médio de Espera", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_pre.get('wait_time_evolution'), tooltip="Mostra como o tempo médio de espera entre tarefas tem evoluído ao longo dos meses. Permite avaliar o impacto de melhorias ou a degradação da eficiência do processo.")
-            create_card("Top 10 Handoffs por Tempo de Espera", '<i class="bi bi-pause-circle"></i>', chart_bytes=plots_pre.get('top_handoffs'), tooltip="Lista as 10 transições entre atividades que têm o maior tempo médio de espera. Aponta diretamente para os maiores gargalos do processo em termos de tempo.")
-            create_card("Rate Horário Médio vs. Atraso", '<i class="bi bi-alarm"></i>', chart_bytes=plots_eda.get('plot_19'), tooltip="Analisa a correlação entre o custo médio por hora dos recursos de um processo e o seu atraso final.")
-            create_card("Atraso por Faixa de Orçamento", '<i class="bi bi-layers-half"></i>', chart_bytes=plots_eda.get('plot_22'), tooltip="Mostra a distribuição dos atrasos para processos agrupados por diferentes faixas de orçamento.")
-
-        if 'milestone_time_analysis_plot' in plots_post:
-            create_card("Análise de Tempo entre Tipos de Tarefa", '<i class="bi bi-flag"></i>', chart_bytes=plots_post.get('milestone_time_analysis_plot'), tooltip="Mede o tempo médio de espera (em horas) entre o fim de um 'tipo' de tarefa e o início do 'tipo' seguinte. Mostra as 15 transições de tipo mais lentas, identificando gargalos de alto nível.")
-        
-        c3, c4 = st.columns(2)
-        with c3:
-            create_card("Matriz de Correlação", '<i class="bi bi-bounding-box-circles"></i>', chart_bytes=plots_eda.get('plot_29'), tooltip="Heatmap que mostra a correlação estatística entre diferentes variáveis numéricas (custo, duração, prioridade, etc.). Ajuda a descobrir relações inesperadas, como 'custo por hora' e 'atraso'.")
-        with c4:
-            create_card("Tempo Médio de Espera por Atividade", '<i class="bi bi-hourglass-bottom"></i>', chart_bytes=plots_post.get('avg_waiting_time_by_activity_plot'), tooltip="Mostra o tempo médio que cada atividade fica em espera *antes* de ser iniciada. Complementa a análise de gargalos, focando no tempo de fila de cada tarefa.")
-            
-        create_card("Matriz de Tempo de Espera entre Atividades (horas)", '<i class="bi bi-grid-3x3-gap"></i>', chart_bytes=plots_post.get('waiting_time_matrix_plot'), tooltip="Uma matriz detalhada que mostra o tempo médio de espera (em horas) para cada transição possível entre duas atividades. Permite uma análise granular de todos os handoffs.")
-
-    elif st.session_state.current_section == "fluxo":
-        st.subheader("5. Fluxo e Conformidade")
-
-        create_card("Modelo - Inductive Miner", '<i class="bi bi-compass"></i>', chart_bytes=plots_post.get('model_inductive_petrinet'), tooltip="Este é um modelo do processo descoberto automaticamente a partir dos dados. O Inductive Miner gera modelos estruturados e fáceis de ler, que representam o fluxo de trabalho 'ideal' ou mais comum.")
-        create_card("Modelo - Heuristics Miner", '<i class="bi bi-gear"></i>', chart_bytes=plots_post.get('model_heuristic_petrinet'), tooltip="Este é outro modelo do processo, focado em mostrar as conexões mais frequentes, mesmo que isso resulte num modelo menos estruturado. É útil para explorar os caminhos mais comuns e ignorar os raros.")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            create_card("Métricas (Inductive Miner)", '<i class="bi bi-clipboard-data"></i>', chart_bytes=plots_post.get('metrics_inductive'), tooltip="Avalia a qualidade do modelo Inductive Miner. Fitness: Quão bem o modelo representa a realidade. Precisão: Quão bem o modelo evita comportamentos não existentes. Generalização: Capacidade de representar comportamentos não vistos. Simplicidade: Facilidade de leitura do modelo.")
-        with c2:
-            create_card("Métricas (Heuristics Miner)", '<i class="bi bi-clipboard-check"></i>', chart_bytes=plots_post.get('metrics_heuristic'), tooltip="Avalia a qualidade do modelo Heuristics Miner, usando os mesmos critérios: Fitness, Precisão, Generalização e Simplicidade.")
-        
-        create_card("Sequência de Atividades das 10 Variantes Mais Comuns", '<i class="bi bi-music-note-list"></i>', chart_bytes=plots_post.get('custom_variants_sequence_plot'), tooltip="Este gráfico mostra o fluxo de atividades, passo a passo, para cada uma das 10 variações de processo mais frequentes. Permite comparar visualmente os diferentes caminhos que os processos seguem.")
-        create_card("Duração Média das Variantes Mais Comuns", '<i class="bi bi-clock-history"></i>', chart_bytes=plots_post.get('variant_duration_plot'), tooltip="Apresenta a duração média de cada uma das 10 variantes de processo mais comuns. Ajuda a identificar quais são os fluxos de trabalho mais rápidos e os mais lentos.")
-        create_card("Top 10 Variantes de Processo por Frequência", '<i class="bi bi-sort-numeric-down"></i>', chart_bytes=plots_pre.get('variants_frequency'), tooltip="Mostra, em barras, a frequência das 10 variações de processo mais comuns. Permite entender qual é o 'caminho feliz' e quais são as exceções mais recorrentes.")
-
-        c3, c4 = st.columns(2)
-        with c3:
-            create_card("Frequência das 10 Principais Variantes", '<i class="bi bi-masks"></i>', dataframe=tables_pre.get('variants_table'), tooltip="Tabela com os dados detalhados das variantes de processo mais comuns, incluindo a sua frequência absoluta e o seu peso percentual em relação ao total.")
-            create_card("Distribuição de Tarefas por Tipo", '<i class="bi bi-card-list"></i>', chart_bytes=plots_eda.get('plot_08'), tooltip="Mostra a contagem de todas as tarefas executadas, agrupadas pelo seu tipo. Dá uma visão geral do volume de trabalho para cada categoria de atividade.")
-            create_card("Distribuição da Duração das Tarefas", '<i class="bi bi-hourglass"></i>', chart_bytes=plots_eda.get('plot_10'), tooltip="Histograma que mostra a distribuição dos tempos de execução de todas as tarefas. Ajuda a entender a variabilidade e a previsibilidade do esforço necessário para cada atividade.")
-            create_card("Centralidade dos Tipos de Tarefa", '<i class="bi bi-arrows-angle-contract"></i>', chart_bytes=plots_eda.get('plot_25'), tooltip="Analisa quais tipos de tarefas são mais frequentemente 'predecessoras' (ocorrem antes de outras) e quais são mais 'sucessoras' (ocorrem depois de outras). Ajuda a entender as dependências centrais no fluxo.")
-        with c4:
-            create_card("Principais Loops de Rework", '<i class="bi bi-arrow-clockwise"></i>', dataframe=tables_pre.get('rework_loops_table'), tooltip="Identifica e conta as sequências de atividades que representam retrabalho (ex: A -> B -> C -> A). Essencial para encontrar ineficiências e ciclos de correção.")
-            create_card("Score de Conformidade ao Longo do Tempo", '<i class="bi bi-check2-circle"></i>', chart_bytes=plots_post.get('conformance_over_time_plot'), tooltip="Mede a aderência dos processos ao modelo descoberto (Fitness) ao longo do tempo. Uma linha ascendente indica que os processos estão a tornar-se mais padronizados e conformes.")
-            create_card("Distribuição de Tarefas por Prioridade", '<i class="bi bi-award"></i>', chart_bytes=plots_eda.get('plot_09'), tooltip="Conta o número de tarefas para cada nível de prioridade definido. Permite analisar se a atribuição de prioridades está bem distribuída ou concentrada.")
-            create_card("Top 10 Tarefas Específicas Mais Demoradas", '<i class="bi bi-sort-down"></i>', chart_bytes=plots_eda.get('plot_11'), tooltip="Lista as 10 tarefas individuais (não o tipo, mas a instância específica) que mais tempo demoraram a ser concluídas.")
-
-        c5, c6 = st.columns(2)
-        with c5:
-            create_card("Distribuição da Complexidade dos Processos", '<i class="bi bi-bezier"></i>', chart_bytes=plots_eda.get('plot_24'), tooltip="Mostra a distribuição do 'índice de complexidade' calculado para os processos. Este índice combina o risco do projeto com o número de funções diferentes envolvidas.")
-            create_card("Gráfico de Dependências (Exemplo)", '<i class="bi bi-diagram-2"></i>', chart_bytes=plots_eda.get('plot_26'), tooltip="Exemplo visual da rede de dependências entre as tarefas de um único processo (retirado da amostra). Ajuda a entender o caminho crítico.")
-        with c6:
-            create_card("Relação entre Complexidade e Atraso", '<i class="bi bi-arrows-collapse"></i>', chart_bytes=plots_eda.get('plot_27'), tooltip="Analisa se processos considerados mais 'complexos' (maior score de complexidade) tendem a ter maiores atrasos.")
-            create_card("Relação entre Dependências e Desvio de Custo", '<i class="bi bi-arrows-expand"></i>', chart_bytes=plots_eda.get('plot_28'), tooltip="Analisa se processos com maior número de dependências entre tarefas tendem a ter maiores desvios de custo.")
 
 # --- (REINFORCEMENT LEARNING) ---
 def rl_page():
-    st.title("🤖 Simulação com Reinforcement Learning")
+    ui_page_header("Simulação (Reinforcement Learning)", "Treine um agente para testar políticas de alocação de recursos")
 
     if not st.session_state.analysis_run:
         st.warning("É necessário executar a análise inicial primeiro. Vá à página de 'Configurações' para carregar os dados.")
@@ -4392,19 +5084,18 @@ def main():
         login_page()
     else:
         with st.sidebar:
-            st.markdown(f'<h3><i class="bi bi-person-circle"></i> {st.session_state.get("user_name", "Admin")}</h3>', unsafe_allow_html=True)
-            st.markdown("---")
-            if st.button("🧠 Process Mining", use_container_width=True):
-                st.session_state.current_page = "Dashboard"
-                st.rerun()
-            if st.button("🤖 Reinforcement Learning", use_container_width=True):
-                st.session_state.current_page = "RL"
-                st.rerun()
-            if st.button("⚙️ Configurações", use_container_width=True):
-                st.session_state.current_page = "Settings"
-                st.rerun()
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            if st.button(" ⏻ Terminar sessão", use_container_width=True):
+            st.markdown("<div class='pm-brand'><span class='pm-brand-badge'><i class='bi bi-diagram-3-fill'></i></span>Process Intelligence</div>", unsafe_allow_html=True)
+            cur = st.session_state.current_page
+            for label, icon, page in [("Análise de Processos", ":material/monitoring:", "Dashboard"),
+                                      ("Simulação (RL)", ":material/smart_toy:", "RL"),
+                                      ("Dados e Configurações", ":material/database:", "Settings")]:
+                if st.button(label, icon=icon, use_container_width=True, type="primary" if cur == page else "secondary", key=f"navp_{page}"):
+                    st.session_state.current_page = page
+                    st.rerun()
+            st.markdown("<hr style='margin:0.8rem 0; border-color:#f1f5f9'>", unsafe_allow_html=True)
+            _u = st.session_state.get("user_name", "Admin")
+            st.markdown(f"<div class='pm-user'><span class='pm-avatar'>{_u[:2].upper()}</span><div><div class='pm-user-name'>{_u}</div><div class='pm-user-role'>Analista</div></div></div>", unsafe_allow_html=True)
+            if st.button("Terminar sessão", icon=":material/logout:", use_container_width=True, key="navp_logout"):
                 st.session_state.authenticated = False
                 for key in list(st.session_state.keys()):
                     if key not in ['authenticated']: del st.session_state[key]
