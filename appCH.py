@@ -1,5 +1,7 @@
 import difflib
+import json
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -66,10 +68,39 @@ st.markdown("""
         --text-color: #0f172a; --text-muted-color: #64748b; --border-color: #e5e7eb;
     }
     html, body, [class*="st-"], .stMarkdown, button, input, textarea, select { font-family: 'Inter', sans-serif; }
+    /* Ícones do Streamlit: repor a fonte de ícones (senão aparecem como texto, ex. "arrow_right") */
+    [data-testid="stIconMaterial"], span[class*="material-symbols"], .material-icons, .material-symbols-rounded {
+        font-family: 'Material Symbols Rounded' !important; font-weight: normal; font-style: normal; letter-spacing: normal;
+        text-transform: none; white-space: nowrap; word-wrap: normal; direction: ltr; -webkit-font-feature-settings: 'liga'; font-feature-settings: 'liga'; }
     .stApp { background-color: var(--background-color); color: var(--text-color); }
     h1, h2, h3, h4, h5 { color: var(--text-color); font-weight: 700; letter-spacing: -0.01em; }
     .block-container { padding-top: 2.2rem; max-width: 1500px; }
     header[data-testid="stHeader"] { background: transparent; }
+
+
+    /* Leitura para decisão (Diagnóstico) */
+    .pm-verdict { background:#fff; border:1px solid var(--border-color); border-left:6px solid #d97706; border-radius:16px; padding:20px 24px; margin:6px 0 18px; box-shadow:0 1px 3px rgba(15,23,42,.05); }
+    .pm-verdict-top { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+    .pm-pill { border-radius:999px; padding:3px 12px; font-size:.8rem; font-weight:600; }
+    .pm-src { font-size:.75rem; color:var(--text-muted-color); }
+    .pm-verdict-title { font-size:1.35rem; font-weight:800; color:#0f172a; letter-spacing:-.01em; margin-bottom:6px; }
+    .pm-verdict-text { font-size:.98rem; color:#334155; line-height:1.55; }
+    .pm-h5 { font-weight:700; font-size:1.05rem; color:#0f172a; margin:8px 0 10px; }
+    .pm-prio { display:flex; gap:14px; align-items:flex-start; }
+    .pm-prio-num { flex:0 0 34px; height:34px; border-radius:50%; background:#eff6ff; color:#2563eb; font-weight:800; display:flex; align-items:center; justify-content:center; }
+    .pm-prio-title { font-weight:700; font-size:1.02rem; color:#0f172a; margin-bottom:4px; }
+    .pm-prio-title i { color:#2563eb; margin-right:4px; }
+    .pm-prio-problem { color:#334155; margin-bottom:8px; }
+    .pm-prio-row { display:flex; gap:10px; font-size:.9rem; margin:3px 0; }
+    .pm-prio-row span { flex:0 0 110px; color:var(--text-muted-color); font-weight:500; }
+    .pm-prio-row div { color:#0f172a; }
+    .pm-tag { display:inline-block; font-size:.7rem; font-weight:600; background:#f1f5f9; color:#475569; border-radius:999px; padding:2px 8px; margin-left:6px; vertical-align:middle; }
+    .pm-tag.risk { background:#fef3c7; color:#b45309; }
+    .pm-gain { background:#f0fdf4; border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+    .pm-gain-lab { font-size:.72rem; color:#15803d; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+    .pm-gain-val { font-size:.95rem; font-weight:700; color:#14532d; }
+    .pm-list-title { font-weight:700; margin-bottom:6px; }
+    .pm-list-item { font-size:.9rem; color:#334155; padding:5px 0; border-top:1px solid #f1f5f9; }
 
     /* Barra lateral */
     [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid var(--border-color); }
@@ -486,8 +517,9 @@ def normalize_inputs(raw, sla_days=None):
     if 'risk_rating' not in p.columns: p['risk_rating'] = 'N/D'
 
     # --- Dependências: derivadas da ordem das tarefas se não existirem ---
-    d = raw.get('dependencies')
-    if d is None or d.empty:
+    # A tabela de dependências deixou de ser pedida: a sequência é sempre a observada nos dados
+    d = None
+    if True:
         ts = t.assign(_o=pd.to_numeric(t['task_id'], errors='coerce')).sort_values(['project_id', 'start_date', 'end_date', '_o'])
         ts['pred'] = ts.groupby('project_id')['task_id'].shift(1)
         d = ts.dropna(subset=['pred'])[['project_id', 'pred', 'task_id']].rename(columns={'pred': 'task_id_predecessor', 'task_id': 'task_id_successor'})
@@ -3368,13 +3400,12 @@ def _upload_multi_files():
         'tasks': "OBRIGATÓRIO. 1 linha por tarefa. Colunas mínimas: project_id, task_name e uma data (start_date ou end_date). Com start_date E end_date ativam-se os tempos de execução e espera. Opcionais: task_id, task_type, priority, estimated_effort. Se não tiver resource_allocations, pode indicar aqui quem fez a tarefa com uma coluna resource_name (ou resource_id) e opcionalmente resource_type (função); várias pessoas separadas por ';'.",
         'resources': "OPCIONAL. 1 linha por recurso: resource_id, resource_name, resource_type (função), cost_per_hour (ativa custos), daily_capacity, skill_level (ativa competências).",
         'resource_allocations': "OPCIONAL. Horas efetivamente trabalhadas: task_id, resource_id, allocation_date, hours_worked. Ativa as análises de esforço, eficiência e (com cost_per_hour) custos.",
-        'dependencies': "OPCIONAL. project_id, task_id_predecessor, task_id_successor. Se não existir, a sequência é derivada da ordem das tarefas."
     }
-    file_names = ['projects', 'tasks', 'resources', 'resource_allocations', 'dependencies']
+    file_names = ['projects', 'tasks', 'resources', 'resource_allocations']
     labels = {'projects': 'projects.csv', 'tasks': 'tasks.csv ★', 'resources': 'resources.csv',
-              'resource_allocations': 'resource_allocations.csv', 'dependencies': 'dependencies.csv'}
+              'resource_allocations': 'resource_allocations.csv'}
 
-    upload_cols = st.columns(5)
+    upload_cols = st.columns(4)
     for i, name in enumerate(file_names):
         with upload_cols[i]:
             uploaded_file = st.file_uploader(f"Carregar `{labels[name]}`", type="csv", key=f"upload_{name}", help=tooltips[name])
@@ -3392,7 +3423,7 @@ def _upload_multi_files():
             else:
                 st.session_state.dfs[name] = None
 
-    raw = {k: v for k, v in st.session_state.dfs.items() if v is not None}
+    raw = {k: v for k, v in st.session_state.dfs.items() if v is not None and k != 'dependencies'}
     if 'tasks' not in raw:
         st.warning("Carregue pelo menos o ficheiro de tarefas (tasks.csv) para poder iniciar a análise.")
         return None
@@ -3458,7 +3489,7 @@ def settings_page():
     modo = st.radio("Como estão os seus dados?",
                     ["Vários ficheiros (até 5 tabelas)", "Um único ficheiro (event log)"],
                     horizontal=True, key="modo_upload",
-                    help="Vários ficheiros: projects, tasks, resources, resource_allocations, dependencies (só tasks é obrigatório). "
+                    help="Vários ficheiros: projects, tasks, resources, resource_allocations (só tasks é obrigatório). A sequência das tarefas é a observada nas datas. "
                          "Event log: um ficheiro CSV, Excel ou XES com uma linha por tarefa ou por evento.")
     if modo.startswith("Um único"):
         raw = _upload_single_log()
@@ -3520,6 +3551,7 @@ def settings_page():
             st.session_state.tables_eda = tables_eda
             st.session_state.pop('rl_sample_ids', None)
             st.session_state.view = None
+            st.session_state.diag_report = None; st.session_state.ai_reading = None; st.session_state.ai_chat = []
             st.session_state.rl_analysis_run = False
 
         st.session_state.analysis_run = True
@@ -3633,9 +3665,7 @@ def generate_pdf_report(plots_pre, tables_pre, plots_post, plots_eda, tables_eda
                     (plots_eda.get('plot_09'), "Distribuição de Tarefas por Prioridade"),
                     (plots_eda.get('plot_11'), "Top 10 Tarefas Específicas Mais Demoradas"),
                     (plots_eda.get('plot_24'), "Distribuição da Complexidade dos Processos"),
-                    (plots_eda.get('plot_26'), "Gráfico de Dependências: Processo Exemplo"),
                     (plots_eda.get('plot_27'), "Relação entre Complexidade e Atraso"),
-                    (plots_eda.get('plot_28'), "Relação entre Dependências e Desvio de Custo"),
                 ],
                 'tables': [
                     (tables_pre.get('variants_table'), "Frequência das 10 Principais Variantes"),
@@ -4107,6 +4137,11 @@ def fig_status(P):
     return _style(fig, 300)
 
 
+def _elab(t):
+    """Rótulo de seta afastado da linha (célula vazia à esquerda) para não ficar por cima da seta."""
+    return f'<<table border="0" cellpadding="0" cellspacing="0"><tr><td width="16"></td><td>{html.escape(t)}</td></tr></table>>'
+
+
 def build_dfg_dot(T, metric='freq', min_share=0.02, total_cases=None):
     """DFG em Graphviz (nativo no Streamlit, nítido). metric: 'freq' (nº de casos) ou 'wait' (espera média)."""
     if T.empty: return None
@@ -4131,7 +4166,7 @@ def build_dfg_dot(T, metric='freq', min_share=0.02, total_cases=None):
         lines.append(f'"{a}" [label="{a}\\n{acts.get(a, 0):,} ×"];')
     for a, n in starts.items():
         if a in keep and n >= min_share * total_cases:
-            lines.append(f'"__start" -> "{a}" [color="#94a3b8" penwidth={1 + 4 * n / total_cases:.2f} label="{n / total_cases:.0%}"];')
+            lines.append(f'"__start" -> "{a}" [color="#94a3b8" penwidth={1 + 4 * n / total_cases:.2f} label={_elab(f"{n / total_cases:.0%}")}];')
     for a, n in ends.items():
         if a in keep and n >= min_share * total_cases:
             lines.append(f'"{a}" -> "__end" [color="#94a3b8" penwidth={1 + 4 * n / total_cases:.2f}];')
@@ -4141,7 +4176,7 @@ def build_dfg_dot(T, metric='freq', min_share=0.02, total_cases=None):
             lab = f"{r['wait']:.1f} d" if r['wait'] >= 0.05 else "0 d"; col = wcol(r['wait'])
         else:
             lab = f"{r['n'] / total_cases:.0%}"; col = '#475569'
-        lines.append(f'"{r["prev_task"]}" -> "{r["task_name"]}" [label="{lab}" color="{col}" penwidth={pw:.2f}];')
+        lines.append(f'"{r["prev_task"]}" -> "{r["task_name"]}" [label={_elab(lab)} color="{col}" penwidth={pw:.2f}];')
     lines.append('}')
     return '\n'.join(lines)
 
@@ -4527,6 +4562,120 @@ def section_overview(V, caps):
         st.dataframe(outliers_df(P, 'lead_time', caps=caps), hide_index=True, use_container_width=True)
 
 
+# --- Análise detalhada (antigos gráficos matplotlib, agora interativos e responsivos) ---
+def _proc_skill(A, R):
+    if 'skill_level' not in R.columns: return None
+    sk = A.merge(R[['resource_id', 'skill_level']], on='resource_id', how='left')
+    sk['skill_level'] = pd.to_numeric(sk['skill_level'], errors='coerce')
+    return sk.dropna(subset=['skill_level'])
+
+
+def fig_skill_hours(A, R):
+    sk = _proc_skill(A, R)
+    if sk is None or sk.empty or sk['skill_level'].nunique() < 2: return None
+    h = sk.groupby(['task_id', 'resource_id', 'skill_level', 'resource_type'])['hours_worked'].sum().reset_index()
+    h['nível'] = 'Nível ' + h['skill_level'].round().astype(int).astype(str)
+    order = sorted(h['nível'].unique())
+    fig = px.box(h, x='nível', y='hours_worked', color='nível', points=False, category_orders={'nível': order}, color_discrete_sequence=UI_SEQ)
+    fig.update_layout(xaxis_title='Nível de competência', yaxis_title='Horas por tarefa')
+    return _style(fig, 300, legend=False)
+
+
+def fig_delay_by_skill(P, A, R):
+    sk = _proc_skill(A, R)
+    if sk is None or sk.empty or 'days_diff' not in P.columns: return None
+    m = sk.groupby('project_id')['skill_level'].mean().reset_index().merge(P[['project_id', 'days_diff']], on='project_id').dropna()
+    if m['skill_level'].nunique() < 3: return None
+    m['faixa'] = pd.qcut(m['skill_level'], q=min(4, m['skill_level'].nunique()), duplicates='drop').astype(str)
+    order = sorted(m['faixa'].unique(), key=lambda x: float(x.strip('([').split(',')[0]))
+    fig = px.box(m, x='faixa', y='days_diff', points=False, category_orders={'faixa': order}, color_discrete_sequence=[UI['blue']])
+    fig.add_hline(y=0, line=dict(color=UI['muted'], dash='dash'))
+    fig.update_layout(xaxis_title='Competência média da equipa (faixas)', yaxis_title='Dias face ao prazo')
+    return _style(fig, 300, legend=False)
+
+
+def fig_delay_by_resource(P, A):
+    if 'days_diff' not in P.columns or A.empty: return None
+    m = A[['project_id', 'resource_name', 'resource_type']].drop_duplicates().merge(P[['project_id', 'days_diff']], on='project_id')
+    g = m.groupby(['resource_name', 'resource_type']).agg(d=('days_diff', 'mean'), n=('project_id', 'nunique')).reset_index()
+    g = g[g['n'] >= 10].sort_values('d').tail(15)
+    if g.empty: return None
+    fig = px.bar(g, x='d', y='resource_name', color='resource_type', orientation='h', hover_data={'n': True}, color_discrete_sequence=UI_SEQ)
+    fig.update_layout(xaxis_title='Desvio médio face ao prazo dos processos em que participou (dias)', yaxis_title='')
+    return _style(fig, 380)
+
+
+def fig_resources_quarter(P):
+    if 'num_resources' not in P.columns or P['num_resources'].nunique() < 2: return None
+    q = P.assign(q=P['start_date'].dt.to_period('Q').astype(str)).groupby('q')['num_resources'].mean().reset_index()
+    fig = go.Figure(go.Bar(x=q['q'], y=q['num_resources'], marker_color=UI['blue'], hovertemplate='%{x}<br>%{y:.1f} pessoas<extra></extra>'))
+    fig.update_layout(xaxis_title='Trimestre de início', yaxis_title='Pessoas por processo (média)')
+    return _style(fig, 280, legend=False)
+
+
+def fig_corr(P):
+    cols = {'lead_time': 'Duração', 'days_diff': 'Desvio prazo', 'total_actual_cost': 'Custo', 'cost_diff': 'Desvio custo',
+            'budget_impact': 'Orçamento', 'num_resources': 'Nº pessoas', 'n_tasks': 'Nº tarefas', 'wait_total': 'Espera', 'loan_amount_eur': 'Montante'}
+    c = [k for k in cols if k in P.columns and pd.to_numeric(P[k], errors='coerce').nunique() > 1]
+    if len(c) < 3: return None
+    m = P[c].apply(pd.to_numeric, errors='coerce').corr().rename(index=cols, columns=cols)
+    fig = go.Figure(go.Heatmap(z=m.values, x=m.columns, y=m.index, zmin=-1, zmax=1, colorscale='RdBu_r', xgap=2, ygap=2,
+                               text=m.round(2).values, texttemplate='%{text}', hovertemplate='%{y} × %{x}: %{z:.2f}<extra></extra>',
+                               colorbar=dict(thickness=10)))
+    fig.update_yaxes(autorange='reversed')
+    return _style(fig, 420, legend=False)
+
+
+def fig_cost_vs_delay(P):
+    d = P.dropna(subset=['total_actual_cost', 'days_diff'])
+    if d.empty: return None
+    fig = px.scatter(d, x='days_diff', y='total_actual_cost', color='path_name', hover_name='project_name', opacity=0.6, color_discrete_sequence=UI_SEQ)
+    fig.add_vline(x=0, line=dict(color=UI['muted'], dash='dash'))
+    fig.update_traces(marker=dict(size=6))
+    fig.update_layout(xaxis_title='Dias face ao prazo', yaxis_title='Custo real (€)')
+    return _style(fig, 320)
+
+
+def fig_teamsize_cost(P):
+    if 'num_resources' not in P.columns or P['num_resources'].nunique() < 2: return None
+    d = P.dropna(subset=['num_resources', 'total_actual_cost']).copy()
+    d['equipa'] = d['num_resources'].astype(int)
+    fig = px.box(d.sort_values('equipa'), x=d.sort_values('equipa')['equipa'].astype(str), y='total_actual_cost', points=False, color_discrete_sequence=[UI['teal']])
+    fig.update_layout(xaxis_title='Pessoas envolvidas no processo', yaxis_title='Custo real (€)')
+    return _style(fig, 320, legend=False)
+
+
+def _budget_band(P):
+    b = pd.to_numeric(P['budget_impact'], errors='coerce')
+    if b.nunique() < 4: return None
+    return pd.qcut(b, 4, labels=['Q1 (mais baixo)', 'Q2', 'Q3', 'Q4 (mais alto)'], duplicates='drop')
+
+
+def fig_delay_by_budget(P):
+    if 'budget_impact' not in P.columns or 'days_diff' not in P.columns: return None
+    band = _budget_band(P)
+    if band is None: return None
+    d = P.assign(faixa=band.astype(str)).dropna(subset=['faixa'])
+    fig = px.box(d, x='faixa', y='days_diff', points=False, color_discrete_sequence=[UI['blue']],
+                 category_orders={'faixa': ['Q1 (mais baixo)', 'Q2', 'Q3', 'Q4 (mais alto)']})
+    fig.add_hline(y=0, line=dict(color=UI['muted'], dash='dash'))
+    fig.update_layout(xaxis_title='Faixa de orçamento (quartis)', yaxis_title='Dias face ao prazo')
+    return _style(fig, 320, legend=False)
+
+
+def fig_cost_budget_role(P, A):
+    if 'budget_impact' not in P.columns or A.empty: return None
+    band = _budget_band(P)
+    if band is None: return None
+    m = A.merge(P[['project_id']].assign(faixa=band.astype(str).values), on='project_id')
+    g = m.groupby(['faixa', 'resource_type'])['cost'].sum().reset_index()
+    g['cost'] = g['cost'] / g['faixa'].map(P.assign(faixa=band.astype(str)).groupby('faixa').size())
+    fig = px.bar(g, x='faixa', y='cost', color='resource_type', color_discrete_sequence=UI_SEQ,
+                 category_orders={'faixa': ['Q1 (mais baixo)', 'Q2', 'Q3', 'Q4 (mais alto)']})
+    fig.update_layout(barmode='stack', xaxis_title='Faixa de orçamento (quartis)', yaxis_title='Custo médio por processo (€)')
+    return _style(fig, 340)
+
+
 def section_flow(V, caps):
     P, T = V['P'], V['T']
     ui_section_intro("Que caminhos seguem os processos?", "Mapa do processo real, variantes, retrabalho e conformidade com o caminho principal.")
@@ -4577,10 +4726,6 @@ def section_flow(V, caps):
         for k_, t_ in [('model_inductive_petrinet', 'Modelo — Inductive Miner'), ('model_heuristic_petrinet', 'Modelo — Heuristics Miner')]:
             if po.get(k_) is not None:
                 st.markdown(f"**{t_}**"); st.image(po[k_].getvalue(), use_container_width=True)
-        pe = gate_outputs(st.session_state.plots_eda, caps)
-        for k_, t_ in [('plot_26', 'Dependências de um processo exemplo'), ('plot_24', 'Distribuição da complexidade dos processos')]:
-            if pe.get(k_) is not None:
-                st.markdown(f"**{t_}**"); st.image(pe[k_].getvalue(), use_container_width=True)
 
 
 def section_times(V, caps):
@@ -4647,12 +4792,17 @@ def section_resources(V, caps):
         ui_chart(fig_resource_wait(T), 'Espera gerada a seguir a cada pessoa', 'Tempo médio até a tarefa seguinte começar (pessoas com ≥10 tarefas)', 'bi-sign-stop', key='rs_rw')
         ui_chart(fig_resource_activity(A, has_h), 'Especialização: horas por pessoa e atividade', 'Top 25 pessoas por horas', 'bi-grid', key='rs_ra')
     with st.expander("Análise detalhada: tamanho das equipas, competências e composição"):
-        if has_h: ui_chart(fig_teamsize(P), 'Duração vs. nº de pessoas envolvidas', None, 'bi-people', key='rs_ts')
-        pe = gate_outputs(st.session_state.plots_eda, caps); po = gate_outputs(st.session_state.plots_post_mining, caps)
-        for src, k_, t_ in [(po, 'skill_vs_performance_adv', 'Competência vs. horas por tarefa'), (pe, 'plot_23', 'Atraso por nível de competência'),
-                            (pe, 'plot_14', 'Atraso médio por recurso'), (pe, 'plot_07', 'Nº médio de recursos por processo, por trimestre')]:
-            if src.get(k_) is not None:
-                st.markdown(f"**{t_}**"); st.image(src[k_].getvalue(), use_container_width=True)
+        has_sk, has_p = caps_ok({'COMPETENCIA'}, caps), caps_ok({'PLANO'}, caps)
+        c1, c2 = st.columns(2)
+        with c1:
+            if has_h: ui_chart(fig_teamsize(P), 'Duração vs. nº de pessoas envolvidas', None, 'bi-people', key='rs_ts')
+        with c2: ui_chart(fig_resources_quarter(P), 'Pessoas por processo ao longo do tempo', 'Média por trimestre de início', 'bi-people-fill', key='rs_rq')
+        c1, c2 = st.columns(2)
+        with c1:
+            if has_sk and has_h: ui_chart(fig_skill_hours(A, R), 'Competência vs. horas por tarefa', 'Distribuição das horas por tarefa, por nível de competência', 'bi-mortarboard', key='rs_sk')
+        with c2:
+            if has_sk and has_p: ui_chart(fig_delay_by_skill(P, A, R), 'Atraso vs. competência da equipa', None, 'bi-mortarboard-fill', key='rs_sd')
+        if has_p: ui_chart(fig_delay_by_resource(P, A), 'Desvio de prazo dos processos de cada pessoa', 'Pessoas com ≥10 processos (correlação, não causa)', 'bi-person-exclamation', key='rs_dr')
 
 
 def section_costs(V, caps):
@@ -4692,12 +4842,18 @@ def section_costs(V, caps):
             ui_card_header('Processos mais caros', None, 'bi-list-ol')
             st.dataframe(outliers_df(P, 'total_actual_cost', caps=caps), hide_index=True, use_container_width=True)
     with st.expander("Análise detalhada: correlações e relações entre variáveis"):
-        pe = gate_outputs(st.session_state.plots_eda, caps)
-        for k_, t_ in [('plot_29', 'Matriz de correlação'), ('plot_18', 'Custo real vs. atraso'), ('plot_19', 'Custo/hora médio vs. atraso'),
-                       ('plot_20', 'Nº de recursos vs. custo'), ('plot_22', 'Atraso por faixa de orçamento'), ('plot_27', 'Complexidade vs. atraso'),
-                       ('plot_28', 'Dependências vs. desvio de custo'), ('plot_17', 'Custo por faixa de orçamento e função')]:
-            if pe.get(k_) is not None:
-                st.markdown(f"**{t_}**"); st.image(pe[k_].getvalue(), use_container_width=True)
+        ui_chart(fig_corr(P), 'Matriz de correlação', 'Relação linear entre indicadores do processo (−1 a 1)', 'bi-grid-3x3', key='cs_corr')
+        c1, c2 = st.columns(2)
+        with c1:
+            if has_c and has_p: ui_chart(fig_cost_vs_delay(P), 'Custo real vs. desvio de prazo', None, 'bi-currency-euro', key='cs_cvd')
+        with c2:
+            if has_c: ui_chart(fig_teamsize_cost(P), 'Custo vs. nº de pessoas envolvidas', None, 'bi-people', key='cs_tsc')
+        if has_b:
+            c1, c2 = st.columns(2)
+            with c1:
+                if has_p: ui_chart(fig_delay_by_budget(P), 'Desvio de prazo por faixa de orçamento', None, 'bi-calendar-range', key='cs_dbb')
+            with c2:
+                if has_c: ui_chart(fig_cost_budget_role(P, A), 'Custo por faixa de orçamento e função', None, 'bi-tags', key='cs_cbr')
 
 
 def render_filters(V):
@@ -4716,6 +4872,486 @@ def render_filters(V):
     return FV, (period != (dmin, dmax)) or bool(types) or vmode != 'Todos'
 
 
+# =====================================================================================
+# --- BLOCO IA: FACTOS -> PRIORIDADES -> LEITURA PARA DECISÃO (com ou sem LLM) ---
+# =====================================================================================
+AREA_SECTION = {'fluxo': ('fluxo', 'Fluxo e Variantes'), 'tempos': ('tempos', 'Tempos e Esperas'),
+                'recursos': ('recursos', 'Recursos e Equipas'), 'custos': ('custos', 'Custos e Prazos')}
+AREA_ICON = {'fluxo': 'bi-signpost-split', 'tempos': 'bi-hourglass-split', 'recursos': 'bi-people', 'custos': 'bi-currency-euro'}
+
+
+def _r(x, n=1):
+    try:
+        return None if x is None or pd.isna(x) else round(float(x), n)
+    except (TypeError, ValueError):
+        return None
+
+
+def _anon_map(V):
+    """Nomes de pessoas -> 'Função #n' (para não enviar nomes a um serviço externo)."""
+    A, T = V['A'], V['T']
+    src = pd.concat([A[['resource_name', 'resource_type']] if 'resource_name' in A.columns else pd.DataFrame(columns=['resource_name', 'resource_type']),
+                     T[['resource_name', 'resource_type']] if 'resource_name' in T.columns else pd.DataFrame(columns=['resource_name', 'resource_type'])]).dropna(subset=['resource_name']).drop_duplicates('resource_name')
+    out, cnt = {}, {}
+    for n, r in zip(src['resource_name'], src['resource_type'].fillna('Recurso')):
+        cnt[r] = cnt.get(r, 0) + 1; out[n] = f"{r} #{cnt[r]}"
+    return out
+
+
+def _role_utilization_recent(A, R, months=3):
+    """Utilização média por função nos últimos N meses completos (horas / capacidade das pessoas ativas)."""
+    if A.empty or 'daily_capacity' not in R.columns: return {}
+    a = A.assign(m=A['allocation_date'].dt.to_period('M').dt.to_timestamp())
+    vol = a.groupby('m')['hours_worked'].sum(); full = sorted(vol[vol >= 0.3 * vol.median()].index)[-months:]
+    a = a[a['m'].isin(full)]
+    if a.empty: return {}
+    capd = R.set_index('resource_id')['daily_capacity']
+    out = {}
+    for role, g in a.groupby('resource_type'):
+        cap = 0
+        for m, gm in g.groupby('m'):
+            bd = np.busday_count(m.date(), (m + pd.offsets.MonthBegin(1)).date())
+            cap += sum(capd.get(rid, 8) for rid in gm['resource_id'].unique()) * bd
+        out[role] = g['hours_worked'].sum() / cap * 100 if cap else None
+    return out
+
+
+def compute_priorities(V, caps, max_items=5):
+    """Oportunidades ordenadas por impacto (em € se houver custos, senão em dias). Calculado por código: não depende de IA."""
+    P, T, A, R = V['P'], V['T'], V['A'], V['R']
+    has_t, has_c, has_p, has_b = caps_ok({'TEMPOS'}, caps), caps_ok({'CUSTO'}, caps), caps_ok({'PLANO'}, caps), caps_ok({'ORCAMENTO'}, caps)
+    cpd = P['cost_per_day'].mean() if has_c and 'cost_per_day' in P.columns else None
+    eur = lambda d: d * cpd if cpd else None
+    items = []
+
+    def add(area, titulo, problema, evidencia, acao, dias=None, euros=None, peso=None, nivel=None):
+        items.append(dict(area=area, titulo=titulo, problema=problema, evidencia=evidencia, acao=acao,
+                          impacto_dias=_r(dias, 0), impacto_eur=_r(euros, 0), _peso=peso if peso is not None else (euros if euros else (dias or 0) * (cpd or 1)), nivel=nivel))
+
+    try:
+        if has_t:
+            e = T.dropna(subset=['prev_task']); e = e[~e['repeat']]
+            h = e.groupby(['prev_task', 'task_name']).agg(w=('wait_days', 'mean'), n=('project_id', 'nunique'), tot=('wait_days', 'sum')).reset_index()
+            h = h[h['n'] >= max(3, 0.01 * P['project_id'].nunique())].sort_values('tot', ascending=False)
+            tot_wait = max(T['wait_days'].sum(), 1e-9)
+            for i, r in enumerate(h.head(2).itertuples()):
+                if r.tot / tot_wait < 0.08 and i > 0: break
+                add('tempos', f"Espera entre «{r.prev_task}» e «{r.task_name}»",
+                    f"Os processos ficam em média {r.w:.1f} dias parados nesta passagem.",
+                    f"{r.n:,} processos · {r.tot:,.0f} dias parados no total ({r.tot / tot_wait:.0%} de toda a espera)".replace(',', ' '),
+                    "Perceber porque o trabalho fica em fila: quem recebe tem capacidade? Há critérios de entrada ou aprovações em lote? Definir um SLA interno para esta passagem.",
+                    dias=r.tot, euros=eur(r.tot))
+    except Exception: pass
+
+    try:
+        if P['has_rework'].any() and not P['has_rework'].all():
+            rw, nrw = P[P['has_rework']], P[~P['has_rework']]
+            extra = rw['lead_time'].mean() - nrw['lead_time'].mean()
+            ex_eur = (rw['total_actual_cost'].mean() - nrw['total_actual_cost'].mean()) * len(rw) if has_c and 'total_actual_cost' in P.columns else None
+            loops = rework_loops_df(T) if has_t else pd.DataFrame()
+            top_loop = loops.iloc[0]['Retorno'] if not loops.empty else None
+            if extra > 0:
+                add('fluxo', "Retrabalho", f"{len(rw) / len(P):.1%} dos processos voltam atrás; cada um demora mais {extra:.1f} dias.",
+                    f"{len(rw):,} processos com retrabalho".replace(',', ' ') + (f" · retorno mais comum: {top_loop}" if top_loop else ""),
+                    ("Atacar a causa do retorno mais frequente" + (f" ({top_loop})" if top_loop else "") + ": validar na origem o que hoje é detetado mais à frente (checklist, documentação completa à entrada)."),
+                    dias=extra * len(rw), euros=ex_eur if ex_eur and ex_eur > 0 else eur(extra * len(rw)))
+    except Exception: pass
+
+    try:
+        if has_p:
+            late = P[P['days_diff'] > 0]; lr = len(late) / len(P)
+            cur, prev = _recent_vs_prev(P.assign(_l=(P['days_diff'] > 0).astype(float)), '_l')
+            worsening = cur is not None and prev is not None and cur - prev > 0.03
+            if lr > 0.05 or worsening:
+                add('custos', "Atrasos face ao prazo", f"{lr:.1%} dos processos terminam depois do prazo (atraso médio {late['days_diff'].mean():.1f} dias)." if len(late) else "Taxa de atrasos a subir.",
+                    f"{late['days_diff'].sum():,.0f} dias de atraso acumulados".replace(',', ' ') + (f" · últimos 3 meses {cur:.0%} vs {prev:.0%} antes" if cur is not None else ""),
+                    "Identificar o que os processos atrasados têm em comum (tipo, variante, equipa) e criar um alerta precoce para processos em risco.",
+                    dias=late['days_diff'].sum(), euros=eur(late['days_diff'].sum()))
+    except Exception: pass
+
+    try:
+        cur, prev = _recent_vs_prev(P, 'lead_time')
+        if cur and prev and (cur - prev) / prev > 0.05:
+            nm = P['end_month'].value_counts().median()
+            add('tempos', "Duração dos processos a aumentar", f"Os processos estão a demorar mais: {cur:.1f} dias nos últimos 3 meses vs {prev:.1f} nos 3 anteriores.",
+                f"+{(cur - prev) / prev:.0%} em 3 meses · ~{nm:.0f} processos concluídos por mês",
+                "Verificar se o aumento vem de mais volume, menos pessoas ou de uma atividade específica (ver Tempos e Esperas por mês).",
+                dias=(cur - prev) * nm * 3, euros=eur((cur - prev) * nm * 3))
+    except Exception: pass
+
+    try:
+        if has_t:
+            g = T.groupby('task_name')['dur_days']
+            v = pd.DataFrame({'p50': g.median(), 'p90': g.quantile(0.9), 'n': g.size()})
+            v['gap'] = (v['p90'] - v['p50']) * v['n'] * 0.1
+            v = v[v['p50'] > 0.5].sort_values('gap', ascending=False)
+            if not v.empty and v.iloc[0]['p90'] > 2 * v.iloc[0]['p50']:
+                a, r = v.index[0], v.iloc[0]
+                add('tempos', f"Duração imprevisível em «{a}»", f"Metade das execuções demora até {r['p50']:.1f} dias, mas 10% demoram mais de {r['p90']:.1f}.",
+                    f"{int(r['n']):,} execuções".replace(',', ' '),
+                    "Analisar os casos mais longos desta atividade (o que têm em comum?) e normalizar o trabalho (modelos, critérios, escalonamento).",
+                    dias=r['gap'], euros=eur(r['gap']))
+    except Exception: pass
+
+    try:
+        if has_b and has_c:
+            over = P[P['cost_diff'] > 0]
+            if len(over) / len(P) > 0.15:
+                add('custos', "Processos acima do orçamento", f"{len(over) / len(P):.0%} dos processos custam mais do que o orçamentado.",
+                    f"{over['cost_diff'].sum():,.0f} € acima do orçamento no total".replace(',', ' '),
+                    "Rever os pressupostos do orçamento por tipo de processo e identificar as atividades que mais derrapam.",
+                    euros=over['cost_diff'].sum())
+    except Exception: pass
+
+    ref = max([i['_peso'] for i in items] + [1])
+    try:
+        if caps_ok({'ESFORCO'}, caps):
+            util = _role_utilization_recent(A, R)
+            hot = {k: v for k, v in util.items() if v and v > 90}
+            if hot:
+                k = max(hot, key=hot.get)
+                add('recursos', f"Função «{k}» no limite da capacidade", f"A função trabalhou {hot[k]:.0f}% da capacidade disponível nos últimos 3 meses.",
+                    ", ".join(f"{a}: {b:.0f}%" for a, b in sorted(hot.items(), key=lambda x: -x[1])),
+                    "Reforçar ou redistribuir trabalho desta função antes de aumentar volume; verificar se a espera antes das suas tarefas está a crescer.",
+                    peso=0.6 * ref, nivel='risco')
+        if caps_ok({'RECURSOS'}, caps) and not A.empty:
+            roles = R[R['resource_id'].isin(A['resource_id'].unique())]['resource_type'].value_counts()
+            single = list(roles[roles <= 1].index)
+            if single:
+                add('recursos', "Funções dependentes de uma só pessoa", f"{len(single)} funções têm apenas uma pessoa: ausências param o processo.",
+                    ", ".join(map(str, single[:5])),
+                    "Formar uma segunda pessoa (backup) ou definir delegação formal para estas funções.", peso=0.35 * ref, nivel='risco')
+    except Exception: pass
+
+    items = sorted(items, key=lambda x: -(x['_peso'] or 0))[:max_items]
+    for i in items: i.pop('_peso', None)
+    return items
+
+
+def build_process_facts(V, caps, report=None, anonymize=True):
+    """Resumo estruturado (JSON) de tudo o que a app calculou. É isto que vai para o modelo de IA — números, não imagens."""
+    P, T, A, R = V['P'], V['T'], V['A'], V['R']
+    amap = _anon_map(V) if anonymize else {}
+    nm = lambda x: amap.get(x, x)
+    has = lambda *c: caps_ok(set(c), caps)
+    F = {'ambito': {'processos': int(len(P)), 'periodo': f"{P['start_date'].min():%Y-%m} a {P['end_date'].max():%Y-%m}",
+                    'tipos_de_processo': {str(k): int(v) for k, v in P['path_name'].value_counts().head(8).items()} if 'path_name' in P.columns else None,
+                    'atividades': int(T['task_name'].nunique()),
+                    'dados_disponiveis': [CAPS_INFO[c][0] for c in CAPS_INFO if caps is None or c in caps],
+                    'dados_em_falta': [CAPS_INFO[c][0] for c in CAPS_INFO if caps is not None and c not in caps]}}
+    k = {}
+    if has('TEMPOS') or True:
+        k['duracao_media_dias'] = _r(P['lead_time'].mean()); k['duracao_mediana_dias'] = _r(P['lead_time'].median()); k['duracao_p90_dias'] = _r(P['lead_time'].quantile(0.9))
+        c, p = _recent_vs_prev(P, 'lead_time'); k['duracao_ultimos_3m_vs_3m_anteriores'] = [_r(c), _r(p)] if c is not None else None
+    k['variantes'] = int(P['variant'].nunique()); k['pct_caminho_principal'] = _r(P['happy_path'].mean() * 100); k['pct_com_retrabalho'] = _r(P['has_rework'].mean() * 100)
+    if has('TEMPOS'):
+        k['espera_media_por_processo_dias'] = _r(P['wait_total'].mean()); k['pct_tempo_em_espera'] = _r((P['wait_total'] / P['lead_time'].replace(0, np.nan)).mean() * 100)
+    if has('PLANO'):
+        k['pct_atrasados'] = _r((P['days_diff'] > 0).mean() * 100); k['desvio_medio_prazo_dias'] = _r(P['days_diff'].mean())
+        c, p = _recent_vs_prev(P.assign(_l=(P['days_diff'] > 0).astype(float) * 100), '_l'); k['pct_atrasados_ultimos_3m_vs_anteriores'] = [_r(c), _r(p)] if c is not None else None
+    if has('CUSTO'):
+        k['custo_medio_processo_eur'] = _r(P['total_actual_cost'].mean(), 0); k['custo_total_eur'] = _r(A['cost'].sum(), 0)
+        c, p = _recent_vs_prev(P, 'total_actual_cost'); k['custo_medio_ultimos_3m_vs_anteriores'] = [_r(c, 0), _r(p, 0)] if c is not None else None
+        if has('TEMPOS') and 'cost_per_day' in P.columns: k['custo_estimado_da_espera_eur'] = _r(P['wait_total'].sum() * P['cost_per_day'].mean(), 0)
+    if has('ORCAMENTO') and has('CUSTO'):
+        k['pct_acima_orcamento'] = _r((P['cost_diff'] > 0).mean() * 100); k['desvio_medio_orcamento_eur'] = _r(P['cost_diff'].mean(), 0)
+    F['indicadores'] = k
+    try:
+        if 'path_name' in P.columns and P['path_name'].nunique() > 1:
+            agg = {'processos': ('project_id', 'count'), 'duracao_media': ('lead_time', 'mean'), 'retrabalho_pct': ('has_rework', 'mean')}
+            if has('PLANO'): agg['atraso_pct'] = ('days_diff', lambda x: (x > 0).mean())
+            if has('CUSTO'): agg['custo_medio'] = ('total_actual_cost', 'mean')
+            g = P.groupby('path_name').agg(**agg)
+            for c in ['retrabalho_pct', 'atraso_pct']:
+                if c in g: g[c] *= 100
+            F['por_tipo'] = {str(i): {c: _r(v) for c, v in r.items()} for i, r in g.round(1).iterrows()}
+    except Exception: pass
+    try:
+        vc = P['variant'].value_counts().head(5); med = P.groupby('variant')['lead_time'].median()
+        F['variantes_top'] = [{'sequencia': ' > '.join(map(str, v)), 'pct': _r(n / len(P) * 100), 'duracao_mediana': _r(med[v])} for v, n in vc.items()]
+        if has('TEMPOS'):
+            lp = rework_loops_df(T)
+            if not lp.empty: F['retornos_top'] = lp.head(5).round(1).to_dict('records')
+            rw = P[P['has_rework']]
+            if len(rw) and len(rw) < len(P): F['dias_extra_quando_ha_retrabalho'] = _r(rw['lead_time'].mean() - P[~P['has_rework']]['lead_time'].mean())
+    except Exception: pass
+    if has('TEMPOS'):
+        try:
+            a = T.groupby('task_name').agg(execucao=('dur_days', 'mean'), espera_antes=('wait_days', 'mean'), p90_execucao=('dur_days', lambda x: x.quantile(0.9)), execucoes=('task_id', 'size'))
+            F['atividades'] = {str(i): {c: _r(v) for c, v in r.items()} for i, r in a.sort_values('espera_antes', ascending=False).iterrows()}
+            e = T.dropna(subset=['prev_task']); e = e[~e['repeat']]
+            h = e.groupby(['prev_task', 'task_name']).agg(espera_media=('wait_days', 'mean'), processos=('project_id', 'nunique'), dias_totais=('wait_days', 'sum')).reset_index().sort_values('dias_totais', ascending=False).head(5)
+            F['passagens_com_mais_espera'] = [{'de': r.prev_task, 'para': r.task_name, 'espera_media_dias': _r(r.espera_media), 'processos': int(r.processos), 'dias_totais': _r(r.dias_totais, 0)} for r in h.itertuples()]
+        except Exception: pass
+    if has('RECURSOS'):
+        try:
+            rec = {}
+            roles = A.groupby('resource_type').agg(pessoas=('resource_id', 'nunique'), horas=('hours_worked', 'sum'))
+            if has('ESFORCO'): roles['pct_horas'] = roles['horas'] / roles['horas'].sum() * 100
+            util = _role_utilization_recent(A, R) if has('ESFORCO') else {}
+            rec['por_funcao'] = {str(i): {'pessoas': int(r['pessoas']), **({'pct_horas': _r(r['pct_horas'])} if 'pct_horas' in r else {}),
+                                         **({'utilizacao_ultimos_3m_pct': _r(util.get(i))} if util else {})} for i, r in roles.iterrows()}
+            if has('ESFORCO'):
+                hw = A.groupby('resource_id')['hours_worked'].sum().sort_values(ascending=False)
+                rec['pct_horas_feitas_por_20pct_das_pessoas'] = _r(hw.head(max(1, int(len(hw) * 0.2))).sum() / hw.sum() * 100)
+            if has('TEMPOS'):
+                d = T.dropna(subset=['resource_name']).copy(); d['nw'] = d.groupby('project_id')['wait_days'].shift(-1)
+                g = d.groupby('resource_name').agg(w=('nw', 'mean'), n=('task_id', 'size')); g = g[g['n'] >= 10].sort_values('w', ascending=False).head(5)
+                rec['pessoas_apos_as_quais_ha_mais_espera'] = [{'pessoa': nm(i), 'espera_seguinte_dias': _r(r['w']), 'tarefas': int(r['n'])} for i, r in g.iterrows()]
+            F['recursos'] = rec
+        except Exception: pass
+    if has('CUSTO'):
+        try:
+            F['custos'] = {'por_funcao_pct': {str(i): _r(v) for i, v in (A.groupby('resource_type')['cost'].sum() / A['cost'].sum() * 100).sort_values(ascending=False).items()},
+                           'por_atividade_pct': {str(i): _r(v) for i, v in (A.groupby('task_name')['cost'].sum() / A['cost'].sum() * 100).sort_values(ascending=False).items()}}
+        except Exception: pass
+    F['prioridades_calculadas'] = compute_priorities(V, caps)
+    if report:
+        eng = []
+        for key, area in [('resumo_executivo', 'resumo'), ('diagnostico_custos_atrasos', 'custos'), ('diagnostico_gargalos_esperas', 'tempos'),
+                          ('diagnostico_recursos_equipas', 'recursos'), ('diagnostico_fluxo_conformidade', 'fluxo')]:
+            for it in report.get(key, []) or []:
+                if isinstance(it, dict) and 'titulo' in it:
+                    det = it['detalhe']
+                    for a, b in amap.items(): det = det.replace(a, b)
+                    eng.append({'area': area, 'tipo': it.get('level'), 'titulo': it['titulo'], 'detalhe': det})
+        F['observacoes_motor_regras'] = eng
+    return F
+
+
+AI_SYSTEM = """És um consultor sénior de melhoria de processos (process mining) a escrever para um diretor que NÃO vai ver os gráficos.
+Recebes FACTOS em JSON, calculados a partir do histórico real de processos. Regras:
+- Usa APENAS números que estejam nos factos. Não inventes valores, nomes nem causas como se fossem certezas.
+- Uma causa que não esteja nos dados é uma hipótese: escreve-a como tal ("provavelmente", "a confirmar").
+- Português de Portugal, linguagem de negócio, frases curtas, sem jargão técnico (não uses "DFG", "fitness", "variante" sem explicar).
+- Cada prioridade tem de ser concreta e acionável (quem faz o quê). Ordena por impacto. Usa 'prioridades_calculadas' como ponto de partida, mas podes juntar, reordenar ou acrescentar se os factos o justificarem.
+- O ganho estimado só pode usar números dos factos e deve dizer o pressuposto (ex.: "reduzir esta espera para metade ≈ 1 000 dias/ano").
+- Se os dados não permitem uma conclusão, diz isso em 'limitacoes_dados'.
+Responde APENAS com JSON válido, sem texto à volta, neste esquema:
+{"veredicto": "1 frase, máx. 20 palavras",
+ "estado": "saudavel" | "atencao" | "critico",
+ "resumo": "3 a 5 frases: o que se passa, o que mais pesa, o que fazer primeiro",
+ "prioridades": [{"titulo": "...", "area": "fluxo|tempos|recursos|custos", "problema": "1 frase", "evidencia": "números dos factos",
+                  "causa_provavel": "hipótese", "acao": "o que fazer", "ganho_estimado": "...", "esforco": "baixo|médio|alto", "confianca": "alta|média|baixa"}],
+ "pontos_fortes": ["..."], "a_vigiar": ["..."], "limitacoes_dados": ["..."], "perguntas_para_o_negocio": ["3 perguntas que os dados não respondem e que ajudariam a decidir"]}"""
+
+AI_CHAT_SYSTEM = """És um analista de processos. Respondes a perguntas sobre um processo com base APENAS nos FACTOS em JSON abaixo.
+Português de Portugal, resposta curta (máx. 6 frases ou uma lista curta), cita os números. Se os factos não chegam para responder, diz o que faltaria e em que secção da app procurar
+(Visão Geral, Fluxo e Variantes, Tempos e Esperas, Recursos e Equipas, Custos e Prazos). Não inventes."""
+
+
+def _llm_settings():
+    sec = {}
+    try:
+        sec = {k: st.secrets[k] for k in st.secrets}
+    except Exception:
+        pass
+    get = lambda k: st.session_state.get(f'llm_{k}') or sec.get(k.upper()) or os.environ.get(k.upper())
+    keys = {'Anthropic (Claude)': st.session_state.get('llm_key_anthropic') or sec.get('ANTHROPIC_API_KEY') or os.environ.get('ANTHROPIC_API_KEY'),
+            'Google (Gemini)': st.session_state.get('llm_key_gemini') or sec.get('GEMINI_API_KEY') or sec.get('GOOGLE_API_KEY') or os.environ.get('GEMINI_API_KEY')}
+    prov = get('provider') or next((p for p, v in keys.items() if v), 'Anthropic (Claude)')
+    if prov not in keys: prov = 'Anthropic (Claude)' if 'anthropic' in str(prov).lower() or 'claude' in str(prov).lower() else 'Google (Gemini)'
+    default_model = {'Anthropic (Claude)': 'claude-sonnet-5-5', 'Google (Gemini)': 'gemini-2.5-flash'}[prov]
+    model = st.session_state.get('llm_model') or sec.get('ANTHROPIC_MODEL' if prov.startswith('Anthropic') else 'GEMINI_MODEL') or default_model
+    return {'provider': prov, 'key': keys[prov], 'model': model}
+
+
+def call_llm(system, messages, json_mode=False, max_tokens=3000):
+    """messages: [{'role': 'user'|'assistant', 'content': str}]. Devolve texto."""
+    cfg = _llm_settings()
+    if not cfg['key']:
+        raise RuntimeError("Não há chave de API configurada.")
+    if cfg['provider'].startswith('Anthropic'):
+        import requests
+        r = requests.post('https://api.anthropic.com/v1/messages', timeout=180,
+                          headers={'x-api-key': cfg['key'], 'anthropic-version': '2023-06-01', 'content-type': 'application/json'},
+                          json={'model': cfg['model'], 'max_tokens': max_tokens, 'system': system, 'messages': messages})
+        if r.status_code != 200:
+            raise RuntimeError(f"Erro da API ({r.status_code}): {r.text[:300]}")
+        return ''.join(b.get('text', '') for b in r.json().get('content', []) if b.get('type') == 'text')
+    genai.configure(api_key=cfg['key'])
+    model = genai.GenerativeModel(cfg['model'], system_instruction=system)
+    contents = [{'role': 'model' if m['role'] == 'assistant' else 'user', 'parts': [m['content']]} for m in messages]
+    resp = model.generate_content(contents, generation_config={'max_output_tokens': max_tokens, **({'response_mime_type': 'application/json'} if json_mode else {})})
+    return resp.text
+
+
+def _parse_json(txt):
+    t = txt.strip()
+    if t.startswith('```'): t = t.split('\n', 1)[1].rsplit('```', 1)[0]
+    i, j = t.find('{'), t.rfind('}')
+    return json.loads(t[i:j + 1])
+
+
+def deterministic_reading(report, priorities):
+    """Leitura sem IA, no mesmo formato da resposta do modelo (para a app ser útil mesmo sem chave)."""
+    res = (report or {}).get('resumo_executivo', []) or []
+    main = next((x for x in res if isinstance(x, dict) and x.get('level') in ('problema', 'facto')), None)
+    estado = 'saudavel' if main and main.get('level') == 'facto' else ('critico' if len([p for p in priorities if p.get('nivel') != 'risco']) >= 3 else 'atencao')
+    if main:
+        verdict = main['titulo'].replace('Diagnóstico Principal:', '').strip(); resumo = main['detalhe']
+    else:
+        verdict = 'Leitura automática dos indicadores'; resumo = ''
+    prios = [dict(titulo=p['titulo'], area=p['area'], problema=p['problema'], evidencia=p['evidencia'], acao=p['acao'],
+                  ganho_estimado=(_fmt_eur(p['impacto_eur']) + ' de impacto estimado' if p.get('impacto_eur') else
+                                  (f"{p['impacto_dias']:,.0f} dias acumulados".replace(',', ' ') if p.get('impacto_dias') else None)),
+                  nivel=p.get('nivel')) for p in priorities]
+    fortes = [x['titulo'] for k in ['diagnostico_custos_atrasos', 'diagnostico_fluxo_conformidade', 'diagnostico_gargalos_esperas', 'diagnostico_recursos_equipas']
+              for x in (report or {}).get(k, []) or [] if isinstance(x, dict) and x.get('level') == 'recomendacao'][:4]
+    return {'veredicto': verdict, 'estado': estado, 'resumo': resumo, 'prioridades': prios, 'pontos_fortes': fortes, 'a_vigiar': [], 'limitacoes_dados': [], 'perguntas_para_o_negocio': []}
+
+
+def _go_section(sec):
+    st.session_state.current_section = sec
+    st.session_state.nav_sections = sec
+
+
+def render_reading(rd, source):
+    est = rd.get('estado', 'atencao')
+    color, icon, lab = {'saudavel': ('#16a34a', 'bi-check-circle-fill', 'Saudável'), 'atencao': ('#d97706', 'bi-exclamation-circle-fill', 'Requer atenção'),
+                        'critico': ('#dc2626', 'bi-x-octagon-fill', 'Crítico')}.get(est, ('#d97706', 'bi-exclamation-circle-fill', 'Requer atenção'))
+    st.markdown(f"""<div class='pm-verdict' style='border-left-color:{color}'>
+        <div class='pm-verdict-top'><span class='pm-pill' style='background:{color}1a;color:{color}'><i class='bi {icon}'></i> {lab}</span>
+        <span class='pm-src'>{html.escape(source)}</span></div>
+        <div class='pm-verdict-title'>{html.escape(str(rd.get('veredicto', '')))}</div>
+        <div class='pm-verdict-text'>{html.escape(str(rd.get('resumo', '')))}</div></div>""", unsafe_allow_html=True)
+    pr = rd.get('prioridades') or []
+    if pr:
+        st.markdown("<div class='pm-h5'>O que fazer primeiro</div>", unsafe_allow_html=True)
+    for i, p in enumerate(pr):
+        area = str(p.get('area', '')).lower()
+        sec = AREA_SECTION.get(area)
+        with st.container(border=True):
+            c1, c2 = st.columns([5, 1.5], vertical_alignment='top')
+            meta = []
+            if p.get('nivel') == 'risco': meta.append("<span class='pm-tag risk'>Risco</span>")
+            if p.get('esforco'): meta.append(f"<span class='pm-tag'>Esforço {html.escape(str(p['esforco']))}</span>")
+            if p.get('confianca'): meta.append(f"<span class='pm-tag'>Confiança {html.escape(str(p['confianca']))}</span>")
+            rows = [('Evidência', p.get('evidencia')), ('Causa provável', p.get('causa_provavel')), ('Ação', p.get('acao'))]
+            body = ''.join(f"<div class='pm-prio-row'><span>{k}</span><div>{html.escape(str(v))}</div></div>" for k, v in rows if v)
+            with c1:
+                st.markdown(f"""<div class='pm-prio'><div class='pm-prio-num'>{i + 1}</div><div style='flex:1'>
+                    <div class='pm-prio-title'><i class='bi {AREA_ICON.get(area, "bi-flag")}'></i> {html.escape(str(p.get('titulo', '')))} {''.join(meta)}</div>
+                    <div class='pm-prio-problem'>{html.escape(str(p.get('problema', '')))}</div>{body}</div></div>""", unsafe_allow_html=True)
+            with c2:
+                if p.get('ganho_estimado'):
+                    st.markdown(f"<div class='pm-gain'><div class='pm-gain-lab'>Impacto / ganho</div><div class='pm-gain-val'>{html.escape(str(p['ganho_estimado']))}</div></div>", unsafe_allow_html=True)
+                if sec:
+                    st.button(f"Ver em {sec[1]}", key=f"go_{source[:3]}_{i}", on_click=_go_section, args=(sec[0],), use_container_width=True, icon=":material/arrow_forward:")
+    cols_data = [('Pontos fortes', rd.get('pontos_fortes'), 'bi-hand-thumbs-up', '#16a34a'), ('A vigiar', rd.get('a_vigiar'), 'bi-eye', '#d97706'),
+                 ('Perguntas para o negócio', rd.get('perguntas_para_o_negocio'), 'bi-question-circle', '#2563eb')]
+    cols_data = [c for c in cols_data if c[1]]
+    if cols_data:
+        cols = st.columns(len(cols_data))
+        for col, (t, lst, ic, cl) in zip(cols, cols_data):
+            with col, st.container(border=True):
+                st.markdown(f"<div class='pm-list-title' style='color:{cl}'><i class='bi {ic}'></i> {t}</div>"
+                            + ''.join(f"<div class='pm-list-item'>{html.escape(str(x))}</div>" for x in lst), unsafe_allow_html=True)
+    if rd.get('limitacoes_dados'):
+        ui_note("Limitações dos dados: " + " · ".join(map(str, rd['limitacoes_dados'])))
+
+
+def get_diag_report():
+    if st.session_state.get('diag_report') is None:
+        try:
+            eng = DiagnosticEngineV5(st.session_state.get('tables_pre_mining', {}), st.session_state.get('metrics', {}),
+                                     st.session_state.get('data_frames_processed', {}), st.session_state.get('tables_eda', {}), caps=st.session_state.get('caps'))
+            st.session_state.diag_report = eng.run()
+        except Exception:
+            st.session_state.diag_report = {}
+    return st.session_state.diag_report
+
+
+def render_ai_section(caps):
+    """Separador Diagnóstico: leitura para decisão (IA ou regras), perguntas à IA e detalhe do motor de regras."""
+    V = st.session_state.view
+    report = get_diag_report()
+    ui_section_intro("O que se passa e o que fazer?", "Leitura para decisão: o veredicto, as prioridades ordenadas por impacto e onde ver a evidência. Usa sempre todos os dados (ignora filtros).")
+    cfg = _llm_settings()
+    anon = st.session_state.get('llm_anon', True)
+    facts = build_process_facts(V, caps, report, anonymize=anon)
+    facts_json = json.dumps(facts, ensure_ascii=False, default=str)
+    sig = hash(facts_json + cfg['provider'] + cfg['model'])
+
+    c1, c2, c3 = st.columns([3.2, 1.4, 1.4], vertical_alignment='center')
+    with c1:
+        if cfg['key']:
+            st.caption(f"IA: {cfg['provider']} · {cfg['model']} · envia apenas números agregados" + (" (nomes de pessoas anonimizados)" if anon else ""))
+        else:
+            st.caption("Sem chave de IA configurada: a leitura abaixo é feita por regras. Configure a IA para uma leitura redigida e para fazer perguntas.")
+    with c2:
+        gen = st.button("Gerar leitura com IA" if st.session_state.get('ai_reading_sig') != sig else "Gerar novamente", icon=":material/auto_awesome:",
+                        type="primary", use_container_width=True, disabled=not cfg['key'], key='ai_gen')
+    with c3:
+        st.download_button("Exportar para IA externa", data=(AI_SYSTEM + "\n\nFACTOS:\n" + json.dumps(facts, ensure_ascii=False, indent=1, default=str)).encode('utf-8'),
+                           file_name="factos_processo_para_IA.txt", mime="text/plain", use_container_width=True, icon=":material/download:", key='ai_export',
+                           help="Prompt + factos num ficheiro de texto, para colar em qualquer assistente de IA (ChatGPT, Gemini, Claude).")
+    if gen:
+        with st.spinner("A IA está a ler os factos do processo..."):
+            try:
+                txt = call_llm(AI_SYSTEM, [{'role': 'user', 'content': "FACTOS:\n" + facts_json}], json_mode=True, max_tokens=4000)
+                st.session_state.ai_reading = _parse_json(txt); st.session_state.ai_reading_sig = sig
+            except Exception as e:
+                st.error(f"Não foi possível obter a leitura da IA: {e}")
+
+    if st.session_state.get('ai_reading') and st.session_state.get('ai_reading_sig') == sig:
+        render_reading(st.session_state.ai_reading, f"Redigido por IA ({cfg['provider']}) a partir dos factos calculados")
+    else:
+        render_reading(deterministic_reading(report, facts['prioridades_calculadas']), "Leitura automática por regras (sem IA)")
+
+    with st.container(border=True):
+        ui_card_header('Perguntar sobre o processo', 'Ex.: "Porque é que os processos CH_Reforço são mais caros?" · "Que função devo reforçar primeiro?"', 'bi-chat-dots')
+        if not cfg['key']:
+            st.caption("Disponível depois de configurar a IA (abaixo).")
+        else:
+            hist = st.session_state.setdefault('ai_chat', [])
+            for m in hist:
+                with st.chat_message(m['role']): st.markdown(m['content'])
+            q = st.chat_input("Escreva a sua pergunta", key='ai_chat_input')
+            if q:
+                hist.append({'role': 'user', 'content': q})
+                with st.chat_message('user'): st.markdown(q)
+                with st.chat_message('assistant'), st.spinner("A pensar..."):
+                    try:
+                        ans = call_llm(AI_CHAT_SYSTEM + "\n\nFACTOS:\n" + facts_json, hist[-10:], max_tokens=1200)
+                    except Exception as e:
+                        ans = f"Não foi possível responder: {e}"
+                    st.markdown(ans)
+                hist.append({'role': 'assistant', 'content': ans})
+            if hist and st.button("Limpar conversa", key='ai_chat_clear'):
+                st.session_state.ai_chat = []; st.rerun()
+
+    with st.expander("Configurar IA"):
+        st.markdown("A forma recomendada é guardar a chave nos *Secrets* do Streamlit Cloud (Settings → Secrets), por exemplo:\n"
+                    "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n# ou\nGEMINI_API_KEY = \"...\"\n```\n"
+                    "Em alternativa, cole a chave abaixo: fica só nesta sessão e não é guardada.")
+        a, b = st.columns(2)
+        prov = a.selectbox("Fornecedor", ['Anthropic (Claude)', 'Google (Gemini)'], index=0 if cfg['provider'].startswith('Anthropic') else 1, key='llm_provider')
+        b.text_input("Modelo (vazio = predefinido)", key='llm_model',
+                     placeholder='claude-sonnet-5-5' if prov.startswith('Anthropic') else 'gemini-2.5-flash')
+        st.text_input("Chave de API (só esta sessão)", type="password", key='llm_key_anthropic' if prov.startswith('Anthropic') else 'llm_key_gemini')
+        st.checkbox("Anonimizar nomes de pessoas antes de enviar", value=True, key='llm_anon')
+        with st.popover("Ver exatamente o que é enviado"):
+            st.json(facts, expanded=False)
+
+    with st.expander("Diagnóstico detalhado (motor de regras): todos os factos e alertas por área"):
+        render_diagnostics_page()
+
+
+def _scroll_top_if_moved():
+    """Ao mudar de página ou de secção, volta ao topo (o Streamlit mantém o scroll anterior)."""
+    loc = (st.session_state.get('current_page'), st.session_state.get('current_section'))
+    if st.session_state.get('_last_loc') != loc:
+        st.session_state['_last_loc'] = loc
+        components.html("""<script>
+        const go = () => { const d = window.parent.document;
+          for (const sel of ['[data-testid="stMain"]', 'section.main', '[data-testid="stAppViewContainer"]']) {
+            const el = d.querySelector(sel); if (el) el.scrollTo({top: 0, behavior: 'instant'}); }
+          window.parent.scrollTo(0, 0); };
+        go(); setTimeout(go, 150); setTimeout(go, 600);
+        </script>""", height=0)
+
+
 def dashboard_page():
 
     ### START PDF/AI STATE INIT (if not global) ###
@@ -4726,7 +5362,7 @@ def dashboard_page():
 
     ### START PDF/AI BUTTONS & MODAL ###
     if st.session_state.analysis_run:
-        col_buffer, col_pdf, col_ai = st.columns([6, 1.25, 1.25], vertical_alignment='center')
+        col_buffer, col_pdf = st.columns([6, 1.4], vertical_alignment='center')
         with col_buffer:
             _p = st.session_state.data_frames_processed.get('projects', pd.DataFrame())
             _sub = (f"{len(_p):,} processos · {pd.to_datetime(_p['start_date']).min():%m/%Y} a {pd.to_datetime(_p['end_date']).max():%m/%Y}"
@@ -4782,89 +5418,6 @@ def dashboard_page():
                     })
                 )
         
-        # --- Botão Toggle + Área de Contexto ---
-        with col_ai:
-            # Botão para MOSTRAR/ESCONDER a área de preparação
-            button_label = "🤖 Esconder AI Prep" if st.session_state.get("show_ai_prep_area", False) else "🤖 AI Prep"
-            if st.button(button_label, help="Preparar dados para análise externa com Gemini", use_container_width=True):
-                # Inverte o estado de visibilidade da área de preparação
-                st.session_state.show_ai_prep_area = not st.session_state.get("show_ai_prep_area", False)
-                st.rerun() # Rerun para mostrar/esconder a área abaixo
-
-    # --- Área Condicional para Preparar Contexto ---
-    if st.session_state.get("show_ai_prep_area", False):
-        st.markdown("---") # Separador visual
-        with st.container(border=True): # Container para agrupar visualmente
-            st.subheader("Preparar Análise com Gemini (Externo)")
-            st.info("Siga estes passos:\n1. Copie o prompt abaixo.\n2. Descarregue o PDF com os resultados.\n3. Clique no link 'Abrir Gemini' (abrirá numa nova aba).\n4. No Gemini, cole o prompt e faça upload do PDF descarregado.")
-
-            pdf_generated = False
-            pdf_bytes_context = None
-            prompt_text = ""
-            error_generating = None
-
-            # Gerar o PDF e o Prompt
-            
-            @st.cache_data(show_spinner="Preparando dados para IA...")
-            def prepare_ai_data():
-                _pdf_bytes = None
-                _prompt = "# Erro ao gerar prompt #"
-                _pdf_ok = False
-                _error = None
-                try:
-                    # Gerar PDF
-                    _plots_pre, _tables_pre, _plots_post, _plots_eda, _tables_eda = get_visible_outputs()
-                    _pdf_bytes = generate_pdf_report(_plots_pre, _tables_pre, _plots_post, _plots_eda, _tables_eda)
-                    if _pdf_bytes and len(_pdf_bytes) > 100:
-                        _pdf_ok = True
-                    else: _error = "Falha ao gerar conteúdo do PDF."
-
-
-                    # Gerar Prompt
-                    _app_code = "# Erro ao ler código #"
-                    try:
-                         _script_path = Path(inspect.getfile(inspect.currentframe())).resolve()
-                         _app_code = _script_path.read_text(encoding='utf-8')
-                    except Exception as _e1:
-                         print(f"Erro AI Prep - Ler código Path: {_e1}")
-                         try: _app_code = inspect.getsource(sys.modules[__name__])
-                         except Exception as _e2: print(f"Erro AI Prep - Ler código Inspect: {_e2}")
-
-                    _prompt_instruction = "Coloco em anexo o Relatório em PDF com os resultados das análises obtidas (gráficos/tabelas) sobre o meu processo, e preciso que considerando todas a análises constantes do PDF, me faças um resumo alargado dos principais aspetos, conclusões, problemas ou insights sobre o meu processo, e isto deve incluir mas não se resumir a recursos, atrasos, custos, gargalos, tempos de espera, tempos de execução, rework, entre outros aspetos."
-                    _prompt = f"{_prompt_instruction}" # REMOVIDA a parte que adicionava o _app_code
-
-                except Exception as e:
-                    print(f"Erro geral em prepare_ai_data: {e}")
-                    _error = f"Erro ao preparar dados: {e}"
-
-                return _prompt, _pdf_bytes, _pdf_ok, _error
-
-            # Chama a função cacheada para obter os dados
-            prompt_text, pdf_bytes_context, pdf_generated, error_generating = prepare_ai_data()
-
-            if error_generating:
-                st.error(error_generating)
-
-            # Mostrar Prompt e Botões
-            st.text_area("1. Prompt para Gemini:", prompt_text, height=250, key="ai_prompt_text_area")
-
-            if pdf_generated and pdf_bytes_context:
-                st.download_button(
-                    label="2. Descarregar PDF com Resultados",
-                    data=pdf_bytes_context,
-                    file_name="relatorio_process_mining_analise.pdf",
-                    mime="application/pdf",
-                    key="pdf_download_context_ai"
-                )
-            else:
-                st.warning("Geração do PDF falhou ou PDF está vazio. O Gemini não poderá analisar os gráficos.")
-
-            
-            st.markdown('[3. Abrir Gemini (Nova Aba)](https://gemini.google.com/)', unsafe_allow_html=True)
-            # ----------------------------------------
-
-        st.markdown("---") 
-        ### END AI CONTEXT AREA ###
     
     if st.session_state.get('show_welcome_message', False):
         st.success(f"Bem-vindo, {st.session_state.user_name}!")
@@ -4902,7 +5455,7 @@ def dashboard_page():
         st.warning("Nenhum processo corresponde aos filtros escolhidos."); return
 
     sec = st.session_state.current_section
-    if sec == "diagnostico": render_diagnostics_page()
+    if sec == "diagnostico": render_ai_section(caps)
     elif sec == "visao_geral": section_overview(V, caps)
     elif sec == "fluxo": section_flow(V, caps)
     elif sec == "tempos": section_times(V, caps)
@@ -5103,10 +5656,13 @@ def main():
                 
         if st.session_state.current_page == "Dashboard":
             dashboard_page()
+            _scroll_top_if_moved()
         elif st.session_state.current_page == "RL":
             rl_page()
         elif st.session_state.current_page == "Settings":
             settings_page()
+        if st.session_state.current_page != "Dashboard":
+            _scroll_top_if_moved()
 
 if __name__ == "__main__":
     main()
