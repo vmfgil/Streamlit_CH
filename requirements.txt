@@ -12,3 +12,4 @@ google-generativeai
 fpdf2
 Pillow
 openpyxl
+plotly
